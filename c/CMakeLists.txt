@@ -303,6 +303,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_shipped_debt tests/test_red_shipped_debt.c)
+target_link_libraries(test_red_shipped_debt wixen_core wixen_vt wixen_config)
+add_test(NAME test_red_shipped_debt COMMAND test_red_shipped_debt)
+
 add_executable(test_red_mouse_select tests/test_red_mouse_select.c)
 target_link_libraries(test_red_mouse_select wixen_core)
 add_test(NAME test_red_mouse_select COMMAND test_red_mouse_select)
