@@ -525,8 +525,29 @@ const char *wixen_terminal_pop_response(WixenTerminal *t) {
 
 /* --- Print character (from ground state) --- */
 
+/* DEC Special Graphics charset mapping (box drawing) */
+static const uint32_t dec_special_graphics[128] = {
+    [0x6a] = 0x2518, /* j → ┘ */  [0x6b] = 0x2510, /* k → ┐ */
+    [0x6c] = 0x250C, /* l → ┌ */  [0x6d] = 0x2514, /* m → └ */
+    [0x6e] = 0x253C, /* n → ┼ */  [0x71] = 0x2500, /* q → ─ */
+    [0x74] = 0x251C, /* t → ├ */  [0x75] = 0x2524, /* u → ┤ */
+    [0x76] = 0x2534, /* v → ┴ */  [0x77] = 0x252C, /* w → ┬ */
+    [0x78] = 0x2502, /* x → │ */  [0x61] = 0x2592, /* a → ▒ */
+    [0x60] = 0x25C6, /* ` → ◆ */  [0x66] = 0x00B0, /* f → ° */
+    [0x67] = 0x00B1, /* g → ± */  [0x79] = 0x2264, /* y → ≤ */
+    [0x7A] = 0x2265, /* z → ≥ */  [0x7B] = 0x03C0, /* { → π */
+    [0x7E] = 0x00B7, /* ~ → · */
+};
+
 static void terminal_print(WixenTerminal *t, uint32_t codepoint) {
     t->last_printed_char = codepoint;
+
+    /* Apply charset translation (DEC Special Graphics for box drawing) */
+    uint8_t active_set = t->charsets[t->active_charset];
+    if (active_set == 1 && codepoint >= 0x60 && codepoint < 0x80) {
+        uint32_t mapped = dec_special_graphics[codepoint];
+        if (mapped) codepoint = mapped;
+    }
 
     /* Encode codepoint to UTF-8 */
     char utf8[5] = {0};
@@ -852,6 +873,37 @@ static void terminal_csi(WixenTerminal *t, const WixenAction *action) {
             wixen_terminal_set_scroll_region(t, top, bot);
         }
         break;
+    case 't': /* XTWINOPS — window operations */
+        if (!priv) {
+            uint16_t op = (uint16_t)param_or(action, 0, 0);
+            switch (op) {
+            case 8: { /* Report text area size in chars */
+                char resp[32];
+                snprintf(resp, sizeof(resp), "\x1b[8;%zu;%zut",
+                    t->grid.num_rows, t->grid.cols);
+                queue_response(t, resp);
+                break;
+            }
+            case 14: { /* Report text area size in pixels (approximate) */
+                char resp[32];
+                snprintf(resp, sizeof(resp), "\x1b[4;%zu;%zut",
+                    t->grid.num_rows * 16, t->grid.cols * 8);
+                queue_response(t, resp);
+                break;
+            }
+            case 18: { /* Report terminal size in chars */
+                char resp[32];
+                snprintf(resp, sizeof(resp), "\x1b[8;%zu;%zut",
+                    t->grid.num_rows, t->grid.cols);
+                queue_response(t, resp);
+                break;
+            }
+            case 22: /* Push title (save) — ignored for now */
+            case 23: /* Pop title (restore) — ignored for now */
+                break;
+            }
+        }
+        break;
     case 'm': /* SGR — select graphic rendition */
         wixen_terminal_apply_sgr(t, action);
         break;
@@ -940,6 +992,10 @@ static void terminal_esc(WixenTerminal *t, const WixenAction *action) {
         case 'H': wixen_terminal_set_tab_stop(t); break;
         case '=': t->modes.keypad_application = true; break;  /* DECKPAM */
         case '>': t->modes.keypad_application = false; break; /* DECKPNM */
+        case 'N': /* SS2 — single shift G2 (next char only) */
+        case 'O': /* SS3 — single shift G3 (next char only) */
+            /* These are rarely used. For now, ignored. */
+            break;
         }
     } else if (action->esc.intermediate_count == 1) {
         uint8_t inter = action->esc.intermediates[0];
@@ -986,11 +1042,16 @@ void wixen_terminal_dispatch(WixenTerminal *t, const WixenAction *action) {
         terminal_osc(t, action->osc.data, action->osc.data_len);
         break;
     case WIXEN_ACTION_DCS_HOOK:
-        /* DCS sequences: DECRQSS, Sixel graphics, XTGETTCAP */
-        /* Sixel: DCS Pn ; Pn ; Pn q <data> ST */
         if (action->dcs_hook.final_byte == 'q') {
-            /* Start of Sixel graphics — accumulate data in DCS_PUT */
-            t->in_sixel = true;
+            if (action->dcs_hook.intermediate_count > 0 &&
+                action->dcs_hook.intermediates[0] == '$') {
+                /* DECRQSS — request status string */
+                /* Respond with valid setting for common queries */
+                /* For now, just acknowledge */
+            } else {
+                /* Sixel graphics */
+                t->in_sixel = true;
+            }
         }
         break;
     case WIXEN_ACTION_DCS_PUT:

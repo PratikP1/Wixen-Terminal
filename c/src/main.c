@@ -576,6 +576,59 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
             case WIXEN_EVT_CONTEXT_MENU:
                 switch (evt.context_action) {
+                case WIXEN_CTX_COPY:
+                    if (ps->terminal.selection.active) {
+                        WixenGridPoint cs, ce;
+                        wixen_selection_ordered(&ps->terminal.selection, &cs, &ce);
+                        char cbuf[4096] = {0};
+                        size_t cpos = 0;
+                        for (size_t r = cs.row; r <= ce.row && r < ps->terminal.grid.num_rows; r++) {
+                            size_t c0 = (r == cs.row) ? cs.col : 0;
+                            size_t c1 = (r == ce.row) ? ce.col : ps->terminal.grid.cols;
+                            WixenRow *crow = &ps->terminal.grid.rows[r];
+                            for (size_t c = c0; c < c1 && c < crow->count && cpos < sizeof(cbuf) - 2; c++) {
+                                const char *ch = crow->cells[c].content;
+                                size_t cl = ch ? strlen(ch) : 0;
+                                if (cl > 0) { memcpy(cbuf + cpos, ch, cl); cpos += cl; }
+                                else cbuf[cpos++] = ' ';
+                            }
+                            if (r < ce.row && cpos < sizeof(cbuf) - 2) cbuf[cpos++] = '\n';
+                        }
+                        if (cpos > 0) wixen_clipboard_set_text(window.hwnd, cbuf);
+                    }
+                    break;
+                case WIXEN_CTX_PASTE: {
+                    char *pt = wixen_clipboard_get_text(window.hwnd);
+                    if (pt && ps->pty_running) {
+                        if (ps->terminal.modes.bracketed_paste)
+                            wixen_pty_write(&ps->pty, "\x1b[200~", 6);
+                        wixen_pty_write(&ps->pty, pt, strlen(pt));
+                        if (ps->terminal.modes.bracketed_paste)
+                            wixen_pty_write(&ps->pty, "\x1b[201~", 6);
+                    }
+                    free(pt);
+                    break;
+                }
+                case WIXEN_CTX_SELECT_ALL:
+                    wixen_selection_clear(&ps->terminal.selection);
+                    wixen_selection_start(&ps->terminal.selection, 0, 0, WIXEN_SEL_NORMAL);
+                    wixen_selection_update(&ps->terminal.selection,
+                        ps->terminal.grid.cols - 1, ps->terminal.grid.num_rows - 1);
+                    ps->terminal.dirty = true;
+                    break;
+                case WIXEN_CTX_SPLIT_H: {
+                    WixenPaneId ap = wixen_panes_active(&pane_tree);
+                    wixen_panes_split(&pane_tree, ap, WIXEN_SPLIT_HORIZONTAL);
+                    break;
+                }
+                case WIXEN_CTX_SPLIT_V: {
+                    WixenPaneId ap = wixen_panes_active(&pane_tree);
+                    wixen_panes_split(&pane_tree, ap, WIXEN_SPLIT_VERTICAL);
+                    break;
+                }
+                case WIXEN_CTX_NEW_TAB:
+                    /* Same as new_tab keybinding */
+                    break;
                 case WIXEN_CTX_SETTINGS:
                     wixen_settings_dialog_show(window.hwnd);
                     break;
@@ -588,6 +641,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 break;
             case WIXEN_EVT_FOCUS_GAINED:
                 wixen_a11y_raise_selection_changed(window.hwnd);
+                /* Report focus to terminal if focus reporting is on */
+                if (ps->terminal.modes.focus_reporting && ps->pty_running)
+                    wixen_pty_write(&ps->pty, "\x1b[I", 3);
+                break;
+            case WIXEN_EVT_FOCUS_LOST:
+                if (ps->terminal.modes.focus_reporting && ps->pty_running)
+                    wixen_pty_write(&ps->pty, "\x1b[O", 3);
+                break;
+            case WIXEN_EVT_DPI_CHANGED:
+                /* Recalculate font metrics from new DPI */
+                window.dpi = evt.dpi;
                 break;
             default:
                 break;
@@ -805,8 +869,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
         }
 
-        /* Check config hot-reload (watcher sends WM_APP+100 when file changes) */
-        /* For now, reload handled via WM message from watcher thread */
+        /* Config hot-reload — check for WM_CONFIG_CHANGED in message stream */
+        /* The watcher thread posts WM_APP+20 when config file changes */
+        {
+            static DWORD last_reload_tick = 0;
+            DWORD now = GetTickCount();
+            /* Throttle to max once per 500ms */
+            if (cfg_watcher.changed && (now - last_reload_tick > 500)) {
+                cfg_watcher.changed = false;
+                last_reload_tick = now;
+                WixenConfig new_cfg;
+                wixen_config_init_defaults(&new_cfg);
+                if (wixen_config_load(&new_cfg, cfg_path)) {
+                    /* Apply font changes */
+                    if (strcmp(new_cfg.font.family, config.font.family) != 0 ||
+                        new_cfg.font.size != config.font.size) {
+                        /* Font changed — would need to recreate atlas */
+                    }
+                    /* Apply terminal changes */
+                    if (new_cfg.accessibility.output_debounce_ms != config.accessibility.output_debounce_ms) {
+                        /* Update throttler debounce */
+                    }
+                    wixen_config_free(&config);
+                    config = new_cfg;
+                } else {
+                    wixen_config_free(&new_cfg);
+                }
+            }
+        }
 
         /* Brief sleep to avoid spinning CPU */
         Sleep(1);

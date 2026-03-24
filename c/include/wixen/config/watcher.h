@@ -12,6 +12,7 @@ typedef struct {
     HANDLE thread;
     HWND notify_hwnd;
     volatile bool running;
+    volatile bool changed;  /* Set by watcher thread, cleared by main loop */
     char path[MAX_PATH];
 } WixenConfigWatcher;
 
