@@ -93,20 +93,54 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenPaneId root_pane;
     wixen_panes_init(&pane_tree, &root_pane);
 
-    /* Detect shell and spawn first PTY */
+    /* Detect shell and compute grid size */
     wchar_t *shell = wixen_pty_detect_shell();
-    uint16_t cols = (uint16_t)(1200 / 8);  /* Approximate */
+    uint16_t cols = (uint16_t)(1200 / 8);
     uint16_t rows = (uint16_t)(800 / 16);
 
-    WixenPaneState *ps = &pane_states[0];
-    wixen_terminal_init(&ps->terminal, cols, rows);
-    wixen_shell_integ_init(&ps->shell_integ);
-    wixen_parser_init(&ps->parser);
-    ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL, NULL, window.hwnd);
-    pane_state_count = 1;
+    /* Try to restore session */
+    char session_path[MAX_PATH];
+    wixen_config_default_path(session_path, sizeof(session_path));
+    {
+        char *dot = strrchr(session_path, '.');
+        if (dot) strcpy(dot, ".session.json");
+    }
+    WixenSessionState saved_session;
+    wixen_session_init(&saved_session);
+    bool has_session = wixen_session_load(&saved_session, session_path);
+
+    if (has_session && saved_session.tab_count > 0) {
+        /* Restore tabs from saved session */
+        for (size_t i = 0; i < saved_session.tab_count && pane_state_count < MAX_PANES; i++) {
+            WixenPaneState *ps = &pane_states[pane_state_count];
+            wixen_terminal_init(&ps->terminal, cols, rows);
+            wixen_shell_integ_init(&ps->shell_integ);
+            wixen_parser_init(&ps->parser);
+            /* Use saved CWD if available */
+            const char *cwd = saved_session.tabs[i].working_directory;
+            wchar_t wcwd[MAX_PATH] = {0};
+            if (cwd && cwd[0]) MultiByteToWideChar(CP_UTF8, 0, cwd, -1, wcwd, MAX_PATH);
+            ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL,
+                wcwd[0] ? wcwd : NULL, window.hwnd);
+            pane_state_count++;
+            WixenPaneId np = (WixenPaneId)(i + 1);
+            wixen_tabs_add(&tabs, saved_session.tabs[i].title, np);
+        }
+    } else {
+        /* No saved session — start with single shell tab */
+        WixenPaneState *ps = &pane_states[0];
+        wixen_terminal_init(&ps->terminal, cols, rows);
+        wixen_shell_integ_init(&ps->shell_integ);
+        wixen_parser_init(&ps->parser);
+        ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL, NULL, window.hwnd);
+        pane_state_count = 1;
+        wixen_tabs_add(&tabs, "Shell", root_pane);
+    }
+    wixen_session_free(&saved_session);
     free(shell);
 
-    wixen_tabs_add(&tabs, "Shell", root_pane);
+    /* ps points to the active pane */
+    WixenPaneState *ps = &pane_states[0];
 
     /* Create tray icon */
     WixenTrayIcon tray;
@@ -218,6 +252,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         if (!running) break;
 
         /* Process window events */
+        static DWORD last_dblclick_tick = 0;
         WixenWindowEvent evt;
         while (wixen_window_poll_event(&window, &evt)) {
             switch (evt.type) {
@@ -476,9 +511,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 size_t mcol = fm.cell_width > 0 ? (size_t)(evt.mouse.x / fm.cell_width) : 0;
                 size_t mrow = fm.cell_height > 0 ? (size_t)(evt.mouse.y / fm.cell_height) : 0;
                 if (evt.mouse.button == WIXEN_MB_LEFT) {
-                    /* Start selection */
-                    wixen_selection_clear(&ps->terminal.selection);
-                    wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_NORMAL);
+                    /* Check for triple-click (line select) */
+                    DWORD now = GetTickCount();
+                    if (last_dblclick_tick > 0 && (now - last_dblclick_tick) < GetDoubleClickTime()) {
+                        /* Triple-click — line selection */
+                        wixen_selection_clear(&ps->terminal.selection);
+                        wixen_selection_start(&ps->terminal.selection, 0, mrow, WIXEN_SEL_LINE);
+                        wixen_selection_update(&ps->terminal.selection,
+                            ps->terminal.grid.cols - 1, mrow);
+                        last_dblclick_tick = 0;
+                    } else {
+                        /* Normal click — start selection */
+                        wixen_selection_clear(&ps->terminal.selection);
+                        wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_NORMAL);
+                    }
                     ps->terminal.dirty = true;
                 } else if (evt.mouse.button == WIXEN_MB_RIGHT) {
                     wixen_window_show_context_menu(&window, evt.mouse.x, evt.mouse.y);
@@ -530,6 +576,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 break;
             }
             case WIXEN_EVT_DOUBLE_CLICK: {
+                last_dblclick_tick = GetTickCount();
                 /* Word selection */
                 WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
                 size_t mcol = fm.cell_width > 0 ? (size_t)(evt.dbl_click.x / fm.cell_width) : 0;
@@ -913,12 +960,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 ? pane_states[i].shell_integ.cwd : "";
             wixen_session_add_tab(&session, all_tabs[i].title, "powershell.exe", cwd);
         }
-        char session_path[MAX_PATH];
-        wixen_config_default_path(session_path, sizeof(session_path));
-        /* Change config.toml → session.json */
-        char *dot = strrchr(session_path, '.');
-        if (dot) strcpy(dot, ".session.json");
-        wixen_session_save(&session, session_path);
+        char save_path[MAX_PATH];
+        wixen_config_default_path(save_path, sizeof(save_path));
+        char *sdot = strrchr(save_path, '.');
+        if (sdot) strcpy(sdot, ".session.json");
+        wixen_session_save(&session, save_path);
         wixen_session_free(&session);
     }
 

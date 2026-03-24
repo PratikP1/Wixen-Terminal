@@ -763,6 +763,11 @@ static void terminal_osc(WixenTerminal *t, const uint8_t *data, size_t len) {
         /* A "?" query means the app wants clipboard contents */
         break;
     }
+    case 12: /* Cursor color query */
+        if (payload_len > 0 && payload[0] == '?') {
+            queue_response(t, "\x1b]12;rgb:ff/ff/ff\x1b\\");
+        }
+        break;
     case 10: /* Foreground color query — respond with default FG */
         if (payload_len > 0 && payload[0] == '?') {
             /* Respond: OSC 10;rgb:ff/ff/ff ST (white default) */
@@ -871,6 +876,19 @@ static void terminal_csi(WixenTerminal *t, const WixenAction *action) {
             size_t top = param_or(action, 0, 1) - 1;
             size_t bot = param_or(action, 1, (uint16_t)t->grid.num_rows);
             wixen_terminal_set_scroll_region(t, top, bot);
+        }
+        break;
+    case 'p': /* DECSTR — soft terminal reset (CSI ! p) */
+        if (action->csi.intermediate_count > 0 && action->csi.intermediates[0] == '!') {
+            wixen_modes_reset(&t->modes);
+            t->modes.auto_wrap = true;
+            t->modes.cursor_visible = true;
+            t->scroll_region.top = 0;
+            t->scroll_region.bottom = t->grid.num_rows;
+            t->grid.cursor.row = 0;
+            t->grid.cursor.col = 0;
+            t->pending_wrap = false;
+            t->dirty = true;
         }
         break;
     case 't': /* XTWINOPS — window operations */
