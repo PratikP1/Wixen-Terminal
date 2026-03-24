@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wixen Terminal - WiX v4 MSI installer source
+
+  Build:
+    cargo build --release
+    wix build installer/wixen.wxs -o wixen-terminal.msi \
+      -d Version=0.1.0 \
+      -d ExePath=target/release/wixen.exe
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package Name="Wixen Terminal"
+           Manufacturer="Pratik Patel"
+           Version="$(Version)"
+           UpgradeCode="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="Wixen Terminal - Accessible terminal emulator for Windows" />
+
+    <!-- Upgrade: remove older versions before install -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Wixen Terminal is already installed." />
+
+    <!-- Embed all files in the MSI cabinet -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Install directory -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Wixen Terminal">
+        <Directory Id="ScriptsFolder" Name="scripts" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Start Menu shortcut directory -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="WixenStartMenuFolder" Name="Wixen Terminal" />
+    </StandardDirectory>
+
+    <!-- Main binary component -->
+    <ComponentGroup Id="MainExecutable" Directory="INSTALLFOLDER">
+      <Component Id="WixenExe" Guid="b2c3d4e5-f6a7-8901-bcde-f12345678901">
+        <File Id="WixenExeFile"
+              Source="$(ExePath)"
+              Name="wixen.exe"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Script files -->
+    <ComponentGroup Id="ScriptFiles" Directory="ScriptsFolder">
+      <Component Id="WixenPs1" Guid="c3d4e5f6-a7b8-9012-cdef-123456789012">
+        <File Id="WixenPs1File"
+              Source="scripts/wixen.ps1"
+              Name="wixen.ps1"
+              KeyPath="yes" />
+      </Component>
+      <Component Id="WixenLua" Guid="d4e5f6a7-b8c9-0123-defa-234567890123">
+        <File Id="WixenLuaFile"
+              Source="scripts/wixen.lua"
+              Name="wixen.lua"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Start Menu shortcuts -->
+    <ComponentGroup Id="StartMenuShortcuts" Directory="WixenStartMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="e5f6a7b8-c9d0-1234-efab-345678901234">
+        <Shortcut Id="WixenShortcut"
+                  Name="Wixen Terminal"
+                  Description="Accessible terminal emulator"
+                  Target="[INSTALLFOLDER]wixen.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\WixenTerminal"
+                       Name="StartMenuShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Optional: Add install directory to system PATH -->
+    <ComponentGroup Id="PathEntry" Directory="INSTALLFOLDER">
+      <Component Id="SystemPath" Guid="f6a7b8c9-d0e1-2345-fabc-456789012345">
+        <Environment Id="PathEnv"
+                     Name="PATH"
+                     Value="[INSTALLFOLDER]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="yes" />
+        <RegistryValue Root="HKLM"
+                       Key="Software\WixenTerminal"
+                       Name="PathAdded"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Features -->
+    <Feature Id="MainApplication"
+             Title="Wixen Terminal"
+             Description="Core terminal emulator and scripts"
+             Level="1"
+             Absent="disallow"
+             AllowAdvertise="no">
+      <ComponentGroupRef Id="MainExecutable" />
+      <ComponentGroupRef Id="ScriptFiles" />
+      <ComponentGroupRef Id="StartMenuShortcuts" />
+    </Feature>
+
+    <Feature Id="AddToPath"
+             Title="Add to PATH"
+             Description="Add Wixen Terminal to the system PATH environment variable"
+             Level="2"
+             AllowAdvertise="no">
+      <ComponentGroupRef Id="PathEntry" />
+    </Feature>
+
+  </Package>
+</Wix>

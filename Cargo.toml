@@ -1,0 +1,150 @@
+[workspace]
+members = [
+    "crates/wixen-core",
+    "crates/wixen-vt",
+    "crates/wixen-pty",
+    "crates/wixen-render",
+    "crates/wixen-a11y",
+    "crates/wixen-config",
+    "crates/wixen-ui",
+    "crates/wixen-shell-integ",
+    "crates/wixen-search",
+    "crates/wixen-ipc",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/PratikP1/Wixen-Terminal"
+
+[workspace.dependencies]
+# Windowing & Win32
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Accessibility",
+    "Win32_Graphics_DirectWrite",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_Security",
+    "Win32_System_Variant",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Kernel",
+    "Win32_System_LibraryLoader",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+] }
+windows-core = "0.61"
+
+# GPU rendering
+wgpu = "24"
+softbuffer = "0.4"
+
+# PTY
+portable-pty = "0.8"
+
+# Configuration
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+mlua = { version = "0.10", features = ["luau", "serialize"] }
+
+# Concurrency
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Compression
+zstd = "0.13"
+
+# Regex (search)
+regex = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Unicode
+unicode-width = "0.2"
+unicode-segmentation = "1"
+
+# Encoding
+base64 = "0.22"
+
+# Image decoding
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Window handle interop
+raw-window-handle = "0.6"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+
+[package]
+name = "wixen-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wixen"
+path = "src/main.rs"
+
+[dependencies]
+wixen-core = { path = "crates/wixen-core" }
+wixen-vt = { path = "crates/wixen-vt" }
+wixen-pty = { path = "crates/wixen-pty" }
+wixen-render = { path = "crates/wixen-render" }
+wixen-a11y = { path = "crates/wixen-a11y" }
+wixen-config = { path = "crates/wixen-config" }
+wixen-ui = { path = "crates/wixen-ui" }
+wixen-shell-integ = { path = "crates/wixen-shell-integ" }
+wixen-search = { path = "crates/wixen-search" }
+wixen-ipc = { path = "crates/wixen-ipc" }
+windows.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "vt_parser"
+harness = false
+
+[[bench]]
+name = "terminal_grid"
+harness = false
+
+[[bench]]
+name = "scrollback"
+harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# strip = "symbols"  # Temporarily disabled for crash debugging
+debug = 1  # Line tables only — minimal size, real backtraces

@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wixen Terminal Architecture</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --fg: #e0e0e0;
+  --accent: #4fc3f7;
+  --border: #333355;
+  --code-bg: #16213e;
+  --table-header: #0f3460;
+  --table-alt: #1a1a3a;
+  --link: #81d4fa;
+  --link-visited: #b39ddb;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --accent: #0277bd;
+    --border: #cccccc;
+    --code-bg: #f5f5f5;
+    --table-header: #e3f2fd;
+    --table-alt: #f5f5f5;
+    --link: #0277bd;
+    --link-visited: #7b1fa2;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --bg: #000000;
+    --fg: #ffffff;
+    --accent: #ffff00;
+    --border: #ffffff;
+    --code-bg: #1a1a1a;
+    --table-header: #333333;
+    --table-alt: #1a1a1a;
+    --link: #ffff00;
+    --link-visited: #ff99ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.6;
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+h1 {
+  font-size: 2rem;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 0.5rem;
+  margin-top: 0;
+}
+
+h2 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+  margin-top: 2.5rem;
+}
+
+h3 {
+  font-size: 1.2rem;
+  margin-top: 2rem;
+}
+
+a {
+  color: var(--link);
+}
+
+a:visited {
+  color: var(--link-visited);
+}
+
+a:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code {
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+pre {
+  background: var(--code-bg);
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+}
+
+th {
+  background: var(--table-header);
+  font-weight: 600;
+}
+
+tr:nth-child(even) td {
+  background: var(--table-alt);
+}
+
+kbd {
+  display: inline-block;
+  padding: 0.15em 0.4em;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.85em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--code-bg);
+}
+
+nav.toc {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+}
+
+nav.toc h2 {
+  font-size: 1.1rem;
+  margin-top: 0;
+  border: none;
+  padding: 0;
+}
+
+nav.toc ul {
+  margin: 0.3rem 0;
+  padding-left: 1.5rem;
+}
+
+nav.toc li {
+  margin: 0.2rem 0;
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  background: var(--code-bg);
+}
+
+/* Skip link for keyboard users */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 0;
+  background: var(--accent);
+  color: var(--bg);
+  padding: 0.5rem 1rem;
+  z-index: 100;
+  font-weight: bold;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Print styles */
+@media print {
+  body {
+    color: #000;
+    background: #fff;
+    max-width: none;
+  }
+  nav.toc {
+    break-inside: avoid;
+  }
+  pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+}
+</style>
+</head>
+<body>
+<a href="#main-content" class="skip-link">Skip to content</a>
+
+<nav class="toc" aria-label="Table of contents">
+<h2>Contents</h2>
+
+</nav>
+
+<main id="main-content" role="main">
+<h1 id="wixen-terminal-architecture">Wixen Terminal Architecture</h1>
+<h2 id="overview">Overview</h2>
+<p>Wixen Terminal is a GPU-accelerated terminal emulator for Windows, written in Rust. It targets Windows 10 1903+ (build 18362) and Windows 11. Its core differentiator is structured UI Automation (UIA) support: it transforms the flat character grid of terminal output into semantically meaningful, navigable regions for screen readers. No existing terminal emulator does this well. Windows Terminal exposes a flat <code>TextBuffer</code> via UIA <code>TextPattern</code>, so screen readers can read text but cannot distinguish prompts from output or navigate between commands. Wixen Terminal treats accessibility as architecture, not afterthought.</p>
+<p><strong>Design philosophy.</strong> Accessibility is not a feature bolted on after rendering works. The accessibility tree, shell integration, and semantic analysis are first-class crates that shape how data flows through the entire system. Every architectural decision, from the choice of raw Win32 windowing to the custom VT parser, was made to give the UIA provider full control over what screen readers see.</p>
+<p><strong>Language.</strong> Rust, edition 2024. Dual-licensed MIT/Apache-2.0.</p>
+<h2 id="crate-structure">Crate Structure</h2>
+<p>The workspace contains 10 crates plus the binary root.</p>
+<table>
+<thead>
+<tr>
+<th>Crate</th>
+<th>Purpose</th>
+<th>Key types</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wixen-core</code></td>
+<td>Terminal state machine, grid, scrollback, selection, image protocols</td>
+<td><code>Terminal</code>, <code>Grid</code>, <code>ScrollbackBuffer</code>, <code>ImageStore</code></td>
+</tr>
+<tr>
+<td><code>wixen-vt</code></td>
+<td>VT escape sequence parser (DEC VT500 state machine)</td>
+<td><code>Parser</code>, <code>Action</code></td>
+</tr>
+<tr>
+<td><code>wixen-pty</code></td>
+<td>ConPTY wrapper, process spawning, shell management</td>
+<td><code>PtyHandle</code>, <code>PtyEvent</code></td>
+</tr>
+<tr>
+<td><code>wixen-render</code></td>
+<td>GPU renderer (wgpu), software fallback (softbuffer), glyph atlas, DirectWrite</td>
+<td><code>Renderer</code>, <code>TerminalRenderer</code>, <code>GlyphAtlas</code>, <code>SoftwareRenderer</code></td>
+</tr>
+<tr>
+<td><code>wixen-a11y</code></td>
+<td>UIA provider, structured accessibility tree, event throttling</td>
+<td><code>AccessibilityTree</code>, <code>A11yNode</code>, <code>EventThrottler</code>, <code>TerminalProvider</code></td>
+</tr>
+<tr>
+<td><code>wixen-config</code></td>
+<td>TOML + Lua configuration, hot-reload, JSON Schema, plugin system</td>
+<td><code>Config</code>, <code>LuaEngine</code>, <code>ConfigWatcher</code>, <code>PluginRegistry</code></td>
+</tr>
+<tr>
+<td><code>wixen-ui</code></td>
+<td>Window chrome, tabs, pane splits, command palette, settings GUI</td>
+<td><code>PaneTree</code>, <code>TabManager</code>, <code>CommandPalette</code>, <code>SettingsUI</code></td>
+</tr>
+<tr>
+<td><code>wixen-shell-integ</code></td>
+<td>Shell integration (OSC 133, OSC 7, heuristic prompt detection)</td>
+<td><code>ShellIntegration</code>, <code>CommandBlock</code>, <code>BlockState</code></td>
+</tr>
+<tr>
+<td><code>wixen-search</code></td>
+<td>Terminal text search, regex, match highlighting</td>
+<td><code>SearchEngine</code>, <code>SearchOptions</code>, <code>SearchDirection</code></td>
+</tr>
+<tr>
+<td><code>wixen-ipc</code></td>
+<td>Named pipe IPC (for future multi-window client-server)</td>
+<td><code>IpcServer</code>, <code>IpcClient</code>, <code>IpcRequest</code>, <code>IpcResponse</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="dependency-graph">Dependency graph</h3>
+<pre><code>wixen-terminal (binary)
+  +-- wixen-core
+  |     +-- wixen-shell-integ
+  +-- wixen-vt
+  +-- wixen-pty
+  +-- wixen-render
+  |     +-- wixen-core
+  +-- wixen-a11y
+  |     +-- wixen-core
+  |     +-- wixen-shell-integ
+  +-- wixen-config
+  +-- wixen-ui
+  +-- wixen-search
+  +-- wixen-ipc
+</code></pre>
+<h3 id="why-this-structure">Why this structure</h3>
+<p>Each crate has a single responsibility and can be tested in isolation. <code>wixen-vt</code> knows nothing about the grid. <code>wixen-core</code> knows nothing about rendering. <code>wixen-a11y</code> reads from <code>wixen-core</code> and <code>wixen-shell-integ</code> but never writes to them. This layering prevents circular dependencies and keeps compilation parallel. It also means the VT parser, terminal state machine, and accessibility tree each have their own test suites that run without a window or GPU.</p>
+<h2 id="threading-model">Threading Model</h2>
+<p>Wixen Terminal uses four thread categories.</p>
+<h3 id="main-ui-thread">Main / UI thread</h3>
+<p>The main thread runs the Win32 message pump (<code>GetMessage</code>/<code>DispatchMessage</code>). It handles:</p>
+<ul>
+<li><code>WndProc</code> dispatch for keyboard, mouse, resize, and focus events.</li>
+<li>UIA provider calls. Windows requires all UIA responses on the UI thread.</li>
+<li>Tab and pane management.</li>
+<li>Accessibility tree rebuilds.</li>
+<li>Rendering dispatch.</li>
+</ul>
+<h3 id="pty-reader-threads-one-per-terminal-pane">PTY reader threads (one per terminal pane)</h3>
+<p>Each pane spawns a ConPTY child process. A dedicated thread performs blocking reads from the PTY pipe and sends <code>PtyEvent</code> messages to the main thread via a <code>crossbeam_channel::Receiver&lt;PtyEvent&gt;</code>. The main thread polls these receivers during its event loop.</p>
+<h3 id="config-watcher-thread">Config watcher thread</h3>
+<p>A background thread watches configuration files for changes and broadcasts <code>ConfigDelta</code> messages when the TOML or Lua config is modified. The main thread applies deltas on the next loop iteration.</p>
+<h3 id="communication">Communication</h3>
+<p>Threads communicate through <code>crossbeam_channel</code> channels (bounded, multi-producer single-consumer). The terminal grid is protected by a <code>parking_lot::RwLock</code>. The renderer reads the grid under a read-lock. PTY events are processed on the main thread, so grid writes happen without contention.</p>
+<p><strong>Why message passing over shared state.</strong> Shared mutable state requires locking discipline that is hard to audit. Channels make data flow explicit: you can trace every message from producer to consumer. The <code>RwLock</code> on the grid is the one exception, used because the renderer needs snapshot access to the grid without copying it.</p>
+<h2 id="vt-parser">VT Parser</h2>
+<p>The VT parser lives in <code>wixen-vt</code>. It is a hand-written state machine based on the DEC VT500 specification (the canonical reference at vt100.net/emu/dec_ansi_parser).</p>
+<h3 id="state-machine-design">State machine design</h3>
+<p>The parser has 15 states:</p>
+<pre><code class="language-rust">enum State {
+    Ground,
+    Escape,
+    EscapeIntermediate,
+    CsiEntry,
+    CsiParam,
+    CsiIntermediate,
+    CsiIgnore,
+    OscString,
+    DcsEntry,
+    DcsParam,
+    DcsIntermediate,
+    DcsPassthrough,
+    DcsIgnore,
+    SosPmApcString,
+    ApcString,
+}
+</code></pre>
+<p>Each byte advances the state machine and may emit one or more <code>Action</code> values. The <code>Parser</code> struct holds the current state, parameter accumulator, intermediate bytes, OSC data buffers, and a UTF-8 decoder.</p>
+<h3 id="why-a-custom-parser-instead-of-the-vte-crate">Why a custom parser instead of the vte crate</h3>
+<p>The <code>vte</code> crate (used by Alacritty) is a reasonable foundation, but Wixen's accessibility integration benefits from tight coupling with the parser. OSC 133 shell integration sequences must be intercepted and routed to <code>wixen-shell-integ</code> with precise cursor position context. A custom parser gives full control over:</p>
+<ul>
+<li>OSC 133 handling for accessibility.</li>
+<li>Custom extensions and sequence size limits.</li>
+<li>Performance tuning (the fast path described below).</li>
+<li>Subparameter parsing for colon-delimited CSI params (e.g., SGR <code>4:3</code> for curly underlines).</li>
+</ul>
+<h3 id="supported-sequences">Supported sequences</h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CSI (Control Sequence Introducer)</td>
+<td>Cursor movement, erase, scroll, SGR (colors/styles), mode set/reset, device status, window manipulation</td>
+</tr>
+<tr>
+<td>OSC (Operating System Command)</td>
+<td>Set title (OSC 0/1/2), hyperlinks (OSC 8), clipboard (OSC 52), CWD (OSC 7), shell integration (OSC 133), color queries (OSC 4/10/11), iTerm2 images (OSC 1337), ConEmu progress (OSC 9;4)</td>
+</tr>
+<tr>
+<td>DCS (Device Control String)</td>
+<td>Sixel graphics, DECRQSS</td>
+</tr>
+<tr>
+<td>ESC sequences</td>
+<td>Charset selection (G0/G1), save/restore cursor, RIS (reset)</td>
+</tr>
+<tr>
+<td>APC (Application Program Command)</td>
+<td>Kitty graphics protocol</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-fast-path-for-ascii-text">The fast path for ASCII text</h3>
+<p>Most terminal content is printable ASCII (bytes 0x20-0x7E). When the parser is in <code>Ground</code> state with no pending UTF-8 sequence, <code>process()</code> enters a tight inner loop that skips the state machine dispatch entirely:</p>
+<pre><code class="language-rust">pub fn process(&amp;mut self, bytes: &amp;[u8]) -&gt; Vec&lt;Action&gt; {
+    // ...
+    if self.state == State::Ground &amp;&amp; self.utf8_len == 0 {
+        while i &lt; bytes.len() {
+            let b = bytes[i];
+            if (0x20..=0x7e).contains(&amp;b) {
+                actions.push(Action::Print(b as char));
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    // ...
+}
+</code></pre>
+<p>This avoids the match-on-state overhead for the common case.</p>
+<h3 id="utf-8-decoding">UTF-8 decoding</h3>
+<p>The parser decodes multi-byte UTF-8 inline. It maintains a 4-byte buffer (<code>utf8_buf</code>) and tracks expected length and bytes received. Invalid sequences emit the Unicode replacement character (U+FFFD). Interrupted sequences (a lead byte followed by a non-continuation byte) also emit U+FFFD and reprocess the interrupting byte.</p>
+<h3 id="security-size-caps">Security: size caps</h3>
+<ul>
+<li><strong>OSC strings</strong> are capped at 4,096 bytes. Bytes beyond the cap are silently dropped. This prevents a malicious program from exhausting memory with an unbounded OSC payload.</li>
+<li><strong>APC payloads</strong> (used by Kitty graphics protocol) are capped at 16 MB. Image data can legitimately be large, but this cap prevents runaway allocation.</li>
+</ul>
+<h2 id="terminal-state-machine">Terminal State Machine</h2>
+<p>The terminal state machine lives in <code>wixen-core</code>. The <code>Terminal</code> struct is the central data structure.</p>
+<h3 id="key-fields">Key fields</h3>
+<pre><code class="language-rust">pub struct Terminal {
+    pub grid: Grid,
+    alt_grid: Option&lt;Grid&gt;,
+    pub scrollback: ScrollbackBuffer,
+    pub modes: TerminalModes,
+    scroll_region: ScrollRegion,
+    pub title: String,
+    pub viewport_offset: usize,
+    pub selection: Option&lt;Selection&gt;,
+    pub shell_integ: ShellIntegration,
+    pub hyperlinks: HyperlinkStore,
+    pub images: ImageStore,
+    pub osc52_policy: Osc52Policy,
+    // ...
+}
+</code></pre>
+<p>The <code>Terminal</code> receives <code>Action</code> values from the VT parser and mutates its grid, scrollback, modes, and shell integration state accordingly. It owns the <code>ShellIntegration</code> tracker, which means OSC 133 events are processed in the same call path as all other VT sequences.</p>
+<h3 id="scrollback-compression">Scrollback compression</h3>
+<p>The <code>ScrollbackBuffer</code> uses a two-tier architecture.</p>
+<p><strong>Hot tier.</strong> Recent rows live uncompressed in a <code>Vec&lt;Row&gt;</code>. Access is instant. The default threshold is 10,000 rows.</p>
+<p><strong>Cold tier.</strong> When the hot tier exceeds its threshold, the oldest half is serialized into a compact binary format and compressed with zstd at level 3. Each compressed block is a <code>CompressedBlock</code> containing the byte data and a row count.</p>
+<pre><code class="language-rust">pub struct ScrollbackBuffer {
+    hot: Vec&lt;Row&gt;,
+    cold: Vec&lt;CompressedBlock&gt;,
+    total_len: usize,
+    hot_threshold: usize,
+}
+</code></pre>
+<p>Cold rows are decompressed on demand via <code>get_cold()</code>. For viewport rendering, only hot rows are typically accessed. The binary format encodes each cell as: content bytes (length-prefixed), width, and 16 bytes of packed attributes (foreground color, background color, flags bitfield, underline color, hyperlink ID).</p>
+<p>Scrollback is infinite by default. There is no line limit. The zstd compression keeps memory usage manageable for long-running sessions.</p>
+<h3 id="image-protocols">Image protocols</h3>
+<p>Three inline image protocols are supported:</p>
+<table>
+<thead>
+<tr>
+<th>Protocol</th>
+<th>Trigger</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sixel</td>
+<td>DCS sequences</td>
+<td>DEC raster graphics. Decoded in <code>wixen-core::image</code>.</td>
+</tr>
+<tr>
+<td>iTerm2</td>
+<td>OSC 1337</td>
+<td>Base64-encoded image data. Provides filename metadata.</td>
+</tr>
+<tr>
+<td>Kitty</td>
+<td>APC G...</td>
+<td>Chunked transfer, multiple actions (transmit, display, delete).</td>
+</tr>
+</tbody>
+</table>
+<p>Images are stored in <code>ImageStore</code> and rendered by a separate GPU pipeline (RGBA textured quads). Screen readers receive a UIA notification with the protocol name, dimensions, and filename (when available).</p>
+<h3 id="shell-integration">Shell integration</h3>
+<p>The <code>ShellIntegration</code> tracker in <code>wixen-shell-integ</code> receives OSC 133 markers and maintains a <code>Vec&lt;CommandBlock&gt;</code>. Each block tracks the lifecycle of one command:</p>
+<pre><code class="language-rust">pub enum BlockState {
+    PromptActive,    // after OSC 133;A
+    InputActive,     // after OSC 133;B
+    Executing,       // after OSC 133;C
+    Completed,       // after OSC 133;D
+}
+</code></pre>
+<p>A generation counter increments on every structural change. The main loop compares this counter to a cached value to know when the accessibility tree needs rebuilding.</p>
+<p>OSC 7 sequences update the current working directory. The shell integration module also ships integration scripts: <code>wixen.ps1</code> for PowerShell and <code>wixen.lua</code> for cmd.exe via Clink.</p>
+<h3 id="heuristic-prompt-detection-fallback">Heuristic prompt detection (fallback)</h3>
+<p>When shells do not emit OSC 133, the <code>heuristic</code> module in <code>wixen-shell-integ</code> detects prompts by pattern matching. It recognizes common prompt formats (<code>PS C:\path&gt;</code>, <code>user@host:path$</code>, <code>C:\path&gt;</code>) and infers command boundaries from timing and cursor position. This gives screen readers some structure even with legacy shells.</p>
+<h2 id="rendering">Rendering</h2>
+<h3 id="why-wgpu">Why wgpu</h3>
+<p>wgpu provides a WebGPU abstraction over platform-native APIs. On Windows, it maps to Direct3D 12 (primary) with Vulkan as a fallback. The choice was driven by:</p>
+<ul>
+<li><strong>D3D12 performance</strong> without writing D3D12 boilerplate.</li>
+<li><strong>Pure Rust.</strong> No C/C++ build dependencies for the GPU layer.</li>
+<li><strong>Active maintenance.</strong> wgpu tracks the WebGPU standard and has a large contributor base.</li>
+<li><strong>Software fallback.</strong> When no GPU is available (RDP sessions, headless VMs), <code>softbuffer</code> provides CPU-based rendering via <code>SoftwareRenderer</code>.</li>
+</ul>
+<p>The renderer mode is user-selectable via config: <code>"auto"</code> (try GPU, fall back to software), <code>"gpu"</code> (GPU only), or <code>"software"</code> (CPU only).</p>
+<pre><code class="language-rust">pub enum TerminalRenderer {
+    Gpu(Box&lt;Renderer&gt;),
+    Software(Box&lt;SoftwareRenderer&gt;),
+}
+</code></pre>
+<h3 id="glyph-atlas-with-directwrite">Glyph atlas with DirectWrite</h3>
+<p>Text is rasterized through DirectWrite via <code>windows-rs</code>. DirectWrite was chosen over pure-Rust alternatives (rustybuzz + swash) because:</p>
+<ul>
+<li>Best ClearType rendering on Windows.</li>
+<li>Automatic respect for system text scaling and high-contrast mode.</li>
+<li>Native system font fallback chains.</li>
+<li>These properties matter for accessibility.</li>
+</ul>
+<p>The <code>GlyphAtlas</code> rasterizes glyphs into an R8 texture. The atlas grows dynamically as new glyphs are encountered (CJK, emoji, combining characters). Font metrics (<code>cell_width</code>, <code>cell_height</code>, <code>baseline</code>) drive the entire layout pipeline.</p>
+<h3 id="cell-rendering-pipeline">Cell rendering pipeline</h3>
+<ol>
+<li>The main loop reads the terminal grid.</li>
+<li>For each visible cell, a <code>Vertex</code> is built containing position, atlas UV coordinates, foreground color, and background color.</li>
+<li>Vertices are uploaded to a GPU buffer.</li>
+<li>A WGSL shader (<code>shader.wgsl</code>) renders the cells as textured triangles with alpha blending.</li>
+<li>The render pipeline uses <code>PrimitiveTopology::TriangleList</code> with the glyph atlas bound as a filtered texture.</li>
+</ol>
+<h3 id="inline-image-rendering">Inline image rendering</h3>
+<p>Inline images (Sixel, iTerm2, Kitty) use a separate render pipeline (<code>image.wgsl</code>) that draws RGBA textured quads. Each image is uploaded as its own GPU texture. The image pipeline shares the uniform buffer (screen dimensions) but has its own bind group layout supporting RGBA textures.</p>
+<h3 id="background-image-with-blur">Background image with blur</h3>
+<p>Background images are decoded via the <code>image</code> crate, opacity-adjusted, and uploaded as a GPU texture. A fullscreen quad renders the background before cell content. Gaussian blur is applied on the CPU before upload. The source pixel data is retained so the blur can be recomputed when the radius changes.</p>
+<h3 id="software-renderer-as-fallback">Software renderer as fallback</h3>
+<p><code>SoftwareRenderer</code> uses the <code>softbuffer</code> crate to write pixels directly to a window surface buffer. It implements the same rendering logic (cells, cursor, tab bar) in CPU-only code. This path exists for RDP, VMs without GPU passthrough, and troubleshooting.</p>
+<h3 id="contrast-ratio-enforcement">Contrast ratio enforcement</h3>
+<p>The color system checks foreground/background contrast ratios against WCAG thresholds. When the computed contrast is too low, the renderer adjusts colors to meet minimum readability standards. This is part of the accessibility-first design.</p>
+<h2 id="accessibility-architecture">Accessibility Architecture</h2>
+<h3 id="why-structured-uia-matters">Why structured UIA matters</h3>
+<p>Windows Terminal exposes its text buffer through a single <code>ITextProvider</code>. Screen readers can read text but see no structure. A user cannot:</p>
+<ul>
+<li>Jump to the previous command's output.</li>
+<li>Distinguish the prompt from the command from the output.</li>
+<li>Navigate a file listing as a table.</li>
+<li>Get a summary of what a command did.</li>
+</ul>
+<p>Wixen Terminal builds a structured UIA tree that gives screen readers semantic navigation.</p>
+<h3 id="the-accessibility-tree">The accessibility tree</h3>
+<p>The tree is rooted at a <code>Document</code> node. Each shell command cycle becomes a <code>CommandBlock</code>. Within each block, text is classified by role.</p>
+<pre><code class="language-rust">pub enum A11yNode {
+    Document { id: NodeId, children: Vec&lt;A11yNode&gt; },
+    CommandBlock {
+        id: NodeId,
+        shell_block_id: u64,
+        name: String,
+        children: Vec&lt;A11yNode&gt;,
+        is_error: bool,
+        state: BlockState,
+    },
+    TextRegion {
+        id: NodeId,
+        text: String,
+        role: SemanticRole,
+        start_row: usize,
+        end_row: usize,
+        children: Vec&lt;A11yNode&gt;,
+    },
+    LiveRegion { id: NodeId, text: String, politeness: u32 },
+    Hyperlink { id: NodeId, url: String, text: String, start_row: usize, end_row: usize },
+}
+</code></pre>
+<p>The tree structure looks like:</p>
+<pre><code>Document
+  +-- CommandBlock: &quot;ls -la (succeeded)&quot;
+  |     +-- TextRegion [Prompt]: &quot;C:\Users\foo&gt;&quot;
+  |     +-- TextRegion [CommandInput]: &quot;ls -la&quot;
+  |     +-- TextRegion [OutputText]: &quot;total 21\ndrwxr-xr-x ...&quot;
+  |           +-- Hyperlink: &quot;https://example.com&quot;
+  +-- CommandBlock: &quot;cat missing.txt (exit 1)&quot;
+  |     +-- TextRegion [Prompt]: &quot;C:\Users\foo&gt;&quot;
+  |     +-- TextRegion [CommandInput]: &quot;cat missing.txt&quot;
+  |     +-- TextRegion [ErrorText]: &quot;No such file or directory&quot;
+  +-- ...
+</code></pre>
+<h3 id="semantic-roles">Semantic roles</h3>
+<pre><code class="language-rust">pub enum SemanticRole {
+    Prompt,
+    CommandInput,
+    OutputText,
+    ErrorText,
+    Path,
+    Url,
+    StatusLine,
+}
+</code></pre>
+<p>Error detection uses the exit code from OSC 133;D. When the exit code is nonzero, the output region is tagged <code>ErrorText</code> instead of <code>OutputText</code>.</p>
+<h3 id="uia-providers">UIA providers</h3>
+<p>The terminal implements several COM interfaces via <code>windows-rs</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IRawElementProviderSimple</code></td>
+<td>Base UIA provider for each node</td>
+</tr>
+<tr>
+<td><code>IRawElementProviderFragment</code></td>
+<td>Tree navigation (parent, siblings, children)</td>
+</tr>
+<tr>
+<td><code>IRawElementProviderFragmentRoot</code></td>
+<td>Root of the fragment tree (the HWND)</td>
+</tr>
+<tr>
+<td><code>ITextProvider</code></td>
+<td>Text content and range-based navigation</td>
+</tr>
+<tr>
+<td><code>IGridProvider</code></td>
+<td>Cell-level navigation for TUI applications</td>
+</tr>
+<tr>
+<td><code>IScrollProvider</code></td>
+<td>Scrollback navigation</td>
+</tr>
+<tr>
+<td><code>IValueProvider</code></td>
+<td>Active input line content</td>
+</tr>
+</tbody>
+</table>
+<p>All UIA calls are serviced on the UI thread. This is a Windows requirement.</p>
+<h3 id="event-raising-and-throttling">Event raising and throttling</h3>
+<p>Terminal output can produce thousands of lines per second. Raising a UIA event for every line would flood screen readers. The <code>EventThrottler</code> batches events into 100ms windows.</p>
+<pre><code class="language-rust">pub struct EventThrottler {
+    last_text_changed: Instant,
+    debounce_interval: Duration,  // 100ms
+    pending_text: String,
+    lines_since_announce: usize,
+    streaming_mode: bool,
+    streaming_threshold: usize,   // 10 lines/batch
+    // ...
+}
+</code></pre>
+<p>When output exceeds the streaming threshold (10 lines per batch), the throttler enters streaming mode. In streaming mode, <code>UiaRaiseNotificationEvent</code> uses <code>NotificationProcessing_MostRecent</code> so only the latest batch is spoken, preventing the screen reader from queuing hundreds of announcements.</p>
+<p>Events raised:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UIA_Text_TextChangedEventId</code></td>
+<td>Terminal output arrives</td>
+</tr>
+<tr>
+<td><code>UIA_LiveRegionChangedEventId</code></td>
+<td>New output in active prompt area</td>
+</tr>
+<tr>
+<td><code>UIA_AutomationFocusChangedEventId</code></td>
+<td>Active pane changes</td>
+</tr>
+<tr>
+<td><code>UIA_StructureChangedEventId</code></td>
+<td>Command blocks added/removed</td>
+</tr>
+<tr>
+<td>Notification (ActionCompleted)</td>
+<td>Command completes (includes exit code)</td>
+</tr>
+<tr>
+<td>Notification (ActionCompleted)</td>
+<td>Mode changes (zoom, read-only, broadcast)</td>
+</tr>
+<tr>
+<td>Notification (ItemAdded)</td>
+<td>Inline image placed</td>
+</tr>
+</tbody>
+</table>
+<h3 id="screen-reader-compatibility">Screen reader compatibility</h3>
+<p>The UIA provider is tested against three screen readers:</p>
+<ul>
+<li><strong>Narrator.</strong> Reads UIA natively. Supports <code>TextPattern</code>, grid navigation, landmarks, live regions. Primary test target.</li>
+<li><strong>NVDA.</strong> UIA support via <code>UIAHandler</code>. Browse mode uses the document structure. Live regions appear as toast-style notifications.</li>
+<li><strong>JAWS.</strong> UIA support but historically prefers MSAA/IAccessible. May need a JAWS script for full compatibility.</li>
+</ul>
+<h3 id="mode-change-announcements">Mode change announcements</h3>
+<p>When a pane enters or exits a mode (zoom, read-only, broadcast input), a UIA notification is raised with <code>NotificationProcessing_ImportantAll</code>. The announcement text is "{mode} enabled" or "{mode} disabled".</p>
+<h3 id="image-announcements">Image announcements</h3>
+<p>When an inline image is placed on the grid, a UIA notification is raised. The message includes the protocol name, pixel dimensions, and filename when available (iTerm2 provides filenames, Sixel and Kitty do not).</p>
+<pre><code>&quot;iTerm2 image: photo.png (800x600 pixels)&quot;
+&quot;Sixel image: 320x240 pixels, 40x15 cells&quot;
+</code></pre>
+<h2 id="security-model">Security Model</h2>
+<h3 id="osc-52-clipboard-policy">OSC 52 clipboard policy</h3>
+<p>Programs running in the terminal can request clipboard access via OSC 52. The default policy is write-only:</p>
+<pre><code class="language-rust">pub enum Osc52Policy {
+    WriteOnly,   // default: programs can paste to clipboard, not read
+    ReadWrite,   // programs can both read and write
+    Disabled,    // OSC 52 completely blocked
+}
+</code></pre>
+<p>Write-only is the safe default. A malicious program cannot exfiltrate clipboard contents. Users who need bidirectional clipboard access (e.g., for tmux) can opt in.</p>
+<h3 id="url-scheme-filtering">URL scheme filtering</h3>
+<p>URLs detected in terminal output are filtered before being exposed to the accessibility tree or opened by the user.</p>
+<pre><code class="language-rust">pub fn is_safe_url_scheme(url: &amp;str) -&gt; bool {
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with(&quot;http://&quot;)
+        || lower.starts_with(&quot;https://&quot;)
+        || lower.starts_with(&quot;ftp://&quot;)
+}
+</code></pre>
+<p>Blocked schemes: <code>file://</code>, <code>javascript:</code>, <code>data:</code>. A program printing <code>javascript:alert(1)</code> will not produce a clickable or screen-reader-navigable link.</p>
+<h3 id="osc-133-command-text-sanitization">OSC 133 command text sanitization</h3>
+<p>Command text extracted from shell integration markers is sanitized before display:</p>
+<ol>
+<li>ANSI escape sequences are stripped (regex-based).</li>
+<li>Control characters (0x00-0x1F except tab, newline, carriage return) are replaced with spaces.</li>
+<li>Text is truncated to 1,024 characters.</li>
+</ol>
+<p>This prevents a malicious program from injecting fake command markers with escape sequences or excessively long strings.</p>
+<h3 id="lua-config-sandbox">Lua config sandbox</h3>
+<p>User configuration can include Lua scripts (via mlua's Luau backend). The Lua VM is sandboxed:</p>
+<ul>
+<li><code>os</code> is removed. Even though Luau's <code>os</code> only exposes time functions, removing it eliminates future risk if mlua adds more members.</li>
+<li><code>debug</code> is removed. <code>debug.info</code> can leak implementation details.</li>
+<li><code>io</code> and <code>loadfile</code> are already absent in Luau.</li>
+<li>Safe libraries remain: <code>string</code>, <code>table</code>, <code>math</code>, <code>utf8</code>, <code>bit32</code>, <code>buffer</code>.</li>
+</ul>
+<pre><code class="language-rust">pub fn sandbox_lua(lua: &amp;mlua::Lua) -&gt; LuaResult&lt;()&gt; {
+    let globals = lua.globals();
+    globals.set(&quot;os&quot;, mlua::Value::Nil)?;
+    globals.set(&quot;debug&quot;, mlua::Value::Nil)?;
+    Ok(())
+}
+</code></pre>
+<h3 id="apc-payload-size-limits">APC payload size limits</h3>
+<p>APC data (used by Kitty graphics protocol) is capped at 16 MB. Bytes beyond the cap are silently dropped. This prevents memory exhaustion from a program sending an unbounded APC payload.</p>
+<h2 id="configuration-system">Configuration System</h2>
+<h3 id="toml-primary-lua-for-programmable-config">TOML primary, Lua for programmable config</h3>
+<p>The primary configuration file is TOML. It covers profiles, color schemes, keybindings, appearance, terminal behavior, and accessibility settings. TOML was chosen over JSON (no comments) and YAML (indentation-sensitive, ambiguous types).</p>
+<p>Lua (via mlua's Luau backend) is available from day one for programmable configuration: event hooks, dynamic themes, computed keybindings. Lua scripts run in the sandboxed VM described above.</p>
+<h3 id="hot-reload">Hot reload</h3>
+<p>A <code>ConfigWatcher</code> thread monitors the configuration directory for file changes. When a change is detected, the config is re-parsed and a <code>ConfigDelta</code> is sent to the main thread. The main thread applies changes without restarting: color scheme updates, font changes (the glyph atlas is rebuilt), keybinding remaps, and accessibility settings.</p>
+<h3 id="json-schema-for-ide-support">JSON Schema for IDE support</h3>
+<p>A <code>config.schema.json</code> file is generated from the <code>Config</code> struct. Editors with JSON Schema support (VS Code with the Even Better TOML extension) get autocompletion and validation for the TOML config.</p>
+<h3 id="accessibility-config-section">Accessibility config section</h3>
+<p>The configuration includes a dedicated accessibility section: screen reader verbosity (<code>all</code>, <code>commands-only</code>, <code>errors-only</code>, <code>silent</code>), long-running command notification threshold, and announce mode changes. An accessibility-focused terminal must be configurable without editing files, so a GUI settings panel is provided alongside the config files.</p>
+<h2 id="plugin-system">Plugin System</h2>
+<h3 id="plugin-manifest-format">Plugin manifest format</h3>
+<p>Plugins are described by a TOML manifest:</p>
+<pre><code class="language-rust">pub struct PluginManifest {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub entry_point: String,          // path to Lua entry-point file
+    pub events: Vec&lt;String&gt;,          // subscribed events
+}
+</code></pre>
+<p>The <code>PluginRegistry</code> tracks loaded plugins and indexes them by event subscription.</p>
+<h3 id="event-dispatch-model">Event dispatch model</h3>
+<p>The plugin system defines a fixed set of events:</p>
+<table>
+<thead>
+<tr>
+<th>Event name</th>
+<th>Trigger</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>on_tab_created</code></td>
+<td>A new tab is opened</td>
+</tr>
+<tr>
+<td><code>on_tab_closed</code></td>
+<td>A tab is closed</td>
+</tr>
+<tr>
+<td><code>on_command_complete</code></td>
+<td>A shell command finishes (with command text, exit code, duration)</td>
+</tr>
+<tr>
+<td><code>on_output</code></td>
+<td>Terminal output is received</td>
+</tr>
+<tr>
+<td><code>on_config_reloaded</code></td>
+<td>Configuration files are reloaded</td>
+</tr>
+</tbody>
+</table>
+<p>When an event fires, the registry finds all plugins subscribed to that event. For each plugin, the Lua entry-point file is loaded and the matching handler function is called with a Lua table containing event-specific fields. If the handler does not exist, the call is a no-op. If the handler raises an error, the error is logged but does not crash the terminal.</p>
+<h3 id="lua-execution-sandbox">Lua execution sandbox</h3>
+<p>Plugin Lua code runs in the same sandboxed VM as configuration scripts. Plugins cannot access the filesystem, execute system commands, or load arbitrary Lua files.</p>
+<h2 id="build-and-distribution">Build and Distribution</h2>
+<h3 id="cargo-workspace">Cargo workspace</h3>
+<p>The workspace uses Rust 2024 edition with resolver v2. Release builds use thin LTO, single codegen unit, and symbol stripping for small binaries.</p>
+<pre><code class="language-toml">[profile.release]
+lto = &quot;thin&quot;
+codegen-units = 1
+strip = &quot;symbols&quot;
+</code></pre>
+<h3 id="cicd">CI/CD</h3>
+<p>GitHub Actions runs on every push and pull request:</p>
+<ol>
+<li><code>cargo fmt --all -- --check</code> (zero formatting issues).</li>
+<li><code>cargo clippy --workspace -- -D warnings</code> (zero warnings).</li>
+<li><code>cargo test --workspace</code> (all tests pass).</li>
+</ol>
+<p>Builds target x64 and ARM64.</p>
+<h3 id="installers">Installers</h3>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Tool</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EXE installer</td>
+<td>InnoSetup</td>
+<td>Standard Windows installer with Start Menu shortcuts and PATH setup</td>
+</tr>
+<tr>
+<td>MSI</td>
+<td>WiX</td>
+<td>Enterprise deployment via Group Policy and SCCM</td>
+</tr>
+<tr>
+<td>Portable</td>
+<td>ZIP</td>
+<td>No installation needed, runs from any directory</td>
+</tr>
+</tbody>
+</table>
+<h3 id="winget-manifest">WinGet manifest</h3>
+<p>A WinGet manifest is maintained for <code>winget install wixen-terminal</code>.</p>
+<h2 id="testing-strategy">Testing Strategy</h2>
+<h3 id="unit-tests-per-crate">Unit tests per crate</h3>
+<p>Each crate has focused unit tests for its public API. Tests run without a window, GPU, or PTY. The VT parser is tested with raw byte sequences. The terminal state machine is tested by feeding <code>Action</code> values and inspecting the grid. The accessibility tree is tested by providing mock <code>CommandBlock</code> data and verifying tree structure.</p>
+<h3 id="property-based-testing-with-proptest">Property-based testing with proptest</h3>
+<p>Six fuzz targets use proptest to find edge cases:</p>
+<ul>
+<li><code>osc133_never_panics</code>: arbitrary marker strings, params, and cursor rows.</li>
+<li><code>osc7_never_panics</code>: arbitrary URIs.</li>
+<li><code>full_cycle_produces_one_block</code>: random row positions and exit codes.</li>
+<li><code>prune_enforces_limit</code>: random block counts and max limits.</li>
+<li><code>generation_monotonically_increases</code>: random cycle counts.</li>
+<li>URL detection on arbitrary strings.</li>
+</ul>
+<h3 id="vt-conformance-tests">VT conformance tests</h3>
+<p>Integration tests feed known VT sequences through the parser and terminal, then verify grid state against expected output. These cover cursor movement, scrolling, SGR attributes, OSC sequences, and DCS payloads.</p>
+<h3 id="accessibility-tree-integration-tests">Accessibility tree integration tests</h3>
+<p>Tests verify that the accessibility tree correctly maps shell integration blocks to <code>A11yNode</code> structures. They check semantic role assignment, error detection via exit codes, hyperlink detection in output, and the tree rebuild path.</p>
+<h3 id="performance-benchmarks">Performance benchmarks</h3>
+<p>Three Criterion benchmark suites run against the hot paths:</p>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>What it measures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vt_parser</code></td>
+<td>Parser throughput (bytes/second for ASCII, mixed content, heavy-CSI streams)</td>
+</tr>
+<tr>
+<td><code>terminal_grid</code></td>
+<td>Grid operations (cell writes, scrolling, line wrapping)</td>
+</tr>
+<tr>
+<td><code>scrollback</code></td>
+<td>Compression throughput and cold-tier decompression latency</td>
+</tr>
+</tbody>
+</table>
+<h2 id="key-design-decisions">Key Design Decisions</h2>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Chosen</th>
+<th>Rejected</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VT parser</td>
+<td>Custom state machine</td>
+<td><code>vte</code> crate</td>
+<td>Full control over OSC 133 for accessibility. Custom extensions. Performance tuning (ASCII fast path). Subparameter parsing.</td>
+</tr>
+<tr>
+<td>GPU API</td>
+<td>wgpu</td>
+<td>Direct3D 11, OpenGL</td>
+<td>D3D12 primary with D3D11/Vulkan fallback. Pure Rust. No C++ build deps. Software fallback via softbuffer. Active maintenance.</td>
+</tr>
+<tr>
+<td>Windowing</td>
+<td>Raw Win32 via windows-rs</td>
+<td>winit</td>
+<td>Full HWND/WndProc control required for UIA provider integration, DWM APIs (Mica/Acrylic), and custom title bar. winit abstracts away the control UIA needs.</td>
+</tr>
+<tr>
+<td>Text shaping</td>
+<td>DirectWrite via windows-rs</td>
+<td>rustybuzz + swash</td>
+<td>Best ClearType on Windows. System text scaling respect. High-contrast mode. Native font fallback. These matter for accessibility.</td>
+</tr>
+<tr>
+<td>Config format</td>
+<td>TOML + Lua</td>
+<td>JSON, YAML</td>
+<td>TOML has comments and clear types. Lua provides programmability (event hooks, dynamic themes). JSON lacks comments. YAML has ambiguous type coercion.</td>
+</tr>
+<tr>
+<td>A11y tree depth</td>
+<td>Full-depth structured tree</td>
+<td>Flat text buffer (like Windows Terminal)</td>
+<td>Core differentiator. Command blocks, semantic roles, error detection, URL exposure. Maximum screen reader value.</td>
+</tr>
+<tr>
+<td>Scrollback</td>
+<td>Infinite with zstd compression</td>
+<td>Fixed-size ring buffer</td>
+<td>No arbitrary line limit. Hot/cold tier keeps memory bounded. zstd at level 3 compresses terminal text well (high redundancy).</td>
+</tr>
+<tr>
+<td>Multi-window</td>
+<td>Single process now, designed for client-server later</td>
+<td>Client-server from day one</td>
+<td>Simpler initial architecture. Message-passing abstractions (channels, <code>wixen-ipc</code> crate) can become IPC. Migration path is clear without premature complexity.</td>
+</tr>
+<tr>
+<td>Lua runtime</td>
+<td>Luau (via mlua)</td>
+<td>Standard Lua 5.4</td>
+<td>Luau has built-in sandboxing (no <code>io</code>, <code>loadfile</code>, <code>dofile</code> by default). Type annotations. Better error messages.</td>
+</tr>
+<tr>
+<td>PTY</td>
+<td>ConPTY via portable-pty</td>
+<td>Raw Win32 console API</td>
+<td>ConPTY is the supported pseudo-terminal API on Windows 10+. portable-pty handles the FFI boilerplate.</td>
+</tr>
+</tbody>
+</table>
+</main>
+
+<footer role="contentinfo" style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.85rem; opacity: 0.7;">
+<p>Wixen Terminal. Licensed under MIT and Apache 2.0.</p>
+</footer>
+</body>
+</html>

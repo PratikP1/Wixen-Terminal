@@ -1,0 +1,1170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "description": "Top-level configuration.",
+  "type": "object",
+  "properties": {
+    "accessibility": {
+      "description": "Accessibility settings — screen reader behavior, contrast, motion.",
+      "$ref": "#/$defs/AccessibilityConfig",
+      "default": {
+        "announce_command_complete": true,
+        "announce_exit_codes": true,
+        "announce_images": true,
+        "announce_pane_position": true,
+        "announce_tab_details": true,
+        "audio_command_complete": true,
+        "audio_errors": true,
+        "audio_feedback": false,
+        "audio_progress": true,
+        "high_contrast": "auto",
+        "live_region_politeness": "polite",
+        "min_contrast_ratio": 4.5,
+        "output_debounce_ms": 100,
+        "prompt_detection": "auto",
+        "reduced_motion": "auto",
+        "screen_reader_output": "auto"
+      }
+    },
+    "colors": {
+      "$ref": "#/$defs/ColorConfig",
+      "default": {
+        "background": "#0d0d14",
+        "cursor": "#cccccc",
+        "foreground": "#d9d9d9",
+        "palette": [],
+        "selection_bg": "#264f78",
+        "theme": null
+      }
+    },
+    "font": {
+      "$ref": "#/$defs/FontConfig",
+      "default": {
+        "fallback_fonts": [
+          "Segoe UI Emoji",
+          "Segoe UI Symbol",
+          "MS Gothic"
+        ],
+        "family": "Cascadia Code",
+        "font_path": "",
+        "ligatures": true,
+        "line_height": 1.0,
+        "size": 14.0
+      }
+    },
+    "keybindings": {
+      "$ref": "#/$defs/KeybindingsConfig",
+      "default": {
+        "bindings": [
+          {
+            "action": "new_tab",
+            "chord": "ctrl+shift+t"
+          },
+          {
+            "action": "close_pane",
+            "chord": "ctrl+shift+w"
+          },
+          {
+            "action": "next_tab",
+            "chord": "ctrl+tab"
+          },
+          {
+            "action": "prev_tab",
+            "chord": "ctrl+shift+tab"
+          },
+          {
+            "action": "split_horizontal",
+            "chord": "alt+shift+plus"
+          },
+          {
+            "action": "split_vertical",
+            "chord": "alt+shift+minus"
+          },
+          {
+            "action": "copy",
+            "chord": "ctrl+shift+c"
+          },
+          {
+            "action": "paste",
+            "chord": "ctrl+shift+v"
+          },
+          {
+            "action": "find",
+            "chord": "ctrl+shift+f"
+          },
+          {
+            "action": "command_palette",
+            "chord": "ctrl+shift+p"
+          },
+          {
+            "action": "settings",
+            "chord": "ctrl+comma"
+          },
+          {
+            "action": "toggle_fullscreen",
+            "chord": "f11"
+          },
+          {
+            "action": "zoom_in",
+            "chord": "ctrl+plus"
+          },
+          {
+            "action": "zoom_out",
+            "chord": "ctrl+minus"
+          },
+          {
+            "action": "zoom_reset",
+            "chord": "ctrl+0"
+          },
+          {
+            "action": "select_all",
+            "chord": "ctrl+shift+a"
+          },
+          {
+            "action": "scroll_up_page",
+            "chord": "shift+pageup"
+          },
+          {
+            "action": "scroll_down_page",
+            "chord": "shift+pagedown"
+          },
+          {
+            "action": "scroll_to_top",
+            "chord": "ctrl+home"
+          },
+          {
+            "action": "scroll_to_bottom",
+            "chord": "ctrl+end"
+          },
+          {
+            "action": "jump_to_previous_prompt",
+            "chord": "ctrl+shift+up"
+          },
+          {
+            "action": "jump_to_next_prompt",
+            "chord": "ctrl+shift+down"
+          },
+          {
+            "action": "select_tab_1",
+            "chord": "ctrl+1"
+          },
+          {
+            "action": "select_tab_2",
+            "chord": "ctrl+2"
+          },
+          {
+            "action": "select_tab_3",
+            "chord": "ctrl+3"
+          },
+          {
+            "action": "select_tab_4",
+            "chord": "ctrl+4"
+          },
+          {
+            "action": "select_tab_5",
+            "chord": "ctrl+5"
+          },
+          {
+            "action": "select_tab_6",
+            "chord": "ctrl+6"
+          },
+          {
+            "action": "select_tab_7",
+            "chord": "ctrl+7"
+          },
+          {
+            "action": "select_tab_8",
+            "chord": "ctrl+8"
+          },
+          {
+            "action": "select_tab_9",
+            "chord": "ctrl+9"
+          },
+          {
+            "action": "focus_pane_left",
+            "chord": "alt+left"
+          },
+          {
+            "action": "focus_pane_right",
+            "chord": "alt+right"
+          },
+          {
+            "action": "focus_pane_up",
+            "chord": "alt+up"
+          },
+          {
+            "action": "focus_pane_down",
+            "chord": "alt+down"
+          },
+          {
+            "action": "resize_pane_shrink",
+            "chord": "alt+shift+left"
+          },
+          {
+            "action": "resize_pane_grow",
+            "chord": "alt+shift+right"
+          },
+          {
+            "action": "duplicate_tab",
+            "chord": "ctrl+shift+d"
+          },
+          {
+            "action": "new_window",
+            "chord": "ctrl+shift+n"
+          },
+          {
+            "action": "open_config_file",
+            "chord": "ctrl+shift+comma"
+          },
+          {
+            "action": "find_next",
+            "chord": "f3"
+          },
+          {
+            "action": "find_previous",
+            "chord": "shift+f3"
+          },
+          {
+            "action": "toggle_fullscreen",
+            "chord": "alt+enter"
+          },
+          {
+            "action": "toggle_zoom",
+            "chord": "ctrl+shift+z"
+          },
+          {
+            "action": "toggle_read_only",
+            "chord": "ctrl+shift+r"
+          },
+          {
+            "action": "toggle_broadcast_input",
+            "chord": "ctrl+shift+b"
+          },
+          {
+            "action": "clear_terminal",
+            "chord": "ctrl+shift+l"
+          },
+          {
+            "action": "clear_scrollback",
+            "chord": "ctrl+shift+k"
+          },
+          {
+            "action": "open_help",
+            "chord": "f1"
+          }
+        ]
+      }
+    },
+    "profiles": {
+      "description": "Named shell profiles. If empty, a single profile is synthesized from `[shell]`.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Profile"
+      }
+    },
+    "shell": {
+      "$ref": "#/$defs/ShellConfig",
+      "default": {
+        "args": [],
+        "program": "",
+        "working_directory": ""
+      }
+    },
+    "ssh": {
+      "description": "SSH connection targets.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SshTarget"
+      }
+    },
+    "terminal": {
+      "$ref": "#/$defs/TerminalConfig",
+      "default": {
+        "bell": "both",
+        "command_notify_threshold": 10,
+        "cursor_blink": true,
+        "cursor_blink_ms": 530,
+        "cursor_style": "block",
+        "osc52": "write-only",
+        "scrollback_lines": 0,
+        "session_restore": "never"
+      }
+    },
+    "window": {
+      "$ref": "#/$defs/WindowConfig",
+      "default": {
+        "background": "opaque",
+        "background_image": "",
+        "background_image_opacity": 0.30000001192092896,
+        "dark_title_bar": true,
+        "height": 768,
+        "opacity": 1.0,
+        "padding": {
+          "bottom": 4,
+          "left": 4,
+          "right": 4,
+          "top": 4
+        },
+        "quake_hotkey": "win+backtick",
+        "quake_mode": false,
+        "renderer": "auto",
+        "scrollbar": "auto",
+        "tab_bar": "auto-hide",
+        "title": "Wixen Terminal",
+        "width": 1024
+      }
+    }
+  },
+  "$defs": {
+    "AccessibilityConfig": {
+      "description": "Accessibility configuration.\n\nControls screen reader behavior, contrast enforcement, and motion\npreferences. All settings have sensible defaults — screen reader users\nget a good experience without editing config.",
+      "type": "object",
+      "properties": {
+        "announce_command_complete": {
+          "description": "Announce when a command finishes (includes exit code and line count).",
+          "type": "boolean",
+          "default": true
+        },
+        "announce_exit_codes": {
+          "description": "Include exit codes in command completion announcements.",
+          "type": "boolean",
+          "default": true
+        },
+        "announce_images": {
+          "description": "Announce inline images when placed (Sixel, iTerm2, Kitty).",
+          "type": "boolean",
+          "default": true
+        },
+        "announce_pane_position": {
+          "description": "Announce pane position when switching (e.g., \"Left pane, 1 of 3\").",
+          "type": "boolean",
+          "default": true
+        },
+        "announce_tab_details": {
+          "description": "Announce tab details when switching (shell type, cwd, status).",
+          "type": "boolean",
+          "default": true
+        },
+        "audio_command_complete": {
+          "description": "Enable audio tone specifically for command completion.",
+          "type": "boolean",
+          "default": true
+        },
+        "audio_errors": {
+          "description": "Enable audio tone specifically for error/warning detection.",
+          "type": "boolean",
+          "default": true
+        },
+        "audio_feedback": {
+          "description": "Enable audio feedback tones (beeps) for terminal events.\n\nWhen true, the terminal plays short tones for command completion,\nerrors, progress updates, and mode changes. Works independently\nof screen readers — useful for any user who wants audio cues.",
+          "type": "boolean",
+          "default": false
+        },
+        "audio_progress": {
+          "description": "Enable audio tone specifically for progress bar updates.",
+          "type": "boolean",
+          "default": true
+        },
+        "high_contrast": {
+          "description": "High contrast mode: `\"auto\"` follows Windows system setting.",
+          "type": "string",
+          "default": "auto"
+        },
+        "live_region_politeness": {
+          "description": "UIA live region politeness for output announcements.\n\n`\"polite\"` queues behind current speech; `\"assertive\"` interrupts.",
+          "type": "string",
+          "default": "polite"
+        },
+        "min_contrast_ratio": {
+          "description": "Minimum foreground/background contrast ratio (WCAG AA = 4.5).\n\nWhen terminal programs set colors below this threshold, Wixen\nadjusts the color to meet it. Set to 0.0 to disable.",
+          "type": "number",
+          "format": "float",
+          "default": 4.5
+        },
+        "output_debounce_ms": {
+          "description": "Milliseconds between screen reader output announcements.\n\nControls how often batched terminal output is sent to the screen reader.\nLower values feel more responsive but can overwhelm speech; higher values\ngive a pause between chunks so users can follow along. Range: 50–1000.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "prompt_detection": {
+          "description": "How prompts are detected for command block structure.",
+          "$ref": "#/$defs/PromptDetection",
+          "default": "auto"
+        },
+        "reduced_motion": {
+          "description": "Reduced motion: `\"auto\"` follows Windows system setting.\n\nWhen active, disables cursor blink, visual bell flash, and\nsmooth scrolling animations.",
+          "type": "string",
+          "default": "auto"
+        },
+        "screen_reader_output": {
+          "description": "How much terminal output the screen reader announces.",
+          "$ref": "#/$defs/ScreenReaderVerbosity",
+          "default": "auto"
+        }
+      }
+    },
+    "BackgroundStyle": {
+      "description": "Window background style.",
+      "oneOf": [
+        {
+          "description": "Standard opaque background.",
+          "type": "string",
+          "const": "opaque"
+        },
+        {
+          "description": "Acrylic blur (Windows 11 22H2+).",
+          "type": "string",
+          "const": "acrylic"
+        },
+        {
+          "description": "Mica material (Windows 11 22H2+).",
+          "type": "string",
+          "const": "mica"
+        }
+      ]
+    },
+    "BellStyle": {
+      "description": "Bell notification style.",
+      "oneOf": [
+        {
+          "description": "Play a system sound.",
+          "type": "string",
+          "const": "audible"
+        },
+        {
+          "description": "Flash the window/taskbar.",
+          "type": "string",
+          "const": "visual"
+        },
+        {
+          "description": "Both sound and flash.",
+          "type": "string",
+          "const": "both"
+        },
+        {
+          "description": "No bell notification.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "ColorConfig": {
+      "description": "Color scheme configuration.",
+      "type": "object",
+      "properties": {
+        "background": {
+          "description": "Background color as hex (e.g., \"#0d0d14\").",
+          "type": "string",
+          "default": "#0d0d14"
+        },
+        "cursor": {
+          "description": "Cursor color as hex.",
+          "type": "string",
+          "default": "#cccccc"
+        },
+        "foreground": {
+          "description": "Foreground color as hex (e.g., \"#d9d9d9\").",
+          "type": "string",
+          "default": "#d9d9d9"
+        },
+        "palette": {
+          "description": "ANSI 16-color palette overrides (indexed 0-15).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "selection_bg": {
+          "description": "Selection background color as hex.",
+          "type": "string",
+          "default": "#264f78"
+        },
+        "theme": {
+          "description": "Built-in theme name (e.g., \"dracula\", \"catppuccin-mocha\").\nIf set, provides base colors; individual fields below override the theme.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "FontConfig": {
+      "description": "Font configuration.",
+      "type": "object",
+      "properties": {
+        "fallback_fonts": {
+          "description": "Fallback font families tried when the primary font lacks a glyph.",
+          "type": "array",
+          "default": [
+            "Segoe UI Emoji",
+            "Segoe UI Symbol",
+            "MS Gothic"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "family": {
+          "description": "Font family name (DirectWrite lookup).",
+          "type": "string",
+          "default": "Cascadia Code"
+        },
+        "font_path": {
+          "description": "Path to a font file (.ttf/.otf) to load directly instead of by family name.\n\nWhen non-empty, this takes priority over `family`.",
+          "type": "string",
+          "default": ""
+        },
+        "ligatures": {
+          "description": "Enable programming ligatures (e.g., =>, ->, != in Fira Code / Cascadia Code).",
+          "type": "boolean",
+          "default": true
+        },
+        "line_height": {
+          "description": "Line height multiplier (1.0 = tight, 1.2 = comfortable).",
+          "type": "number",
+          "format": "float",
+          "default": 1.0
+        },
+        "size": {
+          "description": "Font size in points.",
+          "type": "number",
+          "format": "float",
+          "default": 14.0
+        }
+      }
+    },
+    "Keybinding": {
+      "description": "A single keybinding entry.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Action identifier, e.g. \"new_tab\", \"close_tab\", \"send_text\".",
+          "type": "string"
+        },
+        "args": {
+          "description": "Optional argument for the action (e.g., the text to send for \"send_text\").\n\nSupports escape sequences: `\\n` (LF), `\\r` (CR), `\\t` (tab), `\\x1b` (ESC),\n`\\\\` (backslash).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "chord": {
+          "description": "Key chord string, normalized: lowercase, modifiers sorted alphabetically.\nExample: \"ctrl+shift+t\"",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chord",
+        "action"
+      ]
+    },
+    "KeybindingsConfig": {
+      "description": "Keybinding configuration.",
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "array",
+          "default": [
+            {
+              "action": "new_tab",
+              "chord": "ctrl+shift+t"
+            },
+            {
+              "action": "close_pane",
+              "chord": "ctrl+shift+w"
+            },
+            {
+              "action": "next_tab",
+              "chord": "ctrl+tab"
+            },
+            {
+              "action": "prev_tab",
+              "chord": "ctrl+shift+tab"
+            },
+            {
+              "action": "split_horizontal",
+              "chord": "alt+shift+plus"
+            },
+            {
+              "action": "split_vertical",
+              "chord": "alt+shift+minus"
+            },
+            {
+              "action": "copy",
+              "chord": "ctrl+shift+c"
+            },
+            {
+              "action": "paste",
+              "chord": "ctrl+shift+v"
+            },
+            {
+              "action": "find",
+              "chord": "ctrl+shift+f"
+            },
+            {
+              "action": "command_palette",
+              "chord": "ctrl+shift+p"
+            },
+            {
+              "action": "settings",
+              "chord": "ctrl+comma"
+            },
+            {
+              "action": "toggle_fullscreen",
+              "chord": "f11"
+            },
+            {
+              "action": "zoom_in",
+              "chord": "ctrl+plus"
+            },
+            {
+              "action": "zoom_out",
+              "chord": "ctrl+minus"
+            },
+            {
+              "action": "zoom_reset",
+              "chord": "ctrl+0"
+            },
+            {
+              "action": "select_all",
+              "chord": "ctrl+shift+a"
+            },
+            {
+              "action": "scroll_up_page",
+              "chord": "shift+pageup"
+            },
+            {
+              "action": "scroll_down_page",
+              "chord": "shift+pagedown"
+            },
+            {
+              "action": "scroll_to_top",
+              "chord": "ctrl+home"
+            },
+            {
+              "action": "scroll_to_bottom",
+              "chord": "ctrl+end"
+            },
+            {
+              "action": "jump_to_previous_prompt",
+              "chord": "ctrl+shift+up"
+            },
+            {
+              "action": "jump_to_next_prompt",
+              "chord": "ctrl+shift+down"
+            },
+            {
+              "action": "select_tab_1",
+              "chord": "ctrl+1"
+            },
+            {
+              "action": "select_tab_2",
+              "chord": "ctrl+2"
+            },
+            {
+              "action": "select_tab_3",
+              "chord": "ctrl+3"
+            },
+            {
+              "action": "select_tab_4",
+              "chord": "ctrl+4"
+            },
+            {
+              "action": "select_tab_5",
+              "chord": "ctrl+5"
+            },
+            {
+              "action": "select_tab_6",
+              "chord": "ctrl+6"
+            },
+            {
+              "action": "select_tab_7",
+              "chord": "ctrl+7"
+            },
+            {
+              "action": "select_tab_8",
+              "chord": "ctrl+8"
+            },
+            {
+              "action": "select_tab_9",
+              "chord": "ctrl+9"
+            },
+            {
+              "action": "focus_pane_left",
+              "chord": "alt+left"
+            },
+            {
+              "action": "focus_pane_right",
+              "chord": "alt+right"
+            },
+            {
+              "action": "focus_pane_up",
+              "chord": "alt+up"
+            },
+            {
+              "action": "focus_pane_down",
+              "chord": "alt+down"
+            },
+            {
+              "action": "resize_pane_shrink",
+              "chord": "alt+shift+left"
+            },
+            {
+              "action": "resize_pane_grow",
+              "chord": "alt+shift+right"
+            },
+            {
+              "action": "duplicate_tab",
+              "chord": "ctrl+shift+d"
+            },
+            {
+              "action": "new_window",
+              "chord": "ctrl+shift+n"
+            },
+            {
+              "action": "open_config_file",
+              "chord": "ctrl+shift+comma"
+            },
+            {
+              "action": "find_next",
+              "chord": "f3"
+            },
+            {
+              "action": "find_previous",
+              "chord": "shift+f3"
+            },
+            {
+              "action": "toggle_fullscreen",
+              "chord": "alt+enter"
+            },
+            {
+              "action": "toggle_zoom",
+              "chord": "ctrl+shift+z"
+            },
+            {
+              "action": "toggle_read_only",
+              "chord": "ctrl+shift+r"
+            },
+            {
+              "action": "toggle_broadcast_input",
+              "chord": "ctrl+shift+b"
+            },
+            {
+              "action": "clear_terminal",
+              "chord": "ctrl+shift+l"
+            },
+            {
+              "action": "clear_scrollback",
+              "chord": "ctrl+shift+k"
+            },
+            {
+              "action": "open_help",
+              "chord": "f1"
+            }
+          ],
+          "items": {
+            "$ref": "#/$defs/Keybinding"
+          }
+        }
+      }
+    },
+    "Osc52Policy": {
+      "description": "OSC 52 clipboard access policy.\n\nControls whether programs running in the terminal can read/write the system clipboard\nvia escape sequences. Write-only is the safe default — full read access could let a\nmalicious program silently exfiltrate clipboard contents.",
+      "oneOf": [
+        {
+          "description": "Programs can write to clipboard but not read it.",
+          "type": "string",
+          "const": "write-only"
+        },
+        {
+          "description": "Programs can both read and write clipboard.",
+          "type": "string",
+          "const": "read-write"
+        },
+        {
+          "description": "Clipboard access via escape sequences is completely disabled.",
+          "type": "string",
+          "const": "disabled"
+        }
+      ]
+    },
+    "Padding": {
+      "description": "Terminal content padding in pixels.\n\nSpace between the window edge and the terminal grid.\nA single value sets all four sides; otherwise specify individually.",
+      "type": "object",
+      "properties": {
+        "bottom": {
+          "description": "Padding on the bottom side in pixels.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 4,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "left": {
+          "description": "Padding on the left side in pixels.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 4,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "right": {
+          "description": "Padding on the right side in pixels.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 4,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "top": {
+          "description": "Padding on the top side in pixels.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 4,
+          "maximum": 65535,
+          "minimum": 0
+        }
+      }
+    },
+    "Profile": {
+      "description": "A named shell profile.",
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Arguments to pass to the shell.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "is_default": {
+          "description": "Whether this is the default profile.",
+          "type": "boolean",
+          "default": false
+        },
+        "name": {
+          "description": "Display name (e.g., \"PowerShell\", \"Command Prompt\").",
+          "type": "string",
+          "default": "Default"
+        },
+        "program": {
+          "description": "Shell program to launch.",
+          "type": "string",
+          "default": ""
+        },
+        "working_directory": {
+          "description": "Working directory (empty = inherit).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "PromptDetection": {
+      "description": "Prompt detection strategy.",
+      "oneOf": [
+        {
+          "description": "Use shell integration (OSC 133) if available, fall back to heuristic.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Only use shell integration markers (OSC 133).",
+          "type": "string",
+          "const": "shell-integration"
+        },
+        {
+          "description": "Only use heuristic regex patterns.",
+          "type": "string",
+          "const": "heuristic"
+        },
+        {
+          "description": "Disable prompt detection entirely.",
+          "type": "string",
+          "const": "disabled"
+        }
+      ]
+    },
+    "ScreenReaderVerbosity": {
+      "description": "Screen reader output verbosity level.",
+      "oneOf": [
+        {
+          "description": "Detect screen reader presence and adjust automatically.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Announce all terminal output (default for screen reader users).",
+          "type": "string",
+          "const": "all"
+        },
+        {
+          "description": "Only announce command completions (prompt, exit code, summary).",
+          "type": "string",
+          "const": "commands-only"
+        },
+        {
+          "description": "Only announce errors (non-zero exit codes, detected error lines).",
+          "type": "string",
+          "const": "errors-only"
+        },
+        {
+          "description": "No automatic announcements — user navigates manually.",
+          "type": "string",
+          "const": "silent"
+        }
+      ]
+    },
+    "ScrollbarMode": {
+      "description": "Scrollbar display mode.",
+      "oneOf": [
+        {
+          "description": "Show scrollbar only when scrolled into history.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Always show the scrollbar.",
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "description": "Never show the scrollbar.",
+          "type": "string",
+          "const": "never"
+        }
+      ]
+    },
+    "ShellConfig": {
+      "description": "Shell configuration.",
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Arguments to pass to the shell.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "program": {
+          "description": "Shell program to launch (empty = auto-detect).",
+          "type": "string",
+          "default": ""
+        },
+        "working_directory": {
+          "description": "Working directory (empty = inherit).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "SshTarget": {
+      "description": "An SSH connection target stored in the config.",
+      "type": "object",
+      "properties": {
+        "extra_args": {
+          "description": "Additional ssh arguments (e.g., [\"-o\", \"StrictHostKeyChecking=no\"]).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "host": {
+          "description": "Remote host (hostname or IP).",
+          "type": "string",
+          "default": ""
+        },
+        "identity_file": {
+          "description": "Path to an identity/key file (empty = default).",
+          "type": "string",
+          "default": ""
+        },
+        "name": {
+          "description": "Display name for this connection (e.g., \"Production Server\").",
+          "type": "string",
+          "default": ""
+        },
+        "port": {
+          "description": "SSH port (default 22).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 22,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "user": {
+          "description": "Username on the remote host (empty = current user).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "TabBarMode": {
+      "description": "Tab bar display mode.",
+      "oneOf": [
+        {
+          "description": "Show tab bar only when there are 2+ tabs.",
+          "type": "string",
+          "const": "auto-hide"
+        },
+        {
+          "description": "Always show the tab bar.",
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "description": "Never show the tab bar.",
+          "type": "string",
+          "const": "never"
+        }
+      ]
+    },
+    "TerminalConfig": {
+      "description": "Terminal behavior configuration.",
+      "type": "object",
+      "properties": {
+        "bell": {
+          "description": "Bell style: \"audible\", \"visual\", \"both\", or \"none\".",
+          "$ref": "#/$defs/BellStyle",
+          "default": "both"
+        },
+        "command_notify_threshold": {
+          "description": "Notify when a command finishes after running for at least this many seconds\nand the window is not focused. 0 disables the notification.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 10,
+          "minimum": 0
+        },
+        "cursor_blink": {
+          "description": "Whether the cursor blinks.",
+          "type": "boolean",
+          "default": true
+        },
+        "cursor_blink_ms": {
+          "description": "Cursor blink interval in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 530,
+          "minimum": 0
+        },
+        "cursor_style": {
+          "description": "Cursor style: \"block\", \"underline\", or \"bar\".",
+          "type": "string",
+          "default": "block"
+        },
+        "osc52": {
+          "description": "OSC 52 clipboard access policy: \"write-only\" (default), \"read-write\", or \"disabled\".",
+          "$ref": "#/$defs/Osc52Policy",
+          "default": "write-only"
+        },
+        "scrollback_lines": {
+          "description": "Maximum scrollback lines (0 = infinite).",
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "session_restore": {
+          "description": "Session restore mode: \"never\" (default), \"always\", or \"ask\".",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "WindowConfig": {
+      "description": "Window configuration.",
+      "type": "object",
+      "properties": {
+        "background": {
+          "description": "Window background style: \"opaque\", \"acrylic\", or \"mica\".",
+          "$ref": "#/$defs/BackgroundStyle",
+          "default": "opaque"
+        },
+        "background_image": {
+          "description": "Path to a background image (empty = none). Supports PNG, JPEG, GIF.",
+          "type": "string",
+          "default": ""
+        },
+        "background_image_opacity": {
+          "description": "Background image opacity (0.0 = invisible, 1.0 = fully opaque). Default 0.3.",
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896
+        },
+        "dark_title_bar": {
+          "description": "Use dark title bar decoration.",
+          "type": "boolean",
+          "default": true
+        },
+        "height": {
+          "description": "Initial window height in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 768,
+          "minimum": 0
+        },
+        "opacity": {
+          "description": "Window opacity (0.0 = fully transparent, 1.0 = fully opaque).",
+          "type": "number",
+          "format": "float",
+          "default": 1.0
+        },
+        "padding": {
+          "description": "Terminal content padding in pixels.",
+          "$ref": "#/$defs/Padding",
+          "default": {
+            "bottom": 4,
+            "left": 4,
+            "right": 4,
+            "top": 4
+          }
+        },
+        "quake_hotkey": {
+          "description": "Quake-mode global hotkey (e.g., \"win+backtick\"). Default: \"win+backtick\".",
+          "type": "string",
+          "default": "win+backtick"
+        },
+        "quake_mode": {
+          "description": "Enable quake-mode: a global hotkey toggles the terminal window.",
+          "type": "boolean",
+          "default": false
+        },
+        "renderer": {
+          "description": "Renderer: \"auto\", \"gpu\", or \"software\".",
+          "type": "string",
+          "default": "auto"
+        },
+        "scrollbar": {
+          "description": "Scrollbar display mode: \"auto\" (when scrolled), \"always\", or \"never\".",
+          "$ref": "#/$defs/ScrollbarMode",
+          "default": "auto"
+        },
+        "tab_bar": {
+          "description": "Tab bar display mode: \"auto-hide\" (2+ tabs), \"always\", or \"never\".",
+          "$ref": "#/$defs/TabBarMode",
+          "default": "auto-hide"
+        },
+        "title": {
+          "description": "Window title.",
+          "type": "string",
+          "default": "Wixen Terminal"
+        },
+        "width": {
+          "description": "Initial window width in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

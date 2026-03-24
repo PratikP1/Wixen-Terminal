@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+# Winget manifest for Wixen Terminal
+#
+# To submit to winget-pkgs:
+#   1. Fork https://github.com/microsoft/winget-pkgs
+#   2. Copy this file to manifests/p/PratikP1/WixenTerminal/0.1.0/
+#   3. Update InstallerSha256 with the actual hash of the installer
+#   4. Open a PR
+#
+# To test locally:
+#   winget validate winget/PratikP1.WixenTerminal.yaml
+
+PackageIdentifier: PratikP1.WixenTerminal
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Pratik Patel
+PublisherUrl: https://github.com/PratikP1
+PackageName: Wixen Terminal
+PackageUrl: https://github.com/PratikP1/Wixen-Terminal
+License: MIT OR Apache-2.0
+LicenseUrl: https://github.com/PratikP1/Wixen-Terminal/blob/main/LICENSE-MIT
+ShortDescription: A fully accessible terminal emulator for Windows
+Description: >-
+  Wixen Terminal is a GPU-accelerated terminal emulator for Windows built in Rust
+  with structured UIA accessibility from day one. Screen reader users can navigate
+  command blocks, read output by region, and use the command palette and settings
+  without leaving the keyboard.
+Tags:
+  - terminal
+  - terminal-emulator
+  - accessibility
+  - screen-reader
+  - rust
+  - gpu
+MinimumOSVersion: 10.0.18362.0
+Installers:
+  - Architecture: x64
+    InstallerType: inno
+    InstallerUrl: https://github.com/PratikP1/Wixen-Terminal/releases/download/v0.1.0/wixen-terminal-0.1.0-setup.exe
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ManifestType: singleton
+ManifestVersion: 1.6.0

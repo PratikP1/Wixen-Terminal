@@ -1,0 +1,14 @@
+[package]
+name = "wixen-vt"
+description = "VT parser — CSI, OSC, DCS escape sequence processing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wixen-core = { path = "../wixen-core" }
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest = "1.10.0"

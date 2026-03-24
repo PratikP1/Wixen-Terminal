@@ -1,0 +1,23 @@
+[package]
+name = "wixen-ui"
+description = "Window chrome, tabs, splits, command palette, settings GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wixen-core = { path = "../wixen-core" }
+wixen-render = { path = "../wixen-render" }
+wixen-config = { path = "../wixen-config" }
+wixen-a11y = { path = "../wixen-a11y" }
+windows.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+raw-window-handle = "0.6"
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

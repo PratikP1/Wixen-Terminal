@@ -1,0 +1,1394 @@
+================================================================================
+COMPREHENSIVE TERMINAL EMULATOR FEATURE LIST
+Research Document -- March 2026
+================================================================================
+
+Terminal Emulators Referenced:
+  WT   = Windows Terminal (Microsoft)
+  Kit  = Kitty (Kovid Goyal)
+  Wez  = WezTerm (Wez Furlong)
+  Ala  = Alacritty
+  iT2  = iTerm2 (macOS)
+  Hyp  = Hyper (Electron-based)
+  Con  = Contour
+  Foot = foot (Wayland)
+  Gho  = Ghostty (Mitchell Hashimoto)
+  Rio  = Rio terminal
+
+Complexity Ratings:
+  [Low]    = Straightforward; well-defined spec, small surface area
+  [Medium] = Moderate; requires state management, some edge cases
+  [High]   = Complex; significant architecture, cross-cutting concerns
+  [V.High] = Very high; requires deep OS integration, rendering pipelines,
+             or protocol-level work
+
+
+================================================================================
+1. CORE TERMINAL FEATURES
+================================================================================
+
+1.1  TAB MANAGEMENT
+--------------------------------------------------------------------------------
+
+1.1.1  Create New Tab
+  What: Open a new terminal tab, optionally with a specific profile/shell.
+  Who:  WT, Kit, Wez, iT2, Hyp, Con, Gho, Rio
+  Note: Alacritty deliberately omits tabs (philosophy: use a WM or tmux).
+  Complexity: [Low] -- Spawn a PTY process, attach to a tab container widget.
+
+1.1.2  Close Tab
+  What: Terminate the shell process and remove the tab.
+  Who:  WT, Kit, Wez, iT2, Hyp, Con, Gho, Rio
+  Complexity: [Low] -- Send SIGHUP/close handle, remove UI element.
+
+1.1.3  Reorder Tabs (Drag and Drop)
+  What: Rearrange tab order by dragging tabs in the tab bar.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Requires drag-and-drop hit testing and tab bar
+  reflow logic.
+
+1.1.4  Rename Tab
+  What: Assign a custom title to a tab interactively or via escape sequence
+        (OSC 0 / OSC 2).
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Low] -- In-place text editing on the tab title widget plus
+  handling OSC sequences from the shell.
+
+1.1.5  Pin Tab
+  What: Mark a tab as pinned so it stays at the left of the tab bar and
+        cannot be accidentally closed.
+  Who:  iT2 (via arrangements), WT (partial, via settings workaround)
+  Note: Not widely implemented. Most terminals rely on protected/read-only
+        pane modes instead.
+  Complexity: [Low] -- UI flag on the tab model; filter close actions.
+
+1.1.6  Duplicate Tab
+  What: Clone the current tab, preserving profile, working directory, and
+        environment variables.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Requires capturing CWD (via OSC 7 or /proc),
+  profile settings, and environment.
+
+1.1.7  Tab Tear-off / Attach
+  What: Drag a tab out of a window to create a new window, or drag into an
+        existing window to attach it.
+  Who:  WT, iT2, Gho (partial)
+  Complexity: [High] -- Requires cross-window drag-and-drop, PTY handle
+  transfer, and window lifecycle management.
+
+1.1.8  Tab Color
+  What: Assign a custom color indicator to a tab for visual differentiation.
+  Who:  WT, iT2, Wez
+  Complexity: [Low] -- Color property on the tab model; render in tab bar.
+
+1.1.9  Tab Switcher (MRU / In-Order)
+  What: Overlay UI listing all open tabs for quick keyboard navigation,
+        optionally sorted by most-recently-used order.
+  Who:  WT (MRU and in-order modes), iT2, Wez
+  Complexity: [Medium] -- Requires tracking tab activation history and
+  rendering an overlay list.
+
+1.1.10 Move Tab to New Window
+  What: Action to extract the current tab into its own standalone window.
+  Who:  WT, iT2
+  Complexity: [Medium] -- Similar to tear-off but triggered by keybinding.
+
+
+1.2  SPLIT PANES
+--------------------------------------------------------------------------------
+
+1.2.1  Horizontal Split
+  What: Divide the current pane into top and bottom regions.
+  Who:  WT, Kit, Wez, iT2, Con, Gho, Rio
+  Complexity: [Medium] -- Binary tree or linked-list pane layout; PTY resize
+  propagation.
+
+1.2.2  Vertical Split
+  What: Divide the current pane into left and right regions.
+  Who:  WT, Kit, Wez, iT2, Con, Gho, Rio
+  Complexity: [Medium] -- Same as horizontal but orthogonal axis.
+
+1.2.3  Auto Split
+  What: Automatically choose horizontal or vertical based on which dimension
+        is larger (most-square algorithm).
+  Who:  WT, iT2
+  Complexity: [Low] -- Compare width vs height of current pane.
+
+1.2.4  Directional Split (up/down/left/right)
+  What: Create a new pane in a specific cardinal direction relative to the
+        focused pane.
+  Who:  WT, Kit (layouts), Wez
+  Complexity: [Medium] -- Requires pane tree traversal to find insertion point.
+
+1.2.5  Resize Panes
+  What: Adjust pane borders with keyboard (arrow keys + modifier) or mouse
+        drag.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Constraint propagation across the pane tree; minimum
+  size enforcement.
+
+1.2.6  Navigate Between Panes (Focus Movement)
+  What: Move keyboard focus directionally (up/down/left/right) or by
+        previous/next order.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Spatial lookup in pane tree to find neighbor in
+  given direction.
+
+1.2.7  Swap Panes
+  What: Exchange the positions of two panes in the layout.
+  Who:  WT, Kit, Wez
+  Complexity: [Medium] -- Swap nodes in the pane tree; re-render layout.
+
+1.2.8  Move Pane to Another Tab
+  What: Detach a pane from the current tab and attach it to a different tab.
+  Who:  WT, Wez
+  Complexity: [High] -- Requires reparenting pane node across tab containers.
+
+1.2.9  Zoom / Maximize Pane (Toggle)
+  What: Temporarily expand the focused pane to fill the entire tab area;
+        toggle back to restore original layout.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Save layout state, render single pane full-size,
+  restore on toggle.
+
+1.2.10 Toggle Split Orientation
+  What: Switch an existing split from horizontal to vertical or vice versa.
+  Who:  WT, Kit
+  Complexity: [Low] -- Flip the split direction flag on the parent node.
+
+1.2.11 Focus Follows Mouse (Panes)
+  What: Automatically focus the pane under the mouse cursor without clicking.
+  Who:  WT, Kit, Wez, iT2
+  Complexity: [Low] -- Mouse-enter event handler on pane regions.
+
+1.2.12 Pane Border Color / Indicators
+  What: Highlight the focused pane border with the system accent color or a
+        configured color.
+  Who:  WT, Kit, Wez, Con
+  Complexity: [Low] -- Conditional border rendering on focus change.
+
+
+1.3  SCROLLBACK BUFFER
+--------------------------------------------------------------------------------
+
+1.3.1  Configurable Scrollback Size
+  What: Set the number of lines retained in the scrollback buffer
+        (historySize).
+  Who:  WT (default 9001), Kit (default 2000), Wez (default 3500), Ala
+        (default 10000), iT2 (configurable), Con, Foot, Gho
+  Complexity: [Low] -- Ring buffer allocation; configurable capacity.
+
+1.3.2  Infinite / Unlimited Scrollback
+  What: Keep all output without any line limit, using disk-backed storage
+        if needed.
+  Who:  iT2 (unlimited scrollback option), Kit (scrollback_pager),
+        Wez (scrollback_lines = very large)
+  Note: True infinite scroll requires paging to disk or memory-mapped files
+        to avoid unbounded RAM usage.
+  Complexity: [High] -- Requires disk-backed ring buffer or memory-mapped
+  storage, with efficient random access for rendering.
+
+1.3.3  Scrollback Pager (External Viewer)
+  What: Pipe the scrollback buffer to an external pager program (less, bat,
+        etc.) for browsing.
+  Who:  Kit (scrollback_pager config), Foot (pipe-scrollback)
+  Complexity: [Medium] -- Serialize buffer to temp file or pipe, launch
+  external process.
+
+1.3.4  Scroll-to-Prompt (Shell Integration)
+  What: Jump between command prompts in the scrollback using shell
+        integration markers (OSC 133).
+  Who:  WT (with shell integration), Kit, Wez, iT2 (marks)
+  Complexity: [Medium] -- Requires shell integration markers and index
+  tracking.
+
+1.3.5  Smooth Scrolling
+  What: Pixel-level smooth scrolling animation rather than jumping by whole
+        lines.
+  Who:  WT, Ala, Kit (partial), Wez, Gho, Con
+  Complexity: [Medium] -- Fractional scroll offset tracking; frame
+  interpolation in the render loop.
+
+
+1.4  SEARCH IN TERMINAL OUTPUT
+--------------------------------------------------------------------------------
+
+1.4.1  Basic Text Search
+  What: Find text in the scrollback buffer and visible area.
+  Who:  WT, Kit, Wez, Ala, iT2, Con, Foot, Gho, Rio
+  Complexity: [Medium] -- String matching across line-wrapped buffer;
+  highlight rendering.
+
+1.4.2  Regex Search
+  What: Search using regular expressions for pattern matching.
+  Who:  WT, Kit, Wez, Ala (via hints), iT2, Con, Foot
+  Complexity: [Medium] -- Integrate regex engine; apply to concatenated
+  buffer text.
+
+1.4.3  Case Sensitivity Toggle
+  What: Option to toggle case-sensitive vs. case-insensitive search.
+  Who:  WT, Kit, Wez, iT2, Con
+  Complexity: [Low] -- Flag on the search function.
+
+1.4.4  Highlight All Matches
+  What: Visually highlight every occurrence of the search term simultaneously.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Track all match positions; render overlay or
+  modified cell attributes.
+
+1.4.5  Search Direction (Up / Down)
+  What: Navigate search results forward or backward through the buffer.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Low] -- Iterator over match positions with direction flag.
+
+1.4.6  Search Web from Selection
+  What: Open a web browser with the selected text as a search query.
+  Who:  WT (searchWeb action), iT2
+  Complexity: [Low] -- URL-encode selection, launch default browser.
+
+
+1.5  COPY / PASTE
+--------------------------------------------------------------------------------
+
+1.5.1  Standard Copy/Paste
+  What: Copy selected text to system clipboard; paste from clipboard.
+  Who:  All terminals
+  Complexity: [Low] -- Clipboard API integration.
+
+1.5.2  Copy on Select
+  What: Automatically copy text to clipboard when mouse selection is made.
+  Who:  WT, Kit, Wez, Ala, iT2, Foot, Gho
+  Complexity: [Low] -- Hook selection-complete event to clipboard write.
+
+1.5.3  Smart / Word Selection (Double-Click)
+  What: Double-click to select a word; configurable word delimiters.
+  Who:  WT (wordDelimiters config), Kit, Wez, Ala, iT2, Con, Gho
+  Complexity: [Low] -- Character class lookup at click position.
+
+1.5.4  Line Selection (Triple-Click)
+  What: Triple-click to select an entire line.
+  Who:  WT, Kit, Wez, Ala, iT2, Con, Gho
+  Complexity: [Low] -- Select from line start to line end.
+
+1.5.5  Rectangular / Block Selection
+  What: Hold Alt+drag to select a rectangular column of text rather than
+        line-wrapped selection.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Complexity: [Medium] -- Column-based selection geometry; handle multi-width
+  characters.
+
+1.5.6  Copy with Formatting (HTML/RTF)
+  What: Copy selected text preserving colors and font attributes.
+  Who:  WT (copyFormatting: html/rtf), iT2, Wez
+  Complexity: [Medium] -- Generate HTML/RTF from styled cell data.
+
+1.5.7  Trim Trailing Whitespace on Paste
+  What: Automatically remove trailing spaces from pasted text.
+  Who:  WT (trimPaste), iT2
+  Complexity: [Low] -- String trimming before PTY write.
+
+1.5.8  Large Paste Warning
+  What: Prompt user before pasting large amounts of text (e.g., >5 KiB).
+  Who:  WT, iT2
+  Complexity: [Low] -- Size check + confirmation dialog.
+
+1.5.9  Multi-line Paste Warning
+  What: Warn before pasting text containing newlines (prevents accidental
+        command execution).
+  Who:  WT, iT2, Wez
+  Complexity: [Low] -- Newline detection + confirmation dialog.
+
+1.5.10 OSC 52 (Clipboard Access via Escape Sequence)
+  What: Allow applications running in the terminal to read/write the system
+        clipboard via OSC 52 escape sequences. Commonly used for copying in
+        remote SSH sessions.
+  Who:  Kit, Wez, Ala, iT2, Foot, Con, Gho
+  Note: WT has partial support. Security-sensitive; most terminals restrict
+        to write-only or require user confirmation for reads.
+  Complexity: [Medium] -- Parse OSC 52; security policy for read vs write;
+  base64 encode/decode.
+
+1.5.11 Bracketed Paste Mode
+  What: Wrap pasted text in escape sequences (ESC[200~ / ESC[201~) so the
+        shell can distinguish pasted text from typed text.
+  Who:  All modern terminals
+  Complexity: [Low] -- Wrap clipboard content in bracket sequences when mode
+  is enabled.
+
+
+1.6  URL DETECTION AND CLICKABLE LINKS
+--------------------------------------------------------------------------------
+
+1.6.1  Auto-Detect URLs
+  What: Scan terminal output for URL patterns and underline/highlight them.
+  Who:  WT (experimental.detectURLs), Kit, Wez, Ala (hints), iT2, Con, Gho
+  Complexity: [Medium] -- Regex-based URL detection across wrapped lines;
+  must handle re-detection on reflow.
+
+1.6.2  Ctrl+Click to Open URL
+  What: Open detected URL in default browser on Ctrl+click (or Cmd+click).
+  Who:  WT, Kit, Wez, Ala, iT2, Con, Gho
+  Complexity: [Low] -- Hit test click position against detected URL ranges;
+  launch browser.
+
+1.6.3  URL Hints / Keyboard-Driven Link Opening
+  What: Assign short labels (a, b, aa, ab...) to all visible URLs for
+        keyboard-only opening.
+  Who:  Kit (kitten hints), Ala (hints mode), Wez (QuickSelectArgs),
+        Foot (urls launch mode)
+  Complexity: [Medium] -- Overlay rendering of hint labels; key input capture
+  and dispatch.
+
+1.6.4  OSC 8 Hyperlinks (Explicit Hyperlinks)
+  What: Support for explicit hyperlinks embedded in terminal output via
+        OSC 8 escape sequence. The link text and URL are independent (like
+        HTML <a> tags).
+  Who:  Kit, Wez, iT2, Con, Foot, Gho, WT (partial/in progress)
+  Complexity: [Medium] -- Parse OSC 8; store URL association per cell range;
+  render underline and handle clicks.
+
+1.6.5  File Path Detection and Opening
+  What: Detect file paths (including line:column references) and open them
+        in an editor.
+  Who:  Kit (kitten hints --type path), Wez (hyperlink rules), iT2
+        (semantic history)
+  Complexity: [Medium] -- Pattern matching for paths; editor integration
+  configuration.
+
+
+1.7  MOUSE SUPPORT
+--------------------------------------------------------------------------------
+
+1.7.1  Mouse Selection
+  What: Click-and-drag to select text.
+  Who:  All terminals
+  Complexity: [Low] -- Standard mouse event handling.
+
+1.7.2  Mouse Reporting Modes (VT)
+  What: Forward mouse events to the running application via VT sequences
+        (X10, Normal, Button, Any-event, SGR, URXVT modes).
+  Who:  All modern terminals
+  Note: Applications like vim, tmux, htop use this for mouse interaction.
+  Complexity: [Medium] -- Multiple encoding formats; mode state tracking.
+
+1.7.3  Alternate Scroll Mode
+  What: Convert mouse scroll events into Up/Down arrow key sequences when
+        the alternate screen buffer is active (for apps like less, man).
+  Who:  Kit, Wez, Ala, Foot, Con, Gho
+  Complexity: [Low] -- Detect alternate screen buffer; translate scroll to
+  key sequences.
+
+1.7.4  Shift+Click to Extend Selection
+  What: Shift+click to extend the current selection to the clicked position.
+  Who:  WT, Kit, Wez, Ala, iT2, Con, Gho
+  Complexity: [Low] -- Update selection endpoint on Shift+click.
+
+1.7.5  Mouse Scroll to Zoom (Ctrl+Scroll)
+  What: Hold Ctrl and scroll to increase/decrease font size.
+  Who:  WT (experimental.scrollToZoom), Kit, Gho
+  Complexity: [Low] -- Modifier check + font size adjustment.
+
+
+1.8  BELL HANDLING
+--------------------------------------------------------------------------------
+
+1.8.1  Visual Bell
+  What: Flash the terminal or show a brief visual indicator instead of (or
+        in addition to) an audible bell.
+  Who:  Kit, Wez, Ala, iT2, Con, Foot, Gho
+  Complexity: [Low] -- Brief color flash or overlay on BEL character.
+
+1.8.2  Audio Bell
+  What: Play the system bell sound on BEL character.
+  Who:  WT, Kit, Wez, iT2, Con
+  Complexity: [Low] -- Trigger system sound API.
+
+1.8.3  Taskbar / Dock Flash on Bell
+  What: Flash the taskbar icon or dock icon when a bell occurs in an
+        unfocused window.
+  Who:  WT (partial), iT2, Wez, Kit
+  Complexity: [Low] -- Platform API call (FlashWindowEx on Windows,
+  requestUserAttention on macOS).
+
+1.8.4  Bell Suppression / Rate Limiting
+  What: Suppress rapid consecutive bells to prevent audio spam.
+  Who:  Kit (bell_on_tab config), iT2, Wez
+  Complexity: [Low] -- Timestamp-based rate limiter.
+
+1.8.5  Per-Tab Bell Indicator
+  What: Show an icon or color on the tab when a bell occurs in a
+        background tab.
+  Who:  iT2, Kit, Wez
+  Complexity: [Low] -- Set a flag on the tab model; render indicator.
+
+
+================================================================================
+2. RENDERING AND VISUAL
+================================================================================
+
+2.1  GPU-ACCELERATED RENDERING
+  What: Use the GPU (via DirectX, Metal, OpenGL, Vulkan, or WebGPU) to
+        render terminal text and UI, achieving high frame rates and low
+        latency.
+  Who:  WT (DirectX/DWrite), Kit (OpenGL), Wez (OpenGL + software fallback),
+        Ala (OpenGL), Con (OpenGL), Gho (Metal/OpenGL), Rio (WGPU),
+        Foot (Wayland direct, no GPU text rasterization)
+  Note: Hyper uses Electron/Chromium compositor (indirect GPU). Foot uses
+        CPU rendering but achieves excellent performance on Wayland.
+  Complexity: [V.High] -- Requires text atlas management, glyph rasterization
+  pipeline, batched draw calls, subpixel positioning, and platform-specific
+  graphics API integration. This is typically the largest subsystem in a
+  modern terminal.
+
+2.2  FONT LIGATURE SUPPORT
+  What: Render programming ligatures (e.g., -> becomes an arrow, != becomes
+        a not-equal sign) using OpenType features from fonts like Fira Code,
+        JetBrains Mono, Cascadia Code.
+  Who:  WT, Kit, Wez, iT2, Con, Gho
+  Note: Alacritty explicitly does NOT support ligatures (design philosophy:
+        ligatures violate the fixed-grid assumption). Foot does not support
+        them either.
+  Complexity: [High] -- Requires OpenType shaping engine (HarfBuzz); must
+  handle multi-cell glyph runs while maintaining the character grid; reshaping
+  on attribute changes.
+
+2.3  EMOJI RENDERING
+  What: Display color emoji (Unicode emoji with presentation selectors)
+        correctly with proper width (typically 2 cells).
+  Who:  WT, Kit, Wez, Ala, iT2, Con, Foot, Gho, Rio
+  Complexity: [Medium] -- Requires color font rendering (COLR/CPAL, sbix,
+  or CBDT), correct width measurement (wcwidth), and fallback font resolution.
+
+2.4  CUSTOM SHADERS / VISUAL EFFECTS
+  What: Apply custom pixel shaders or visual effects to the terminal
+        rendering (CRT effect, bloom, film grain, etc.).
+  Who:  WT (experimental.pixelShaderPath for HLSL shaders,
+        experimental.retroTerminalEffect), Wez (GLSL shaders),
+        Kit (custom GLSL shaders), Con (shader support)
+  Complexity: [High] -- Requires post-processing pass in the render pipeline;
+  shader compilation; passing terminal texture to fragment shader.
+
+2.5  BACKGROUND IMAGE / TRANSPARENCY / BLUR
+--------------------------------------------------------------------------------
+
+2.5.1  Background Image
+  What: Display a static image behind the terminal text.
+  Who:  WT, Kit, Wez, iT2, Con
+  Complexity: [Medium] -- Image loading, scaling/alignment, compositing
+  behind text layer.
+
+2.5.2  Background Image Animated (GIF)
+  What: Support animated GIF as background.
+  Who:  WT, iT2, Wez
+  Complexity: [Medium] -- GIF frame decoding and timed frame advancement.
+
+2.5.3  Window Transparency (Opacity)
+  What: Make the terminal window partially transparent, showing the
+        desktop behind.
+  Who:  WT (opacity 0-100), Kit (background_opacity), Wez
+        (window_background_opacity), Ala (window.opacity), iT2
+        (transparency slider), Con, Foot, Gho
+  Complexity: [Medium] -- Platform compositor integration (DWM on Windows,
+  X11 compositing, Wayland alpha).
+
+2.5.4  Acrylic Material (Windows)
+  What: Use the Windows Acrylic translucency effect (blurred, tinted
+        background).
+  Who:  WT (useAcrylic: true)
+  Note: Windows-specific DWM API.
+  Complexity: [Medium] -- Windows DWM Acrylic API calls; fallback for
+  non-composited desktops.
+
+2.5.5  Mica Material (Windows 11)
+  What: Use the Windows 11 Mica material (desktop wallpaper tint effect)
+        behind the terminal.
+  Who:  WT (via theme.window.mica setting)
+  Note: Windows 11 only.
+  Complexity: [Medium] -- Windows 11 Mica API integration.
+
+2.5.6  Background Blur (Non-Windows)
+  What: Blur the background behind the terminal window on macOS or Linux.
+  Who:  Kit (macOS), Gho (macOS blur), iT2 (blur), Hyp (vibrancy on macOS)
+  Complexity: [Medium] -- Platform-specific compositor APIs.
+
+2.5.7  Unfocused Window Appearance
+  What: Different opacity, background image, or effects when the terminal
+        window is not focused.
+  Who:  WT (unfocusedAppearance object), Kit (dim unfocused)
+  Complexity: [Low] -- Alternate appearance config applied on focus events.
+
+2.6  CURSOR STYLES
+  What: Support multiple cursor shapes: block, underline, bar (beam),
+        and variants (empty box, vintage/partial block, double underscore).
+  Who:  WT (bar, vintage, underscore, filledBox, emptyBox, doubleUnderscore),
+        Kit (block, beam, underline), Wez (SteadyBlock, BlinkingBlock, etc.),
+        Ala (block, underline, beam), iT2, Con, Foot, Gho
+  Complexity: [Low] -- Render different shapes at cursor position.
+
+2.7  CURSOR BLINKING
+  What: Configurable cursor blink rate, or disable blinking entirely.
+  Who:  All terminals (standard DECSCUSR escape sequences support this)
+  Complexity: [Low] -- Timer-driven visibility toggle.
+
+2.8  MINIMUM CONTRAST RATIO ENFORCEMENT
+  What: Automatically adjust foreground colors to ensure sufficient contrast
+        against the background for accessibility (WCAG compliance).
+  Who:  WT (adjustIndistinguishableColors: always/indexed/never),
+        Wez (minimum_contrast_ratio), Con
+  Complexity: [Medium] -- Color contrast calculation (relative luminance);
+  dynamic color adjustment per cell.
+
+2.9  BOLD / ITALIC / UNDERLINE / STRIKETHROUGH TEXT STYLES
+  What: Render text with SGR attributes: bold (1), italic (3),
+        underline (4), strikethrough (9), dim (2), reverse (7),
+        invisible (8).
+  Who:  All modern terminals
+  Complexity: [Low-Medium] -- Font variant selection (bold/italic faces),
+  line drawing for underline/strikethrough.
+
+2.10 INTENSE TEXT STYLE CONTROL
+  What: Configure whether SGR bold (1) renders as bold weight, bright
+        color, both, or neither.
+  Who:  WT (intenseTextStyle: bold/bright/all/none), Kit, Wez, Ala, Gho
+  Complexity: [Low] -- Conditional attribute application.
+
+2.11 TRUE COLOR (24-BIT) SUPPORT
+  What: Support 16 million colors via SGR sequences
+        (ESC[38;2;R;G;Bm for foreground, ESC[48;2;R;G;Bm for background).
+  Who:  All modern terminals (WT, Kit, Wez, Ala, iT2, Con, Foot, Gho, Rio,
+        Hyp)
+  Complexity: [Low] -- Parse SGR 38/48 with color-space parameters; store
+  RGB per cell.
+
+2.12 COLORED UNDERLINES (SGR 58/59)
+  What: Set underline color independently from text foreground color using
+        SGR 58 (set underline color) and SGR 59 (reset underline color).
+  Who:  Kit, Wez, Ala, Con, Foot, Gho
+  Note: WT has partial support.
+  Complexity: [Low] -- Additional color attribute per cell for underline;
+  render underline with specified color.
+
+2.13 UNDERLINE STYLES (Curly, Dotted, Dashed, Double)
+  What: Support extended underline styles beyond solid: curly/wavy (used by
+        LSP diagnostics in vim/neovim), dotted, dashed, double.
+  Who:  Kit, Wez, Con, Foot, Gho, Ala (partial)
+  Note: WT support is in progress.
+  Complexity: [Medium] -- Custom line rendering algorithms for each style
+  (bezier curves for curly).
+
+2.14 HYPERLINK SUPPORT (OSC 8)
+  What: Render clickable hyperlinks in terminal output where the displayed
+        text differs from the URL (like HTML anchor tags).
+  Who:  Kit, Wez, iT2, Con, Foot, Gho
+  Note: WT support partial/in progress.
+  Complexity: [Medium] -- See 1.6.4 above.
+
+2.15 SIXEL GRAPHICS / IMAGE DISPLAY PROTOCOLS
+--------------------------------------------------------------------------------
+
+2.15.1 Sixel Graphics
+  What: Display raster images inline using the Sixel protocol (DEC standard).
+  Who:  Wez, Con, Foot, iT2 (partial)
+  Note: Kit deliberately does not support Sixel, preferring its own protocol.
+  Complexity: [High] -- Sixel decoder; image compositing into the cell grid;
+  handling scrolling and reflow of image regions.
+
+2.15.2 Kitty Graphics Protocol
+  What: Display images inline using the Kitty graphics protocol (transmit
+        image data via escape sequences, display at arbitrary positions).
+  Who:  Kit, Wez, Con
+  Complexity: [High] -- Binary data transfer via escape sequences; image
+  storage/caching; placement management; animation support.
+
+2.15.3 iTerm2 Inline Images Protocol
+  What: Display images using the iTerm2 image protocol
+        (OSC 1337;File=...).
+  Who:  iT2, Wez, Con
+  Complexity: [High] -- Base64 image data parsing; image rendering and
+  placement in cell grid.
+
+2.15.4 Image Reflow on Resize
+  What: Correctly reposition inline images when the terminal is resized.
+  Who:  Kit, Wez (partial), Con (partial)
+  Complexity: [V.High] -- Track image placement relative to cell positions;
+  recalculate on reflow.
+
+
+================================================================================
+3. SHELL INTEGRATION
+================================================================================
+
+3.1  CURRENT WORKING DIRECTORY TRACKING (OSC 7)
+  What: The shell reports its current working directory to the terminal
+        via OSC 7 escape sequence. Terminal uses this for new tab/pane
+        CWD inheritance, tab title display, and drag-and-drop directory
+        opening.
+  Who:  WT, Kit, Wez, iT2, Con, Gho, Foot
+  Complexity: [Low] -- Parse OSC 7; store CWD per pane; use for new
+  process startup.
+
+3.2  COMMAND DETECTION / MARKING (OSC 133)
+  What: The shell emits OSC 133 markers to denote the start of a prompt,
+        the start of user input, the start of command output, and the end
+        of command output (with exit code). This enables scroll-to-prompt,
+        command output selection, and command history features.
+  Who:  WT, Kit (partial), Wez, iT2 (shell integration marks), Gho
+  Markers:
+    OSC 133;A -- Prompt start (FinalTerm/FTCS_PROMPT)
+    OSC 133;B -- Command input start (FTCS_COMMAND_START)
+    OSC 133;C -- Command output start (FTCS_COMMAND_EXECUTED)
+    OSC 133;D;exitcode -- Command finished (FTCS_COMMAND_FINISHED)
+  Complexity: [Medium] -- Parse and index markers; integrate with scroll,
+  search, and selection features.
+
+3.3  SEMANTIC ZONES (Prompt, Input, Output Regions)
+  What: Using OSC 133 markers, the terminal distinguishes between prompt
+        regions, user input regions, and command output regions. This enables
+        features like selecting just the output of a command, or right-click
+        context menus aware of which zone the user clicked in.
+  Who:  iT2 (semantic history), WT (experimental), Wez
+  Complexity: [Medium] -- Zone tracking and attribution per cell range;
+  expose zones to UI interaction layer.
+
+3.4  COMMAND HISTORY WITH OUTPUT RECALL
+  What: Store previous command outputs and allow users to scroll back to
+        specific commands, rerun them, or copy their output.
+  Who:  iT2 (command history with output), Wez (scrollback search),
+        WT (scroll-to-prompt with OSC 133)
+  Complexity: [Medium] -- Index of command boundaries with associated output
+  ranges; UI for browsing.
+
+3.5  RIGHT-CLICK CONTEXT MENUS WITH SHELL AWARENESS
+  What: Context menu options that change based on what was clicked (URL,
+        file path, selected text, prompt zone, output zone).
+  Who:  WT (experimental.rightClickContextMenu), iT2
+  Complexity: [Medium] -- Hit-test click position against zones, URLs, and
+  selections; build dynamic menu.
+
+3.6  SHELL-SPECIFIC COMPLETIONS IN TERMINAL
+  What: The terminal provides an inline completion/suggestion UI based on
+        shell history or integration, separate from the shell's own
+        completion system.
+  Who:  iT2 (with shell integration), Wez (partial, via leader key)
+  Note: Most terminals leave completion to the shell (zsh, fish, etc.).
+        This is an advanced integration rarely implemented.
+  Complexity: [High] -- Requires deep shell integration, completion protocol,
+  and overlay UI.
+
+3.7  PROGRESS BAR / STATUS INDICATION (OSC 9;4)
+  What: Show a progress bar in the tab or taskbar based on escape sequences
+        from long-running commands (builds, downloads).
+  Who:  WT (ConEmu-compatible OSC 9;4), Con, Wez
+  Complexity: [Low-Medium] -- Parse progress sequences; render progress
+  indicator on tab and/or taskbar.
+
+
+================================================================================
+4. SESSION MANAGEMENT
+================================================================================
+
+4.1  SAVE / RESTORE SESSIONS
+  What: Persist the full terminal state (open tabs, pane layouts, working
+        directories) and restore on restart.
+  Who:  WT (persistedWindowLayout), iT2 (arrangements), Wez (workspace),
+        Kit (session files)
+  Complexity: [High] -- Serialize tab/pane tree, profile references, CWDs;
+  handle processes that cannot be restored.
+
+4.2  WORKSPACE LAYOUTS
+  What: Define and save named workspace configurations (specific tab/pane
+        arrangements) that can be loaded on demand.
+  Who:  iT2 (window arrangements), Wez (workspace config),
+        WT (startupActions as a workaround)
+  Complexity: [Medium] -- Layout definition format; instantiation logic.
+
+4.3  SESSION PERSISTENCE ACROSS RESTARTS
+  What: Automatically save session state on close and restore it on next
+        launch without manual save.
+  Who:  WT (firstWindowPreference: persistedWindowLayout), iT2
+        (restore windows on launch)
+  Complexity: [Medium] -- Auto-save on close event; auto-restore on startup.
+
+4.4  NAMED SESSIONS
+  What: Assign human-readable names to sessions for organization.
+  Who:  iT2, Wez, WT (window names)
+  Complexity: [Low] -- String property on session model.
+
+4.5  REMOTE SESSION MANAGEMENT (SSH INTEGRATION)
+  What: Manage SSH connections as first-class sessions, with saved
+        connection profiles, key management, and session resumption.
+  Who:  iT2 (SSH profiles), Wez (SSH domains with multiplexing),
+        Kit (kitten ssh), WT (SSH dynamic profiles)
+  Note: Wez and Kit provide particularly deep SSH integration where the
+        local multiplexer extends to the remote machine.
+  Complexity: [High] -- SSH client integration; connection management;
+  optional multiplexer extension over SSH.
+
+
+================================================================================
+5. KEYBOARD AND INPUT
+================================================================================
+
+5.1  CUSTOMIZABLE KEY BINDINGS
+  What: User-configurable mapping of key combinations to terminal actions.
+  Who:  All terminals (WT via actions/keybindings arrays, Kit via map,
+        Wez via keys table, Ala via key_bindings, iT2 via preferences,
+        Gho via keybindings)
+  Complexity: [Medium] -- Key event parsing; action dispatch system;
+  conflict detection.
+
+5.2  KEY CHORD SUPPORT
+  What: Support multi-step key sequences (e.g., Ctrl+A then C) similar to
+        tmux or screen prefix keys.
+  Who:  Wez (leader key), Kit (combine actions), iT2 (via profile key
+        mappings)
+  Note: WT does not natively support key chords. Alacritty does not.
+  Complexity: [Medium] -- State machine for multi-step key sequences;
+  timeout handling.
+
+5.3  VI / EMACS MODES FOR TERMINAL NAVIGATION
+  What: Enter a mode where vi or emacs keybindings navigate the scrollback
+        buffer, select text, and copy without using the mouse.
+  Who:  Kit (scrollback_pager with vim), Wez (copy mode with vi bindings),
+        iT2 (vi mode in copy mode), Foot (vi-like search/copy)
+  Complexity: [Medium] -- Modal input handling; cursor movement commands;
+  selection manipulation.
+
+5.4  DEAD KEY / IME / INPUT METHOD SUPPORT
+  What: Correctly handle dead keys (accented characters), Input Method
+        Editors (for CJK languages), and compose sequences.
+  Who:  All modern terminals (WT, Kit, Wez, Ala, iT2, Con, Foot, Gho)
+  Note: Correct IME handling, especially inline composition rendering, is
+        notoriously difficult and platform-specific.
+  Complexity: [High] -- Platform IME API integration (TSF on Windows,
+  IBus/Fcitx on Linux, macOS input methods); inline composition rendering
+  in the cell grid.
+
+5.5  KITTY KEYBOARD PROTOCOL (Progressive Enhancement)
+  What: A modern keyboard input protocol that provides full key event
+        information (key press, repeat, release; modifier state;
+        disambiguated keys) via CSI sequences. Applications opt in
+        progressively.
+  Who:  Kit (originator), Foot, Wez, Con, Gho, Rio
+  Note: WT has partial support. Alacritty has support. This protocol is
+        gaining adoption (supported by neovim, etc.).
+  Complexity: [Medium] -- Encode key events per the protocol spec; track
+  progressive enhancement flags per application.
+
+5.6  FIXTERMS / CSI U ENCODING
+  What: Encode keyboard input using CSI u sequences to disambiguate keys
+        that traditional terminals cannot distinguish (e.g., Ctrl+I vs Tab,
+        Ctrl+M vs Enter).
+  Who:  Kit (superset via Kitty protocol), Wez, Con, Foot, Gho
+  Note: The Kitty keyboard protocol is a superset of fixterms/CSI u.
+  Complexity: [Medium] -- Alternative key encoding; application negotiation.
+
+5.7  SEND INPUT ACTION (Macro)
+  What: Define a keybinding that sends arbitrary text/escape sequences to
+        the shell (macro functionality).
+  Who:  WT (sendInput action), Kit (send_text), Wez (SendString),
+        iT2 (send text action)
+  Complexity: [Low] -- Write configured string to PTY on key press.
+
+
+================================================================================
+6. PROFILE AND CONFIGURATION
+================================================================================
+
+6.1  MULTIPLE PROFILES (Per-Shell Settings)
+  What: Define separate configuration profiles for different shells
+        (PowerShell, bash, zsh, cmd, etc.) with independent colors, fonts,
+        starting directories, and environment variables.
+  Who:  WT (profiles.list array), Kit (OS windows), Wez (domains +
+        launch_menu), iT2 (profiles), Con, Gho
+  Note: Alacritty uses a single flat config but supports config includes.
+  Complexity: [Medium] -- Profile model, selection UI, per-profile PTY
+  configuration.
+
+6.2  COLOR SCHEME MANAGEMENT
+  What: Import, export, switch, and preview color schemes. Support for
+        standard scheme formats.
+  Who:  WT (schemes array, UI preview), Kit (theme imports),
+        Wez (color_scheme setting), iT2 (color presets), Ala (schemes),
+        Gho (themes)
+  Complexity: [Medium] -- Scheme data model; import/export formats; live
+  preview in settings UI.
+
+6.3  LIGHT/DARK MODE AUTO-SWITCH
+  What: Automatically switch between light and dark color schemes based on
+        OS theme setting.
+  Who:  WT (colorScheme with light/dark object), iT2, Wez, Gho
+  Complexity: [Medium] -- OS theme change listener; per-profile
+  light/dark scheme pairs.
+
+6.4  DYNAMIC PROFILES (Auto-Detect Installed Shells)
+  What: Automatically discover and create profiles for installed shells
+        (WSL distributions, PowerShell versions, Azure Cloud Shell, SSH
+        hosts).
+  Who:  WT (dynamic profile generators for WSL, PowerShell Core, Azure,
+        SSH), iT2 (auto-detect shells)
+  Complexity: [Medium] -- Platform-specific shell discovery (registry scan,
+  /etc/shells, WSL --list); profile generation.
+
+6.5  PROFILE INHERITANCE / DEFAULTS
+  What: Define default settings that apply to all profiles, with per-profile
+        overrides.
+  Who:  WT (profiles.defaults object), Kit (defaults), Wez (defaults),
+        iT2 (default profile)
+  Complexity: [Low] -- Layered configuration resolution.
+
+6.6  COMMAND-LINE ARGUMENTS FOR PROFILE SELECTION
+  What: Launch the terminal with a specific profile via command-line
+        arguments.
+  Who:  WT (wt -p "ProfileName"), Kit (kitty -o), Wez (wezterm start
+        --config), iT2 (open -a iTerm --args)
+  Complexity: [Low] -- CLI argument parsing; profile lookup.
+
+6.7  FRAGMENT / EXTENSION CONFIGURATION
+  What: Allow third-party applications to contribute profiles, color
+        schemes, or settings fragments without modifying the user's
+        config file.
+  Who:  WT (JSON fragment extensions in a well-known directory)
+  Note: This is a Windows Terminal innovation. Other terminals use config
+        includes (Kit, Ala) or Lua scripting (Wez) instead.
+  Complexity: [Medium] -- Fragment discovery, parsing, and merging with
+  user config; conflict resolution.
+
+6.8  CONFIGURATION FILE FORMAT
+  What: The format used for terminal configuration.
+  Who:  WT (JSON), Kit (kitty.conf, custom INI-like format),
+        Wez (Lua scripting), Ala (TOML, formerly YAML), iT2 (plist/GUI),
+        Con (YAML), Foot (INI), Gho (custom format), Rio (TOML)
+  Note: Wez's Lua configuration is uniquely powerful, allowing runtime
+        logic, conditionals, and dynamic behavior.
+  Complexity: [Low-Medium] -- Parser implementation; hot-reload support.
+
+6.9  HOT-RELOAD CONFIGURATION
+  What: Automatically apply configuration changes without restarting the
+        terminal.
+  Who:  Kit, Wez, Ala, WT (on save), Con, Foot (SIGHUP), Gho
+  Complexity: [Medium] -- File watcher; diff and apply changed settings
+  without disrupting running sessions.
+
+6.10 ENVIRONMENT VARIABLE INJECTION PER PROFILE
+  What: Set custom environment variables for a specific profile that are
+        injected into the shell process.
+  Who:  WT (environment object in profile), Wez, Kit, iT2
+  Complexity: [Low] -- Merge env vars into process creation.
+
+
+================================================================================
+7. MULTIPLEXING
+================================================================================
+
+7.1  BUILT-IN MULTIPLEXER (Like tmux)
+  What: Terminal-native multiplexing with tabs, panes, and session
+        management without requiring an external tool like tmux or screen.
+  Who:  Kit (tabs + layouts), Wez (built-in mux), iT2 (tmux integration +
+        native), Gho (tabs + splits), WT (tabs + panes)
+  Note: While many terminals have tabs/panes, Wez provides a true
+        multiplexer with detachable sessions.
+  Complexity: [High] -- Full pane/tab lifecycle management; session
+  serialization.
+
+7.2  SSH MULTIPLEXING
+  What: Extend the terminal's multiplexer capabilities over SSH, creating
+        remote panes and tabs without running tmux on the remote server.
+  Who:  Wez (SSH domains), Kit (kitten ssh with remote kitty)
+  Complexity: [V.High] -- SSH connection management; remote PTY allocation;
+  protocol for marshaling pane state over the SSH channel.
+
+7.3  CLIENT-SERVER ARCHITECTURE
+  What: Separate the terminal into a server (daemon) that manages sessions
+        and a client (GUI) that connects to it. Multiple clients can connect
+        to the same server.
+  Who:  Wez (wezterm-mux-server + wezterm connect), Kit (remote control
+        over socket), Con (partial)
+  Note: This enables features like session persistence, remote attachment,
+        and headless operation.
+  Complexity: [V.High] -- IPC protocol; session state synchronization;
+  connection lifecycle management.
+
+7.4  DETACHABLE SESSIONS
+  What: Detach from a running terminal session and reattach later
+        (similar to tmux detach/attach).
+  Who:  Wez (via mux server), Kit (partial, via remote control)
+  Note: Most terminals rely on tmux/screen for this. Wez is unique in
+        providing this natively.
+  Complexity: [High] -- Server-side session persistence; client
+  reconnection protocol.
+
+7.5  TMUX INTEGRATION (CC MODE)
+  What: Native integration with tmux using tmux -CC (control mode), where
+        tmux panes and windows are rendered as native terminal tabs/panes.
+  Who:  iT2 (deep tmux -CC integration), Wez (partial)
+  Note: iTerm2's tmux integration is the gold standard here.
+  Complexity: [High] -- Parse tmux control mode protocol; map tmux
+  windows/panes to native UI elements.
+
+7.6  BROADCAST INPUT TO MULTIPLE PANES
+  What: Type once and send the same input to all (or selected) panes
+        simultaneously. Useful for running the same command on multiple
+        servers.
+  Who:  iT2, Wez (broadcast to all panes), Con
+  Note: WT does not natively support broadcast input.
+  Complexity: [Medium] -- Input routing to multiple PTY write streams;
+  UI for selecting target panes.
+
+
+================================================================================
+8. MODERN UX FEATURES
+================================================================================
+
+8.1  COMMAND PALETTE (Ctrl+Shift+P)
+  What: Searchable overlay listing all available terminal commands and
+        actions, inspired by VS Code's command palette.
+  Who:  WT (Ctrl+Shift+P), Wez (command palette), iT2 (Open Quickly),
+        Gho (command palette)
+  Complexity: [Medium] -- Fuzzy search over action registry; overlay UI
+  rendering.
+
+8.2  COMMAND PALETTE COMMAND-LINE MODE
+  What: Enter wt/terminal command-line commands directly in the command
+        palette (delete the ">" prefix).
+  Who:  WT
+  Complexity: [Medium] -- Command-line parser integrated into palette UI.
+
+8.3  SNACKBAR / TOAST NOTIFICATIONS
+  What: Non-intrusive in-terminal notifications for events (bell in
+        background tab, task complete, error).
+  Who:  iT2 (triggers with notifications), Wez (toast notifications)
+  Complexity: [Low] -- Timed overlay notification widget.
+
+8.4  READ-ONLY MODE
+  What: Mark a pane as read-only to prevent accidental input. Show a
+        warning when the user attempts to type.
+  Who:  WT (toggleReadOnlyMode), iT2, Wez
+  Complexity: [Low] -- Flag on pane; intercept input events.
+
+8.5  QUICK-OPEN / QUAKE MODE (Dropdown Terminal)
+  What: Summon the terminal with a global hotkey; the window slides down
+        from the top of the screen (like the Quake console). Dismiss to
+        hide.
+  Who:  WT (quakeMode action, _quake window name), iT2 (hotkey window),
+        Kit (OS-level hotkey), Gho (quick terminal mode),
+        Guake/Yakuake/Tilda (dedicated dropdown terminals)
+  Complexity: [Medium] -- Global hotkey registration; window animation;
+  special window positioning and behavior.
+
+8.6  GLOBAL SUMMON (Focus Terminal from Anywhere)
+  What: A global hotkey that brings the terminal window to the foreground
+        from any application, or creates a new instance if none exists.
+  Who:  WT (globalSummon action), iT2 (hotkey), Kit (OS integration), Gho
+  Complexity: [Medium] -- Global hotkey registration (platform-specific);
+  window activation; multi-monitor awareness.
+
+8.7  SYSTEM TRAY / NOTIFICATION AREA INTEGRATION
+  What: Place an icon in the system tray/notification area; minimize to
+        tray; restore from tray.
+  Who:  WT (minimizeToNotificationArea, alwaysShowNotificationIcon),
+        iT2 (dock icon), Con
+  Complexity: [Low] -- Platform notification area API.
+
+8.8  JUMP LIST INTEGRATION (Windows Taskbar)
+  What: Show recent profiles, pinned items, or custom tasks in the Windows
+        taskbar jump list (right-click the taskbar icon).
+  Who:  WT
+  Note: Windows-specific feature.
+  Complexity: [Medium] -- Windows JumpList COM API; populate with profile
+  list.
+
+8.9  FOCUS MODE (Hide Chrome)
+  What: Hide the title bar, tab bar, and window decorations to maximize
+        terminal content area.
+  Who:  WT (toggleFocusMode), iT2 (minimal mode), Gho (fullscreen),
+        Ala (decorations: none)
+  Complexity: [Low] -- Toggle visibility of window chrome elements.
+
+8.10 AUTO-HIDE ON FOCUS LOSS
+  What: Automatically hide the terminal window when it loses focus.
+  Who:  WT (autoHideWindow), Gho
+  Complexity: [Low] -- Focus-lost event handler; window hide.
+
+8.11 SNAP TO CHARACTER GRID
+  What: Snap window resizing to character cell boundaries so there is no
+        partial-character rendering.
+  Who:  WT (snapToGridOnResize), Kit, Ala, iT2, Gho
+  Complexity: [Low] -- Constrain resize dimensions to cell multiples.
+
+8.12 DRAG AND DROP FILE/FOLDER
+  What: Drag a file or folder onto the terminal to insert the path or open
+        a new tab in that directory.
+  Who:  WT (drag to New Tab button), iT2, Kit
+  Complexity: [Low-Medium] -- Drop target handling; path escaping.
+
+8.13 NEW TAB BUTTON BEHAVIOR (Alt+Click for Pane)
+  What: Hold Alt and click the new tab button to open a split pane instead
+        of a new tab.
+  Who:  WT
+  Complexity: [Low] -- Modifier key check on click handler.
+
+8.14 SCROLLBACK MARK NAVIGATION
+  What: Navigate between marks/bookmarks in the scrollback buffer.
+  Who:  iT2 (marks), Wez (with OSC 133 marks), WT (scroll to mark)
+  Complexity: [Medium] -- Mark storage and navigation index.
+
+
+================================================================================
+9. DEVELOPER FEATURES
+================================================================================
+
+9.1  DEBUG OVERLAY / PERFORMANCE METRICS
+  What: Show an overlay with FPS counter, frame times, cell count, memory
+        usage, and rendering statistics.
+  Who:  WT (debug tap feature), Ala (display.debug option),
+        Kit (--debug-rendering), Wez (debug overlay)
+  Complexity: [Medium] -- Performance counters in render loop; overlay
+  rendering.
+
+9.2  ANSI ESCAPE SEQUENCE DEBUGGING
+  What: Inspect or log the raw escape sequences being sent to/from the
+        terminal, useful for debugging terminal applications.
+  Who:  WT (debug tap), Kit (--debug-input, --debug-rendering),
+        Wez (debug overlay), Con
+  Complexity: [Medium] -- Sequence capture and formatting; alternate view
+  or log output.
+
+9.3  TERMINAL CAPABILITY REPORTING
+  What: Report terminal capabilities to applications via standard sequences
+        (DA1/DA2/DA3 device attributes, XTVERSION, XTGETTCAP).
+  Who:  All terminals implement DA1/DA2. Kit, Wez, Con, Foot, Gho implement
+        XTVERSION. Kit implements XTGETTCAP.
+  Complexity: [Low] -- Respond to query sequences with capability data.
+
+9.4  LOGGING AND DIAGNOSTICS
+  What: Log terminal I/O, configuration parsing, and error conditions to
+        files for debugging.
+  Who:  Kit (--debug-*), Wez (log files), WT (via debug tap),
+        Ala (--log-level), Con (logging)
+  Complexity: [Low] -- Structured logging integration.
+
+9.5  TERMINAL TYPE IDENTIFICATION ($TERM)
+  What: Set the TERM environment variable to identify the terminal's
+        capabilities to applications (e.g., xterm-256color,
+        xterm-kitty, wezterm).
+  Who:  All terminals. Kit sets xterm-kitty, Wez sets xterm-256color
+        (or wezterm), Ala sets alacritty, Foot sets foot, Gho sets
+        xterm-ghostty.
+  Complexity: [Low] -- Environment variable setting; ship terminfo entry.
+
+9.6  CUSTOM TERMINFO ENTRIES
+  What: Ship a custom terminfo database entry describing the terminal's
+        full capabilities.
+  Who:  Kit (xterm-kitty), Wez (wezterm terminfo), Foot (foot),
+        Gho (xterm-ghostty), Ala (alacritty), Con
+  Complexity: [Low-Medium] -- Terminfo compilation and installation.
+
+
+================================================================================
+10. INTEGRATION FEATURES
+================================================================================
+
+10.1  WINDOWS CONTEXT MENU INTEGRATION ("Open Terminal Here")
+  What: Add "Open in Terminal" option to the Windows Explorer context menu
+        for folders.
+  Who:  WT (built into Windows 11 context menu)
+  Note: Windows 11 has native support. On Windows 10, this required
+        registry modifications.
+  Complexity: [Low] -- Registry entries or shell extension registration.
+
+10.2  DEFAULT TERMINAL HANDLER REGISTRATION (Windows 11)
+  What: Register as the default terminal application so all console
+        applications (e.g., cmd.exe, python.exe) open in the registered
+        terminal instead of conhost.
+  Who:  WT (Settings > Startup > Default terminal application)
+  Note: Windows 11+ feature using the IDefaultTerminal API.
+  Complexity: [Medium] -- COM interface implementation; process delegation
+  from conhost.
+
+10.3  WSL INTEGRATION
+  What: First-class support for Windows Subsystem for Linux, including
+        automatic profile generation for installed distributions, file
+        system interop, and correct path translation.
+  Who:  WT (dynamic WSL profiles, wsl.exe integration), Wez (WSL domains)
+  Complexity: [Medium] -- WSL distribution enumeration; path translation;
+  environment bridging.
+
+10.4  SSH CONNECTION MANAGER
+  What: Built-in management for SSH connections with saved hosts,
+        authentication methods, and quick-connect UI.
+  Who:  iT2 (SSH profiles), Wez (SSH domains),
+        WT (SSH dynamic profiles from ~/.ssh/config),
+        Kit (kitten ssh)
+  Complexity: [Medium-High] -- SSH config parsing; authentication flow;
+  connection lifecycle.
+
+10.5  SERIAL PORT CONNECTIONS
+  What: Connect to serial ports (COM ports, /dev/ttyUSB*) directly from
+        the terminal for embedded development and hardware debugging.
+  Who:  iT2 (serial port profiles), Con
+  Note: This is a niche feature. Most users use dedicated serial terminal
+        tools like PuTTY, minicom, or screen.
+  Complexity: [Medium] -- Serial port enumeration; baud rate configuration;
+  raw I/O mode.
+
+10.6  POWERSHELL INTEGRATION
+  What: Deep integration with PowerShell including predictive IntelliSense
+        rendering, PSReadLine support, and shell integration markers.
+  Who:  WT (designed for PowerShell), Wez
+  Note: WT ships with PowerShell profiles and supports PSReadLine's
+        predictive IntelliSense natively.
+  Complexity: [Low-Medium] -- Correct VT sequence handling for PSReadLine;
+  shell integration script distribution.
+
+10.7  ENVIRONMENT VARIABLE INJECTION
+  What: Inject environment variables into shell processes, either globally
+        or per-profile.
+  Who:  WT (environment object per profile), Wez (set_environment_variables),
+        Kit (env), iT2
+  Complexity: [Low] -- Merge into process environment at spawn time.
+
+10.8  SHELL INTEGRATION SCRIPT DISTRIBUTION
+  What: Provide shell integration scripts (for bash, zsh, fish, PowerShell)
+        that emit OSC 7, OSC 133, and other integration sequences.
+  Who:  WT (shell integration scripts), Kit (shell-integration directory),
+        Wez (shell-integration), iT2 (Shell Integration menu item), Gho
+  Complexity: [Medium] -- Write and maintain shell scripts for multiple
+  shells; version management; auto-installation.
+
+10.9  TRIGGERS / AUTOMATIC ACTIONS
+  What: Define rules that match terminal output patterns (regex) and
+        perform actions (highlight, send notification, run command,
+        annotate).
+  Who:  iT2 (triggers feature), Wez (hyperlink_rules), Kit (kitten hints)
+  Complexity: [Medium-High] -- Regex matching on output stream; action
+  dispatch; performance optimization for streaming matching.
+
+10.10 PASSWORD MANAGER INTEGRATION
+  What: Integrate with system keychains or password managers for SSH key
+        passphrases and other secrets.
+  Who:  iT2 (macOS Keychain), Kit (macOS Keychain for SSH), Wez (SSH agent)
+  Complexity: [Medium] -- Platform keychain API integration.
+
+
+================================================================================
+APPENDIX A: ESCAPE SEQUENCE PROTOCOLS SUMMARY
+================================================================================
+
+The following escape sequence protocols are referenced throughout this
+document. Implementation of these protocols is a cross-cutting concern that
+affects multiple feature categories.
+
+A.1  OSC 0 / OSC 2 -- Set Window/Icon Title
+     Complexity: [Low]
+
+A.2  OSC 7 -- Current Working Directory Notification
+     Complexity: [Low]
+
+A.3  OSC 8 -- Hyperlinks
+     Complexity: [Medium]
+
+A.4  OSC 9;4 -- Progress Notification (ConEmu-compatible)
+     Complexity: [Low]
+
+A.5  OSC 52 -- Clipboard Access
+     Complexity: [Medium] (security considerations)
+
+A.6  OSC 133 (FinalTerm/FTCS) -- Command/Prompt Marking
+     Complexity: [Medium]
+
+A.7  OSC 1337 -- iTerm2 Proprietary (inline images, badges, etc.)
+     Complexity: [High]
+
+A.8  DECRQM / DECSM / DECRST -- Mode Query/Set/Reset
+     Complexity: [Medium]
+
+A.9  DECSCUSR -- Set Cursor Style
+     Complexity: [Low]
+
+A.10 SGR (Select Graphic Rendition) -- Text Styling
+     Full SGR support including:
+     - Basic attributes (bold, italic, underline, etc.)
+     - 256-color (SGR 38;5 / 48;5)
+     - True color (SGR 38;2 / 48;2)
+     - Colored underlines (SGR 58/59)
+     - Underline style (SGR 4:0-5)
+     Complexity: [Medium] (for full spec compliance)
+
+A.11 Kitty Keyboard Protocol
+     Complexity: [Medium]
+
+A.12 Kitty Graphics Protocol
+     Complexity: [High]
+
+A.13 Sixel Graphics
+     Complexity: [High]
+
+A.14 Synchronized Output (BSU/ESU -- Begin/End Synchronized Update)
+     What: Batch screen updates to prevent tearing/flickering during
+           rapid redraws.
+     Who:  Kit, Wez, Con, Foot, Gho, Ala
+     Complexity: [Medium]
+
+
+================================================================================
+APPENDIX B: IMPLEMENTATION COMPLEXITY GUIDE
+================================================================================
+
+The following summarizes the most complex subsystems that a terminal
+emulator must implement, ranked by difficulty:
+
+1. GPU Text Rendering Engine [V.High]
+   - Text atlas / glyph cache management
+   - Subpixel antialiasing
+   - Font fallback chain resolution
+   - Multi-cell character (CJK, emoji) handling
+   - OpenType shaping (HarfBuzz integration)
+   - Platform graphics API (DirectX, Metal, OpenGL, Vulkan)
+
+2. VT/ANSI Escape Sequence Parser [High]
+   - Hundreds of sequences to support
+   - State machine (ground, escape, CSI, OSC, DCS, etc.)
+   - Conformance testing against vttest, esctest
+   - Edge cases: malformed sequences, embedded data
+
+3. Terminal Buffer / Grid Model [High]
+   - Unicode handling (grapheme clusters, combining characters, BiDi)
+   - Wide character support (wcwidth)
+   - Line wrapping and reflow on resize
+   - Scrollback ring buffer with efficient memory usage
+   - Attribute storage per cell (colors, styles, hyperlinks)
+
+4. PTY Management [Medium-High]
+   - Platform-specific: ConPTY (Windows), posix_openpt (Unix)
+   - Process lifecycle management
+   - Signal handling (SIGWINCH, SIGHUP)
+   - I/O buffering and flow control
+
+5. Image Protocol Implementation [High]
+   - Sixel decoder
+   - Kitty graphics protocol
+   - iTerm2 image protocol
+   - Image placement, scrolling, and reflow
+
+6. SSH / Remote Multiplexing [V.High]
+   - SSH protocol integration
+   - Remote session management
+   - State synchronization over network
+   - Connection resilience and reconnection
+
+7. IME / Input Method Integration [High]
+   - Platform-specific APIs (TSF, IBus, macOS IM)
+   - Inline composition rendering
+   - Candidate window positioning
+
+8. Configuration System [Medium]
+   - File format parsing
+   - Hot reload without disruption
+   - Profile inheritance and defaults
+   - Fragment/extension support
+   - Validation and error reporting
+
+
+================================================================================
+APPENDIX C: TERMINAL EMULATOR COMPARISON MATRIX
+================================================================================
+
+Feature Area          | WT  | Kit | Wez | Ala | iT2 | Gho | Foot | Con
+----------------------|-----|-----|-----|-----|-----|-----|------|----
+GPU Rendering         | DX  | GL  | GL  | GL  | Met | M/G | CPU  | GL
+Tabs                  | Yes | Yes | Yes | No  | Yes | Yes | No   | Yes
+Split Panes           | Yes | Yes | Yes | No  | Yes | Yes | No   | Yes
+Font Ligatures        | Yes | Yes | Yes | No  | Yes | Yes | No   | Yes
+True Color            | Yes | Yes | Yes | Yes | Yes | Yes | Yes  | Yes
+Sixel Images          | No  | No  | Yes | No  | Prt | No  | Yes  | Yes
+Kitty Graphics        | No  | Yes | Yes | No  | No  | No  | No   | Yes
+OSC 8 Hyperlinks      | Prt | Yes | Yes | No  | Yes | Yes | Yes  | Yes
+OSC 52 Clipboard      | Prt | Yes | Yes | Yes | Yes | Yes | Yes  | Yes
+OSC 133 Shell Int.    | Yes | Prt | Yes | No  | Yes | Yes | No   | Prt
+Kitty Keyboard Proto  | Prt | Yes | Yes | Yes | No  | Yes | Yes  | Yes
+SSH Multiplexing      | No  | Yes | Yes | No  | No  | No  | No   | No
+Client-Server Arch    | No  | Prt | Yes | No  | No  | No  | No   | No
+Command Palette       | Yes | No  | Yes | No  | Prt | Yes | No   | No
+Quake/Dropdown Mode   | Yes | No  | No  | No  | Yes | Yes | No   | No
+Custom Shaders        | Yes | Yes | Yes | No  | No  | No  | No   | Yes
+Config Format         | JSON| Conf| Lua | TOML| GUI | Cus | INI  | YAML
+Config Hot Reload     | Yes | Yes | Yes | Yes | N/A | Yes | Yes  | Yes
+Platform              | Win | L/M | All | All | Mac | L/M | Lin  | L/W
+
+Legend: DX=DirectX, GL=OpenGL, Met=Metal, M/G=Metal+OpenGL
+        Prt=Partial, Cus=Custom format, Conf=Custom config
+        L=Linux, M=macOS, W=Windows, All=Cross-platform
+
+
+================================================================================
+APPENDIX D: NOTABLE UNIQUE FEATURES BY TERMINAL
+================================================================================
+
+WINDOWS TERMINAL:
+  - Acrylic and Mica material support (Windows compositor integration)
+  - JSON fragment extensions for third-party profile/scheme contribution
+  - Tab tear-off and cross-window tab drag-and-drop
+  - Pixel shader support (HLSL) for custom visual effects
+  - Default terminal handler registration (Windows 11)
+  - Startup actions for declarative workspace configuration
+  - Dynamic SSH profiles from ~/.ssh/config
+
+KITTY:
+  - Kitty keyboard protocol (now adopted by many terminals)
+  - Kitty graphics protocol (richest image display capability)
+  - kitten: framework for writing terminal extensions in Python
+  - kitten ssh: transparent remote shell integration
+  - kitten diff: terminal-native diff viewer
+  - kitten hints: extensible text pattern matching and action framework
+  - Remote control over Unix socket
+
+WEZTERM:
+  - Lua-based configuration (full programming language for config)
+  - Built-in SSH client with multiplexing (no tmux needed on remote)
+  - Client-server architecture with detachable sessions
+  - Serial port support
+  - Comprehensive multiplexer (local and remote domains)
+  - Works on Windows, macOS, and Linux with consistent behavior
+
+ALACRITTY:
+  - Minimalist philosophy (no tabs, no splits by design)
+  - Hints mode for keyboard-driven URL/pattern interaction
+  - Vi mode for scrollback navigation
+  - Extremely low latency (benchmarked)
+  - TOML configuration (clean, human-readable)
+
+ITERM2:
+  - tmux -CC integration (tmux control mode rendered as native UI)
+  - Triggers (regex-based automatic actions on output)
+  - Semantic history (Cmd+click file paths to open in editor)
+  - Badges (watermark text in terminal background)
+  - Shell integration with command status decorations
+  - Password manager integration
+  - Instant replay (step through terminal history frame by frame)
+  - Annotations on terminal output
+  - Coprocesses (pipe terminal I/O to external scripts)
+
+GHOSTTY:
+  - Native platform UI (not cross-platform toolkit)
+  - Zig implementation for performance
+  - Native macOS and GTK Linux integration
+  - Focus on correctness and spec compliance
+
+FOOT:
+  - Wayland-native (no X11 support, no GPU rendering)
+  - Excellent performance through optimized CPU rendering
+  - PipeWire/pipesource integration
+  - Scrollback search with regex
+  - Lightweight and minimal dependency footprint
+
+CONTOUR:
+  - VT520-level compatibility ambitions
+  - Sixel and Kitty graphics protocol support
+  - Colored and styled underlines
+  - Extremely spec-compliant VT parser
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================

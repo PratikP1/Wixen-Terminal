@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+            artifact-suffix: x64
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+            artifact-suffix: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-release-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        if: matrix.arch == 'x64'
+        run: cargo test --workspace
+
+      - name: Extract version
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare portable package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $suffix = "${{ matrix.artifact-suffix }}"
+          $dir = "wixen-terminal-${version}-${suffix}"
+          New-Item -ItemType Directory -Path $dir -Force
+          Copy-Item target/${{ matrix.target }}/release/wixen.exe $dir/
+          Copy-Item scripts/wixen.ps1 $dir/ -ErrorAction SilentlyContinue
+          Copy-Item scripts/wixen.lua $dir/ -ErrorAction SilentlyContinue
+          Copy-Item README.md $dir/ -ErrorAction SilentlyContinue
+          Copy-Item LICENSE-MIT $dir/ -ErrorAction SilentlyContinue
+          Copy-Item LICENSE-APACHE $dir/ -ErrorAction SilentlyContinue
+          # Create portable mode marker
+          New-Item -ItemType File -Path "$dir/wixen.portable" -Force
+          Compress-Archive -Path $dir -DestinationPath "wixen-${suffix}.zip"
+
+      - name: Copy standalone exe
+        shell: pwsh
+        run: |
+          $suffix = "${{ matrix.artifact-suffix }}"
+          Copy-Item target/${{ matrix.target }}/release/wixen.exe "wixen-${suffix}.exe"
+
+      - name: Install WiX Toolset
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: dotnet tool install --global wix
+
+      - name: Build MSI installer
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          if (-not (Test-Path installer/wixen.wxs)) {
+            Write-Host "No WiX source found - skipping MSI build"
+            echo "MSI_SKIP=true" >> $env:GITHUB_ENV
+          } else {
+            wix build installer/wixen.wxs -o "wixen-x64.msi" -d "Version=${version}" -d "ExePath=target/${{ matrix.target }}/release/wixen.exe"
+          }
+
+      - name: Upload portable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: wixen-${{ matrix.artifact-suffix }}-portable
+          path: wixen-${{ matrix.artifact-suffix }}.zip
+
+      - name: Upload standalone exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: wixen-${{ matrix.artifact-suffix }}-exe
+          path: wixen-${{ matrix.artifact-suffix }}.exe
+
+      - name: Upload MSI artifact
+        if: matrix.arch == 'x64' && env.MSI_SKIP != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wixen-x64-msi
+          path: wixen-x64.msi
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*
+          generate_release_notes: true
+          fail_on_unmatched_files: false

@@ -1,0 +1,1896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wixen Terminal User Guide</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --fg: #e0e0e0;
+  --accent: #4fc3f7;
+  --border: #333355;
+  --code-bg: #16213e;
+  --table-header: #0f3460;
+  --table-alt: #1a1a3a;
+  --link: #81d4fa;
+  --link-visited: #b39ddb;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --accent: #0277bd;
+    --border: #cccccc;
+    --code-bg: #f5f5f5;
+    --table-header: #e3f2fd;
+    --table-alt: #f5f5f5;
+    --link: #0277bd;
+    --link-visited: #7b1fa2;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --bg: #000000;
+    --fg: #ffffff;
+    --accent: #ffff00;
+    --border: #ffffff;
+    --code-bg: #1a1a1a;
+    --table-header: #333333;
+    --table-alt: #1a1a1a;
+    --link: #ffff00;
+    --link-visited: #ff99ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.6;
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+h1 {
+  font-size: 2rem;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 0.5rem;
+  margin-top: 0;
+}
+
+h2 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+  margin-top: 2.5rem;
+}
+
+h3 {
+  font-size: 1.2rem;
+  margin-top: 2rem;
+}
+
+a {
+  color: var(--link);
+}
+
+a:visited {
+  color: var(--link-visited);
+}
+
+a:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code {
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+pre {
+  background: var(--code-bg);
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+}
+
+th {
+  background: var(--table-header);
+  font-weight: 600;
+}
+
+tr:nth-child(even) td {
+  background: var(--table-alt);
+}
+
+kbd {
+  display: inline-block;
+  padding: 0.15em 0.4em;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.85em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--code-bg);
+}
+
+nav.toc {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+}
+
+nav.toc h2 {
+  font-size: 1.1rem;
+  margin-top: 0;
+  border: none;
+  padding: 0;
+}
+
+nav.toc ul {
+  margin: 0.3rem 0;
+  padding-left: 1.5rem;
+}
+
+nav.toc li {
+  margin: 0.2rem 0;
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  background: var(--code-bg);
+}
+
+/* Skip link for keyboard users */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 0;
+  background: var(--accent);
+  color: var(--bg);
+  padding: 0.5rem 1rem;
+  z-index: 100;
+  font-weight: bold;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Print styles */
+@media print {
+  body {
+    color: #000;
+    background: #fff;
+    max-width: none;
+  }
+  nav.toc {
+    break-inside: avoid;
+  }
+  pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+}
+</style>
+</head>
+<body>
+<a href="#main-content" class="skip-link">Skip to content</a>
+
+<nav class="toc" aria-label="Table of contents">
+<h2>Contents</h2>
+
+</nav>
+
+<main id="main-content" role="main">
+<h1 id="wixen-terminal-user-guide">Wixen Terminal User Guide</h1>
+<h2 id="getting-started">Getting Started</h2>
+<p>Wixen Terminal is a terminal emulator for Windows built with accessibility as a core design goal. Screen reader users get structured navigation of command blocks, output regions, and live announcements out of the box. Sighted users get GPU-accelerated rendering, font ligatures, tabs, and split panes.</p>
+<h3 id="system-requirements">System Requirements</h3>
+<ul>
+<li>Windows 10 version 1903 (build 18362) or later</li>
+<li>Windows 11 supported</li>
+<li>Any screen reader that supports UI Automation (Narrator, NVDA, JAWS)</li>
+</ul>
+<h3 id="installation">Installation</h3>
+<p>There are three ways to install Wixen Terminal:</p>
+<ol>
+<li><strong>Installer</strong> (recommended): Run the <code>.msi</code> installer. It adds Wixen to your Start menu and PATH.</li>
+<li><strong>Portable</strong>: Extract the <code>.zip</code> archive anywhere. Place a file named <code>portable</code> (no extension) next to <code>wixen.exe</code> to activate portable mode. Configuration is stored next to the executable instead of in <code>%APPDATA%</code>.</li>
+<li><strong>winget</strong>: Run <code>winget install wixen</code> from any terminal.</li>
+</ol>
+<h3 id="first-launch">First Launch</h3>
+<p>When you start Wixen Terminal, it opens a single tab running your default shell. On most systems this is PowerShell. If PowerShell is not found, Wixen falls back to <code>cmd.exe</code>.</p>
+<p>The window title shows the current working directory when shell integration is active. The tab bar is hidden until you open a second tab.</p>
+<h2 id="terminal-basics">Terminal Basics</h2>
+<h3 id="the-terminal-window">The Terminal Window</h3>
+<p>The window has three areas:</p>
+<ul>
+<li><strong>Title bar</strong>: Shows the window title. Supports dark mode by default.</li>
+<li><strong>Tab bar</strong>: Appears when you have two or more tabs (configurable). Each tab shows the shell name or running command.</li>
+<li><strong>Terminal area</strong>: The main area where your shell runs. This is where you type commands and see output.</li>
+</ul>
+<h3 id="typing-commands">Typing Commands</h3>
+<p>Type commands as you would in any terminal. Press Enter to run them. The terminal supports full VT/ANSI escape sequences, so programs like <code>vim</code>, <code>htop</code>, and <code>git log</code> work correctly.</p>
+<h3 id="copying-and-pasting-text">Copying and Pasting Text</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Copy selected text</td>
+<td>Ctrl+Shift+C</td>
+</tr>
+<tr>
+<td>Paste from clipboard</td>
+<td>Ctrl+Shift+V</td>
+</tr>
+<tr>
+<td>Select all text</td>
+<td>Ctrl+Shift+A</td>
+</tr>
+</tbody>
+</table>
+<p>Select text by clicking and dragging with the mouse. The selection is highlighted with a blue background. Programs running in the terminal can also write to the clipboard via OSC 52 escape sequences (read access is disabled by default for security).</p>
+<h3 id="scrolling-through-output">Scrolling Through Output</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scroll up one page</td>
+<td>Shift+PageUp</td>
+</tr>
+<tr>
+<td>Scroll down one page</td>
+<td>Shift+PageDown</td>
+</tr>
+<tr>
+<td>Scroll to top of history</td>
+<td>Ctrl+Home</td>
+</tr>
+<tr>
+<td>Scroll to bottom</td>
+<td>Ctrl+End</td>
+</tr>
+</tbody>
+</table>
+<p>Scrollback is infinite by default. Old output is compressed automatically to save memory.</p>
+<h3 id="clearing-the-terminal">Clearing the Terminal</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clear the terminal screen</td>
+<td>Ctrl+Shift+L</td>
+</tr>
+<tr>
+<td>Clear scrollback history</td>
+<td>Ctrl+Shift+K</td>
+</tr>
+</tbody>
+</table>
+<h3 id="zoom-font-size">Zoom (Font Size)</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Increase font size</td>
+<td>Ctrl+Plus</td>
+</tr>
+<tr>
+<td>Decrease font size</td>
+<td>Ctrl+Minus</td>
+</tr>
+<tr>
+<td>Reset font size to default</td>
+<td>Ctrl+0</td>
+</tr>
+</tbody>
+</table>
+<h2 id="tabs">Tabs</h2>
+<h3 id="working-with-tabs">Working with Tabs</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New tab</td>
+<td>Ctrl+Shift+T</td>
+</tr>
+<tr>
+<td>Close current pane (closes tab if last pane)</td>
+<td>Ctrl+Shift+W</td>
+</tr>
+<tr>
+<td>Next tab</td>
+<td>Ctrl+Tab</td>
+</tr>
+<tr>
+<td>Previous tab</td>
+<td>Ctrl+Shift+Tab</td>
+</tr>
+<tr>
+<td>Duplicate current tab</td>
+<td>Ctrl+Shift+D</td>
+</tr>
+<tr>
+<td>Switch to tab 1</td>
+<td>Ctrl+1</td>
+</tr>
+<tr>
+<td>Switch to tab 2</td>
+<td>Ctrl+2</td>
+</tr>
+<tr>
+<td>Switch to tab 3</td>
+<td>Ctrl+3</td>
+</tr>
+<tr>
+<td>Switch to tab 4</td>
+<td>Ctrl+4</td>
+</tr>
+<tr>
+<td>Switch to tab 5</td>
+<td>Ctrl+5</td>
+</tr>
+<tr>
+<td>Switch to tab 6</td>
+<td>Ctrl+6</td>
+</tr>
+<tr>
+<td>Switch to tab 7</td>
+<td>Ctrl+7</td>
+</tr>
+<tr>
+<td>Switch to tab 8</td>
+<td>Ctrl+8</td>
+</tr>
+<tr>
+<td>Switch to tab 9</td>
+<td>Ctrl+9</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tab-indicators">Tab Indicators</h3>
+<p>Tabs show visual indicators for events:</p>
+<ul>
+<li><strong>Bell indicator</strong>: Appears when a background tab triggers a bell (BEL character).</li>
+<li><strong>Exit status</strong>: Tabs show the exit status of the last command when shell integration is active. A non-zero exit code is flagged.</li>
+</ul>
+<h3 id="tab-bar-display">Tab Bar Display</h3>
+<p>The tab bar has three modes, controlled by the <code>tab_bar</code> setting:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auto-hide</code> (default)</td>
+<td>Tab bar appears only when 2 or more tabs are open</td>
+</tr>
+<tr>
+<td><code>always</code></td>
+<td>Tab bar is always visible</td>
+</tr>
+<tr>
+<td><code>never</code></td>
+<td>Tab bar is never shown</td>
+</tr>
+</tbody>
+</table>
+<h2 id="split-panes">Split Panes</h2>
+<p>Split panes let you run multiple terminals side by side within a single tab.</p>
+<h3 id="creating-splits">Creating Splits</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Split horizontally (left/right)</td>
+<td>Alt+Shift+Plus</td>
+</tr>
+<tr>
+<td>Split vertically (top/bottom)</td>
+<td>Alt+Shift+Minus</td>
+</tr>
+</tbody>
+</table>
+<h3 id="navigating-between-panes">Navigating Between Panes</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Focus pane to the left</td>
+<td>Alt+Left</td>
+</tr>
+<tr>
+<td>Focus pane to the right</td>
+<td>Alt+Right</td>
+</tr>
+<tr>
+<td>Focus pane above</td>
+<td>Alt+Up</td>
+</tr>
+<tr>
+<td>Focus pane below</td>
+<td>Alt+Down</td>
+</tr>
+</tbody>
+</table>
+<p>Navigation finds the nearest pane in the given direction based on layout position.</p>
+<h3 id="resizing-panes">Resizing Panes</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shrink current pane</td>
+<td>Alt+Shift+Left</td>
+</tr>
+<tr>
+<td>Grow current pane</td>
+<td>Alt+Shift+Right</td>
+</tr>
+</tbody>
+</table>
+<p>The split ratio is clamped between 10% and 90% to prevent panes from becoming too small.</p>
+<h3 id="closing-panes">Closing Panes</h3>
+<p>Press Ctrl+Shift+W to close the active pane. If the pane is the last one in the tab, the tab closes. If the tab is the last tab, the window closes.</p>
+<h3 id="zooming-a-pane">Zooming a Pane</h3>
+<p>Press Ctrl+Shift+Z to toggle zoom on the active pane. When zoomed, the pane fills the entire tab area. Other panes remain in the tree but are hidden. Press Ctrl+Shift+Z again to restore the original layout.</p>
+<h3 id="read-only-mode">Read-Only Mode</h3>
+<p>Press Ctrl+Shift+R to toggle read-only mode on the active pane. In read-only mode, all keyboard input to the pane is blocked. This prevents accidental input to a pane you are monitoring.</p>
+<h3 id="broadcast-input">Broadcast Input</h3>
+<p>Press Ctrl+Shift+B to toggle broadcast mode on the active pane. When broadcast is enabled, anything you type in the active pane is also sent to all other panes that have broadcast mode turned on. This is useful for running the same command on multiple servers at once.</p>
+<h3 id="pane-shortcuts-reference">Pane Shortcuts Reference</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Split horizontally</td>
+<td>Alt+Shift+Plus</td>
+</tr>
+<tr>
+<td>Split vertically</td>
+<td>Alt+Shift+Minus</td>
+</tr>
+<tr>
+<td>Focus pane left</td>
+<td>Alt+Left</td>
+</tr>
+<tr>
+<td>Focus pane right</td>
+<td>Alt+Right</td>
+</tr>
+<tr>
+<td>Focus pane up</td>
+<td>Alt+Up</td>
+</tr>
+<tr>
+<td>Focus pane down</td>
+<td>Alt+Down</td>
+</tr>
+<tr>
+<td>Shrink pane</td>
+<td>Alt+Shift+Left</td>
+</tr>
+<tr>
+<td>Grow pane</td>
+<td>Alt+Shift+Right</td>
+</tr>
+<tr>
+<td>Close pane</td>
+<td>Ctrl+Shift+W</td>
+</tr>
+<tr>
+<td>Toggle zoom</td>
+<td>Ctrl+Shift+Z</td>
+</tr>
+<tr>
+<td>Toggle read-only</td>
+<td>Ctrl+Shift+R</td>
+</tr>
+<tr>
+<td>Toggle broadcast input</td>
+<td>Ctrl+Shift+B</td>
+</tr>
+</tbody>
+</table>
+<h2 id="search">Search</h2>
+<h3 id="opening-search">Opening Search</h3>
+<p>Press Ctrl+Shift+F to open the search bar. A text field appears at the top of the terminal.</p>
+<h3 id="searching-text">Searching Text</h3>
+<p>Type your search term. Matches are highlighted in the terminal output as you type. The match count is displayed in the search bar.</p>
+<h3 id="navigating-matches">Navigating Matches</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Next match</td>
+<td>F3</td>
+</tr>
+<tr>
+<td>Previous match</td>
+<td>Shift+F3</td>
+</tr>
+</tbody>
+</table>
+<h3 id="search-options">Search Options</h3>
+<ul>
+<li><strong>Case sensitivity</strong>: Search is case-insensitive by default. Toggle case sensitivity from the search bar.</li>
+<li><strong>Regex mode</strong>: Enable regex to search with regular expression patterns. For example, <code>error|warning</code> matches lines containing either word.</li>
+</ul>
+<p>Press Escape to close the search bar.</p>
+<h2 id="command-palette">Command Palette</h2>
+<h3 id="opening-the-palette">Opening the Palette</h3>
+<p>Press Ctrl+Shift+P to open the command palette. A text field appears with a list of all available actions.</p>
+<h3 id="using-the-palette">Using the Palette</h3>
+<p>Type to filter the list. The palette uses fuzzy matching, so you can type partial words. For example, typing "split h" matches "Split Horizontal".</p>
+<p>Press Enter to run the selected action. Press Escape to close the palette without running anything.</p>
+<h3 id="ssh-targets-in-the-palette">SSH Targets in the Palette</h3>
+<p>If you have SSH targets configured, they appear in the command palette. Select one to open a new tab connected to that host.</p>
+<h2 id="shell-integration">Shell Integration</h2>
+<p>Shell integration connects your shell to Wixen Terminal so it can track command boundaries, exit codes, and the current working directory. This powers several features: command block navigation for screen readers, prompt jumping, command completion announcements, and exit code detection.</p>
+<h3 id="what-shell-integration-provides">What Shell Integration Provides</h3>
+<ul>
+<li><strong>Command blocks</strong>: Each prompt/command/output cycle is a separate block. Screen readers can navigate between blocks.</li>
+<li><strong>Exit codes</strong>: The terminal knows whether a command succeeded or failed.</li>
+<li><strong>Working directory</strong>: The terminal updates the tab title and provides accurate path information.</li>
+<li><strong>Prompt jumping</strong>: Navigate between prompts with keyboard shortcuts.</li>
+</ul>
+<h3 id="powershell-setup">PowerShell Setup</h3>
+<p>Add this line to your PowerShell profile (<code>$PROFILE</code>):</p>
+<pre><code class="language-powershell">. &quot;$env:APPDATA\wixen\wixen.ps1&quot;
+</code></pre>
+<p>The script checks for the <code>WIXEN_TERMINAL</code> environment variable and only activates inside Wixen Terminal. It emits OSC 133 markers (prompt start, command start, output start, command complete) and OSC 7 for the working directory.</p>
+<h3 id="cmdexe-setup-via-clink">cmd.exe Setup (via Clink)</h3>
+<p>Install <a href="https://chrisant996.github.io/clink/">Clink</a> for cmd.exe. Place the <code>wixen.lua</code> script in your Clink scripts directory. Clink loads it automatically when cmd.exe runs inside Wixen Terminal.</p>
+<p>The Clink scripts directory is typically <code>%LOCALAPPDATA%\clink</code>.</p>
+<h3 id="jumping-between-commands">Jumping Between Commands</h3>
+<p>With shell integration active, you can jump between command prompts:</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Jump to previous prompt</td>
+<td>Ctrl+Shift+Up</td>
+</tr>
+<tr>
+<td>Jump to next prompt</td>
+<td>Ctrl+Shift+Down</td>
+</tr>
+</tbody>
+</table>
+<p>If shell integration is not active, Wixen falls back to heuristic prompt detection using regex patterns that match common prompt formats.</p>
+<h2 id="accessibility">Accessibility</h2>
+<p>Wixen Terminal is built for screen reader users from the ground up. It exposes a full UI Automation (UIA) tree with structured command blocks, live output regions, and labeled controls.</p>
+<h3 id="screen-reader-support">Screen Reader Support</h3>
+<p>Wixen works with any screen reader that supports UI Automation:</p>
+<ul>
+<li><strong>Narrator</strong> (built into Windows)</li>
+<li><strong>NVDA</strong> (free, open source)</li>
+<li><strong>JAWS</strong> (commercial)</li>
+</ul>
+<p>No extra configuration is needed. Wixen detects your screen reader automatically.</p>
+<h3 id="command-block-navigation">Command Block Navigation</h3>
+<p>When shell integration is active, the terminal organizes output into command blocks. Each block contains:</p>
+<ul>
+<li>The prompt text</li>
+<li>The command you typed</li>
+<li>The command's output</li>
+<li>The exit code</li>
+</ul>
+<p>Screen readers can navigate between these blocks using their standard object navigation commands. Each block is announced with a summary like "cargo build completed: 42 lines of output" or "cargo test failed (exit 1): 100 lines of output".</p>
+<h3 id="output-announcements">Output Announcements</h3>
+<p>Wixen announces terminal output through UIA live regions. The behavior depends on the verbosity setting.</p>
+<h3 id="verbosity-levels">Verbosity Levels</h3>
+<p>Set <code>screen_reader_output</code> in your config to control how much output is announced:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auto</code> (default)</td>
+<td>Detects screen reader presence. Announces all output when a screen reader is running.</td>
+</tr>
+<tr>
+<td><code>all</code></td>
+<td>Announces all terminal output.</td>
+</tr>
+<tr>
+<td><code>commands-only</code></td>
+<td>Announces only command completions (prompt, exit code, output summary).</td>
+</tr>
+<tr>
+<td><code>errors-only</code></td>
+<td>Announces only errors (non-zero exit codes, detected error lines).</td>
+</tr>
+<tr>
+<td><code>silent</code></td>
+<td>No automatic announcements. You navigate output manually.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="live-region-politeness">Live Region Politeness</h3>
+<p>The <code>live_region_politeness</code> setting controls how announcements interact with speech already in progress:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>polite</code> (default)</td>
+<td>Queues announcements behind current speech.</td>
+</tr>
+<tr>
+<td><code>assertive</code></td>
+<td>Interrupts current speech with the new announcement.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="audio-feedback">Audio Feedback</h3>
+<p>Wixen can play short audio tones for terminal events. These work with or without a screen reader.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>audio_feedback</code></td>
+<td><code>false</code></td>
+<td>Master switch for all audio tones.</td>
+</tr>
+<tr>
+<td><code>audio_progress</code></td>
+<td><code>true</code></td>
+<td>Tone when a progress bar is detected.</td>
+</tr>
+<tr>
+<td><code>audio_errors</code></td>
+<td><code>true</code></td>
+<td>Tone when an error or warning is detected in output.</td>
+</tr>
+<tr>
+<td><code>audio_command_complete</code></td>
+<td><code>true</code></td>
+<td>Tone when a command finishes.</td>
+</tr>
+</tbody>
+</table>
+<p>Note: <code>audio_progress</code>, <code>audio_errors</code>, and <code>audio_command_complete</code> only produce sound when <code>audio_feedback</code> is <code>true</code>.</p>
+<h3 id="error-and-warning-detection">Error and Warning Detection</h3>
+<p>Wixen scans command output for error and warning patterns. When detected, these lines are marked in the UIA tree so screen readers can identify them. If audio feedback is enabled, an error tone plays.</p>
+<h3 id="progress-bar-detection">Progress Bar Detection</h3>
+<p>Wixen detects progress indicators in terminal output (percentage displays, progress bars). When detected and audio feedback is enabled, a tone plays to indicate progress.</p>
+<h3 id="password-prompt-detection">Password Prompt Detection</h3>
+<p>Wixen detects password prompts in terminal output. This prevents the terminal from announcing sensitive input and lets screen readers inform the user that a password is being requested.</p>
+<h3 id="high-contrast-mode">High Contrast Mode</h3>
+<p>The <code>high_contrast</code> setting controls high contrast rendering:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auto</code> (default)</td>
+<td>Follows the Windows system high contrast setting.</td>
+</tr>
+<tr>
+<td><code>on</code></td>
+<td>Forces high contrast mode on.</td>
+</tr>
+<tr>
+<td><code>off</code></td>
+<td>Forces high contrast mode off.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="minimum-contrast-ratio">Minimum Contrast Ratio</h3>
+<p>The <code>min_contrast_ratio</code> setting (default <code>4.5</code>) adjusts terminal colors to meet a minimum foreground-to-background contrast ratio. WCAG AA requires 4.5:1. WCAG AAA requires 7.0:1. Set to <code>0.0</code> to disable contrast adjustment.</p>
+<p>When a program sets colors below the threshold, Wixen adjusts the foreground color to meet the minimum ratio.</p>
+<h3 id="reduced-motion">Reduced Motion</h3>
+<p>The <code>reduced_motion</code> setting controls animations:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auto</code> (default)</td>
+<td>Follows the Windows "Show animations" system setting.</td>
+</tr>
+<tr>
+<td><code>on</code></td>
+<td>Disables cursor blink, visual bell flash, and smooth scrolling.</td>
+</tr>
+<tr>
+<td><code>off</code></td>
+<td>Keeps all animations enabled.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pane-position-announcements">Pane Position Announcements</h3>
+<p>When <code>announce_pane_position</code> is <code>true</code> (default), switching panes announces the position: "Left pane, 1 of 3".</p>
+<h3 id="tab-detail-announcements">Tab Detail Announcements</h3>
+<p>When <code>announce_tab_details</code> is <code>true</code> (default), switching tabs announces the tab title, shell type, and status.</p>
+<h3 id="image-announcements">Image Announcements</h3>
+<p>When <code>announce_images</code> is <code>true</code> (default), inline images placed via Sixel, iTerm2, or Kitty protocols are announced with their dimensions and filename (if available).</p>
+<h2 id="settings">Settings</h2>
+<h3 id="opening-settings">Opening Settings</h3>
+<p>Press Ctrl+Comma to open the settings overlay. The settings panel appears on top of the terminal and is fully keyboard-navigable.</p>
+<h3 id="settings-tabs">Settings Tabs</h3>
+<p>The settings panel has seven tabs:</p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Font</td>
+<td>Font family, size, line height, ligatures, fallback fonts, font file path</td>
+</tr>
+<tr>
+<td>Window</td>
+<td>Window size, title, renderer, opacity, background style, background image, quake mode, scrollbar mode, tab bar mode, padding</td>
+</tr>
+<tr>
+<td>Terminal</td>
+<td>Scrollback lines, cursor style, cursor blink, bell style, OSC 52 policy, command notification threshold, session restore</td>
+</tr>
+<tr>
+<td>Colors</td>
+<td>Theme selection, foreground color, background color, cursor color, selection color, palette overrides</td>
+</tr>
+<tr>
+<td>Profiles</td>
+<td>Shell profiles (name, program, arguments, working directory, default flag)</td>
+</tr>
+<tr>
+<td>Keybindings</td>
+<td>All keyboard shortcuts with chord editor (modifier checkboxes and key input)</td>
+</tr>
+<tr>
+<td>Accessibility</td>
+<td>Screen reader verbosity, announcements, audio feedback, contrast, motion, prompt detection</td>
+</tr>
+</tbody>
+</table>
+<h3 id="navigating-settings">Navigating Settings</h3>
+<ul>
+<li>Press <strong>Left/Right arrow</strong> to switch between tabs.</li>
+<li>Press <strong>Up/Down arrow</strong> to move between fields within a tab.</li>
+<li>Press <strong>Enter</strong> or <strong>Space</strong> to edit a field (toggle, dropdown, or text input).</li>
+<li>Press <strong>Escape</strong> to stop editing a field, or to close the settings panel.</li>
+</ul>
+<h3 id="saving-settings">Saving Settings</h3>
+<p>Changes are collected into a draft. When you close the settings panel, you are prompted to save or discard. Saved changes are written to your <code>config.toml</code> file and take effect immediately.</p>
+<h2 id="configuration-file">Configuration File</h2>
+<h3 id="file-location">File Location</h3>
+<p>Wixen looks for configuration in this order:</p>
+<ol>
+<li><code>config.toml</code> next to the executable (portable mode, requires a <code>portable</code> marker file)</li>
+<li><code>%APPDATA%\wixen\config.toml</code></li>
+</ol>
+<h3 id="format">Format</h3>
+<p>Configuration files use <a href="https://toml.io/">TOML</a> format. Lua configuration (<code>config.lua</code> in the same directory) runs after TOML and can override any setting.</p>
+<h3 id="hot-reload">Hot Reload</h3>
+<p>Changes to the configuration file are detected automatically. Most settings take effect immediately without restarting Wixen.</p>
+<h3 id="full-configuration-reference">Full Configuration Reference</h3>
+<h4 id="font">[font]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>family</code></td>
+<td>string</td>
+<td><code>"Cascadia Code"</code></td>
+<td>Font family name (DirectWrite lookup).</td>
+</tr>
+<tr>
+<td><code>size</code></td>
+<td>float</td>
+<td><code>14.0</code></td>
+<td>Font size in points. Valid range: 4.0 to 128.0.</td>
+</tr>
+<tr>
+<td><code>line_height</code></td>
+<td>float</td>
+<td><code>1.0</code></td>
+<td>Line height multiplier. 1.0 is tight, 1.2 is comfortable. Valid range: 0.5 to 3.0.</td>
+</tr>
+<tr>
+<td><code>fallback_fonts</code></td>
+<td>string array</td>
+<td><code>["Segoe UI Emoji", "Segoe UI Symbol", "MS Gothic"]</code></td>
+<td>Fallback fonts tried when the primary font lacks a glyph.</td>
+</tr>
+<tr>
+<td><code>ligatures</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable programming ligatures (e.g., <code>=&gt;</code>, <code>-&gt;</code>, <code>!=</code>).</td>
+</tr>
+<tr>
+<td><code>font_path</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Path to a <code>.ttf</code> or <code>.otf</code> file to load directly. When set, takes priority over <code>family</code>.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="window">[window]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>width</code></td>
+<td>integer</td>
+<td><code>1024</code></td>
+<td>Initial window width in pixels. Minimum: 100.</td>
+</tr>
+<tr>
+<td><code>height</code></td>
+<td>integer</td>
+<td><code>768</code></td>
+<td>Initial window height in pixels. Minimum: 100.</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>string</td>
+<td><code>"Wixen Terminal"</code></td>
+<td>Window title text.</td>
+</tr>
+<tr>
+<td><code>renderer</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>Renderer backend: <code>"auto"</code>, <code>"gpu"</code>, or <code>"software"</code>. Auto tries GPU first (D3D12, then D3D11), then falls back to software.</td>
+</tr>
+<tr>
+<td><code>opacity</code></td>
+<td>float</td>
+<td><code>1.0</code></td>
+<td>Window opacity. 0.0 is fully transparent, 1.0 is fully opaque.</td>
+</tr>
+<tr>
+<td><code>background</code></td>
+<td>string</td>
+<td><code>"opaque"</code></td>
+<td>Background style: <code>"opaque"</code>, <code>"acrylic"</code>, or <code>"mica"</code>. Acrylic and Mica require Windows 11 22H2 or later.</td>
+</tr>
+<tr>
+<td><code>dark_title_bar</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Use dark title bar decoration.</td>
+</tr>
+<tr>
+<td><code>background_image</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Path to a background image (PNG, JPEG, GIF). Empty disables.</td>
+</tr>
+<tr>
+<td><code>background_image_opacity</code></td>
+<td>float</td>
+<td><code>0.3</code></td>
+<td>Background image opacity. 0.0 is invisible, 1.0 is fully opaque.</td>
+</tr>
+<tr>
+<td><code>quake_mode</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Enable quake mode. A global hotkey toggles the terminal window.</td>
+</tr>
+<tr>
+<td><code>quake_hotkey</code></td>
+<td>string</td>
+<td><code>"win+backtick"</code></td>
+<td>Global hotkey chord for quake mode.</td>
+</tr>
+<tr>
+<td><code>scrollbar</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>Scrollbar display: <code>"auto"</code> (visible when scrolled), <code>"always"</code>, or <code>"never"</code>.</td>
+</tr>
+<tr>
+<td><code>tab_bar</code></td>
+<td>string</td>
+<td><code>"auto-hide"</code></td>
+<td>Tab bar display: <code>"auto-hide"</code> (2+ tabs), <code>"always"</code>, or <code>"never"</code>.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="windowpadding">[window.padding]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>left</code></td>
+<td>integer</td>
+<td><code>4</code></td>
+<td>Left padding in pixels between window edge and terminal grid.</td>
+</tr>
+<tr>
+<td><code>right</code></td>
+<td>integer</td>
+<td><code>4</code></td>
+<td>Right padding in pixels.</td>
+</tr>
+<tr>
+<td><code>top</code></td>
+<td>integer</td>
+<td><code>4</code></td>
+<td>Top padding in pixels.</td>
+</tr>
+<tr>
+<td><code>bottom</code></td>
+<td>integer</td>
+<td><code>4</code></td>
+<td>Bottom padding in pixels.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="terminal">[terminal]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scrollback_lines</code></td>
+<td>integer</td>
+<td><code>0</code></td>
+<td>Maximum scrollback lines. 0 means infinite scrollback with automatic compression.</td>
+</tr>
+<tr>
+<td><code>cursor_style</code></td>
+<td>string</td>
+<td><code>"block"</code></td>
+<td>Cursor style: <code>"block"</code>, <code>"underline"</code>, or <code>"bar"</code>.</td>
+</tr>
+<tr>
+<td><code>cursor_blink</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Whether the cursor blinks.</td>
+</tr>
+<tr>
+<td><code>cursor_blink_ms</code></td>
+<td>integer</td>
+<td><code>530</code></td>
+<td>Cursor blink interval in milliseconds. Valid range: 100 to 5000.</td>
+</tr>
+<tr>
+<td><code>bell</code></td>
+<td>string</td>
+<td><code>"both"</code></td>
+<td>Bell notification: <code>"audible"</code> (system sound), <code>"visual"</code> (flash), <code>"both"</code>, or <code>"none"</code>.</td>
+</tr>
+<tr>
+<td><code>osc52</code></td>
+<td>string</td>
+<td><code>"write-only"</code></td>
+<td>Clipboard access for programs: <code>"write-only"</code> (safe default), <code>"read-write"</code>, or <code>"disabled"</code>.</td>
+</tr>
+<tr>
+<td><code>command_notify_threshold</code></td>
+<td>integer</td>
+<td><code>10</code></td>
+<td>Seconds a command must run before triggering a completion notification when the window is unfocused. 0 disables.</td>
+</tr>
+<tr>
+<td><code>session_restore</code></td>
+<td>string</td>
+<td><code>"never"</code></td>
+<td>Session restore on startup: <code>"never"</code>, <code>"always"</code>, or <code>"ask"</code>.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="colors">[colors]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>theme</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Built-in theme name. Sets base colors that individual fields below can override. See <a href="#color-schemes">Color Schemes</a>.</td>
+</tr>
+<tr>
+<td><code>foreground</code></td>
+<td>string</td>
+<td><code>"#d9d9d9"</code></td>
+<td>Foreground text color as <code>#RRGGBB</code> hex.</td>
+</tr>
+<tr>
+<td><code>background</code></td>
+<td>string</td>
+<td><code>"#0d0d14"</code></td>
+<td>Background color as <code>#RRGGBB</code> hex.</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td>string</td>
+<td><code>"#cccccc"</code></td>
+<td>Cursor color as <code>#RRGGBB</code> hex.</td>
+</tr>
+<tr>
+<td><code>selection_bg</code></td>
+<td>string</td>
+<td><code>"#264f78"</code></td>
+<td>Selection background color as <code>#RRGGBB</code> hex.</td>
+</tr>
+<tr>
+<td><code>palette</code></td>
+<td>string array</td>
+<td><code>[]</code></td>
+<td>ANSI 16-color palette overrides, indexed 0 through 15. Each entry is a <code>#RRGGBB</code> hex string. Empty uses theme or default colors.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="shell">[shell]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>program</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Shell program to launch. Empty auto-detects (PowerShell, then cmd.exe).</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td>string array</td>
+<td><code>[]</code></td>
+<td>Arguments to pass to the shell.</td>
+</tr>
+<tr>
+<td><code>working_directory</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>Starting directory. Empty inherits from the parent process.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="keybindings">[keybindings]</h4>
+<p>Keybindings are defined as an array of entries. Each entry has a <code>chord</code> (key combination) and an <code>action</code>. Some actions accept an optional <code>args</code> field.</p>
+<pre><code class="language-toml">[[keybindings.bindings]]
+chord = &quot;ctrl+shift+t&quot;
+action = &quot;new_tab&quot;
+
+[[keybindings.bindings]]
+chord = &quot;ctrl+alt+1&quot;
+action = &quot;send_text&quot;
+args = &quot;echo hello\n&quot;
+</code></pre>
+<p>Chords are written as modifier keys joined by <code>+</code>, followed by the key name. Modifiers are normalized to alphabetical order: <code>alt</code>, <code>ctrl</code>, <code>shift</code>, <code>win</code>.</p>
+<p>The <code>args</code> field supports escape sequences: <code>\n</code> (newline), <code>\r</code> (carriage return), <code>\t</code> (tab), <code>\x1b</code> (escape), <code>\\</code> (literal backslash).</p>
+<h4 id="accessibility_1">[accessibility]</h4>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>screen_reader_output</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>Verbosity: <code>"auto"</code>, <code>"all"</code>, <code>"commands-only"</code>, <code>"errors-only"</code>, <code>"silent"</code>.</td>
+</tr>
+<tr>
+<td><code>announce_command_complete</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Announce when commands finish (includes exit code and output line count).</td>
+</tr>
+<tr>
+<td><code>announce_exit_codes</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Include exit codes in completion announcements.</td>
+</tr>
+<tr>
+<td><code>live_region_politeness</code></td>
+<td>string</td>
+<td><code>"polite"</code></td>
+<td>UIA live region mode: <code>"polite"</code> (queues) or <code>"assertive"</code> (interrupts).</td>
+</tr>
+<tr>
+<td><code>prompt_detection</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>How prompts are detected: <code>"auto"</code>, <code>"shell-integration"</code>, <code>"heuristic"</code>, <code>"disabled"</code>.</td>
+</tr>
+<tr>
+<td><code>high_contrast</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>High contrast mode: <code>"auto"</code> (follow Windows), <code>"on"</code>, <code>"off"</code>.</td>
+</tr>
+<tr>
+<td><code>min_contrast_ratio</code></td>
+<td>float</td>
+<td><code>4.5</code></td>
+<td>Minimum foreground/background contrast ratio. WCAG AA is 4.5, AAA is 7.0. Set 0.0 to disable.</td>
+</tr>
+<tr>
+<td><code>reduced_motion</code></td>
+<td>string</td>
+<td><code>"auto"</code></td>
+<td>Reduced motion: <code>"auto"</code> (follow Windows), <code>"on"</code>, <code>"off"</code>.</td>
+</tr>
+<tr>
+<td><code>announce_images</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Announce inline images (Sixel, iTerm2, Kitty) with dimensions and filename.</td>
+</tr>
+<tr>
+<td><code>announce_pane_position</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Announce pane position when switching panes (e.g., "Left pane, 1 of 3").</td>
+</tr>
+<tr>
+<td><code>announce_tab_details</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Announce tab details when switching (title, shell, status).</td>
+</tr>
+<tr>
+<td><code>audio_feedback</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Master switch for audio feedback tones.</td>
+</tr>
+<tr>
+<td><code>audio_progress</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Play a tone on progress bar detection (requires <code>audio_feedback = true</code>).</td>
+</tr>
+<tr>
+<td><code>audio_errors</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Play a tone on error/warning detection (requires <code>audio_feedback = true</code>).</td>
+</tr>
+<tr>
+<td><code>audio_command_complete</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Play a tone on command completion (requires <code>audio_feedback = true</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="profiles">Profiles</h2>
+<h3 id="what-profiles-are">What Profiles Are</h3>
+<p>Profiles let you define multiple shell configurations. Each profile has a name, a shell program, arguments, and a working directory. You can open a new tab with a specific profile from the command palette.</p>
+<p>If you define no profiles, Wixen creates one from the <code>[shell]</code> section of your config.</p>
+<h3 id="creating-a-profile">Creating a Profile</h3>
+<p>Add profile entries to your <code>config.toml</code>:</p>
+<pre><code class="language-toml">[[profiles]]
+name = &quot;PowerShell&quot;
+program = &quot;pwsh.exe&quot;
+args = [&quot;-NoLogo&quot;]
+working_directory = &quot;&quot;
+is_default = true
+
+[[profiles]]
+name = &quot;Command Prompt&quot;
+program = &quot;cmd.exe&quot;
+args = []
+working_directory = &quot;C:\\Projects&quot;
+is_default = false
+</code></pre>
+<p>The profile with <code>is_default = true</code> is used for new tabs opened with Ctrl+Shift+T.</p>
+<h3 id="ssh-profiles">SSH Profiles</h3>
+<p>Define SSH targets in your config. They appear in the command palette.</p>
+<pre><code class="language-toml">[[ssh]]
+name = &quot;dev-server&quot;
+host = &quot;dev.example.com&quot;
+port = 22
+user = &quot;deploy&quot;
+identity_file = &quot;&quot;
+extra_args = []
+</code></pre>
+<p>Opening an SSH target launches a new tab running <code>ssh.exe</code> with the configured host, port, and user.</p>
+<h3 id="wsl-profiles">WSL Profiles</h3>
+<p>Wixen auto-detects installed WSL distributions by running <code>wsl -l -v</code>. Detected distributions appear as profiles in the command palette. You do not need to configure them manually.</p>
+<h2 id="color-schemes">Color Schemes</h2>
+<h3 id="built-in-schemes">Built-in Schemes</h3>
+<p>Wixen includes five built-in color schemes:</p>
+<table>
+<thead>
+<tr>
+<th>Theme name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dracula</code></td>
+<td>Dark theme with purple and pink accents</td>
+</tr>
+<tr>
+<td><code>catppuccin-mocha</code></td>
+<td>Warm dark theme (also accepts <code>catppuccin</code>)</td>
+</tr>
+<tr>
+<td><code>solarized-dark</code></td>
+<td>Ethan Schoonover's dark Solarized palette (also accepts <code>solarized</code>)</td>
+</tr>
+<tr>
+<td><code>one-dark</code></td>
+<td>Atom One Dark colors (also accepts <code>onedark</code>)</td>
+</tr>
+<tr>
+<td><code>gruvbox-dark</code></td>
+<td>Retro groove colors (also accepts <code>gruvbox</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>To use a built-in scheme, set the <code>theme</code> field in your <code>[colors]</code> section:</p>
+<pre><code class="language-toml">[colors]
+theme = &quot;catppuccin-mocha&quot;
+</code></pre>
+<p>Individual color fields override theme colors. For example, you can use the Dracula theme but change the background:</p>
+<pre><code class="language-toml">[colors]
+theme = &quot;dracula&quot;
+background = &quot;#1a1a2e&quot;
+</code></pre>
+<h3 id="custom-color-schemes">Custom Color Schemes</h3>
+<p>Override individual colors without using a theme:</p>
+<pre><code class="language-toml">[colors]
+foreground = &quot;#e0e0e0&quot;
+background = &quot;#1c1c1c&quot;
+cursor = &quot;#ff6600&quot;
+selection_bg = &quot;#3a3a5c&quot;
+palette = [
+    &quot;#1c1c1c&quot;,  # black
+    &quot;#ff5555&quot;,  # red
+    &quot;#50fa7b&quot;,  # green
+    &quot;#f1fa8c&quot;,  # yellow
+    &quot;#bd93f9&quot;,  # blue
+    &quot;#ff79c6&quot;,  # magenta
+    &quot;#8be9fd&quot;,  # cyan
+    &quot;#f8f8f2&quot;,  # white
+    &quot;#6272a4&quot;,  # bright black
+    &quot;#ff6e6e&quot;,  # bright red
+    &quot;#69ff94&quot;,  # bright green
+    &quot;#ffffa5&quot;,  # bright yellow
+    &quot;#d6acff&quot;,  # bright blue
+    &quot;#ff92df&quot;,  # bright magenta
+    &quot;#a4ffff&quot;,  # bright cyan
+    &quot;#ffffff&quot;,  # bright white
+]
+</code></pre>
+<p>The <code>palette</code> array contains 16 colors in standard ANSI order: black, red, green, yellow, blue, magenta, cyan, white, then the bright variants of each.</p>
+<h2 id="keyboard-shortcuts-reference">Keyboard Shortcuts Reference</h2>
+<h3 id="general">General</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Command palette</td>
+<td>Ctrl+Shift+P</td>
+</tr>
+<tr>
+<td>Settings</td>
+<td>Ctrl+Comma</td>
+</tr>
+<tr>
+<td>Open config file</td>
+<td>Ctrl+Shift+Comma</td>
+</tr>
+<tr>
+<td>Toggle fullscreen</td>
+<td>F11</td>
+</tr>
+<tr>
+<td>Toggle fullscreen (alternate)</td>
+<td>Alt+Enter</td>
+</tr>
+<tr>
+<td>New window</td>
+<td>Ctrl+Shift+N</td>
+</tr>
+</tbody>
+</table>
+<h3 id="clipboard">Clipboard</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Copy</td>
+<td>Ctrl+Shift+C</td>
+</tr>
+<tr>
+<td>Paste</td>
+<td>Ctrl+Shift+V</td>
+</tr>
+<tr>
+<td>Select all</td>
+<td>Ctrl+Shift+A</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tabs_1">Tabs</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New tab</td>
+<td>Ctrl+Shift+T</td>
+</tr>
+<tr>
+<td>Close pane/tab</td>
+<td>Ctrl+Shift+W</td>
+</tr>
+<tr>
+<td>Next tab</td>
+<td>Ctrl+Tab</td>
+</tr>
+<tr>
+<td>Previous tab</td>
+<td>Ctrl+Shift+Tab</td>
+</tr>
+<tr>
+<td>Duplicate tab</td>
+<td>Ctrl+Shift+D</td>
+</tr>
+<tr>
+<td>Switch to tab 1-9</td>
+<td>Ctrl+1 through Ctrl+9</td>
+</tr>
+</tbody>
+</table>
+<h3 id="panes">Panes</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Split horizontally</td>
+<td>Alt+Shift+Plus</td>
+</tr>
+<tr>
+<td>Split vertically</td>
+<td>Alt+Shift+Minus</td>
+</tr>
+<tr>
+<td>Focus pane left</td>
+<td>Alt+Left</td>
+</tr>
+<tr>
+<td>Focus pane right</td>
+<td>Alt+Right</td>
+</tr>
+<tr>
+<td>Focus pane up</td>
+<td>Alt+Up</td>
+</tr>
+<tr>
+<td>Focus pane down</td>
+<td>Alt+Down</td>
+</tr>
+<tr>
+<td>Shrink pane</td>
+<td>Alt+Shift+Left</td>
+</tr>
+<tr>
+<td>Grow pane</td>
+<td>Alt+Shift+Right</td>
+</tr>
+<tr>
+<td>Toggle zoom</td>
+<td>Ctrl+Shift+Z</td>
+</tr>
+<tr>
+<td>Toggle read-only</td>
+<td>Ctrl+Shift+R</td>
+</tr>
+<tr>
+<td>Toggle broadcast input</td>
+<td>Ctrl+Shift+B</td>
+</tr>
+</tbody>
+</table>
+<h3 id="scrolling">Scrolling</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scroll up one page</td>
+<td>Shift+PageUp</td>
+</tr>
+<tr>
+<td>Scroll down one page</td>
+<td>Shift+PageDown</td>
+</tr>
+<tr>
+<td>Scroll to top</td>
+<td>Ctrl+Home</td>
+</tr>
+<tr>
+<td>Scroll to bottom</td>
+<td>Ctrl+End</td>
+</tr>
+<tr>
+<td>Jump to previous prompt</td>
+<td>Ctrl+Shift+Up</td>
+</tr>
+<tr>
+<td>Jump to next prompt</td>
+<td>Ctrl+Shift+Down</td>
+</tr>
+</tbody>
+</table>
+<h3 id="search_1">Search</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Open search</td>
+<td>Ctrl+Shift+F</td>
+</tr>
+<tr>
+<td>Next match</td>
+<td>F3</td>
+</tr>
+<tr>
+<td>Previous match</td>
+<td>Shift+F3</td>
+</tr>
+</tbody>
+</table>
+<h3 id="zoom">Zoom</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Zoom in</td>
+<td>Ctrl+Plus</td>
+</tr>
+<tr>
+<td>Zoom out</td>
+<td>Ctrl+Minus</td>
+</tr>
+<tr>
+<td>Reset zoom</td>
+<td>Ctrl+0</td>
+</tr>
+</tbody>
+</table>
+<h3 id="terminal_1">Terminal</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Shortcut</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clear terminal</td>
+<td>Ctrl+Shift+L</td>
+</tr>
+<tr>
+<td>Clear scrollback</td>
+<td>Ctrl+Shift+K</td>
+</tr>
+</tbody>
+</table>
+<h3 id="customizing-shortcuts">Customizing Shortcuts</h3>
+<p>Override or add shortcuts in <code>config.toml</code>. New bindings are added to the default set. To replace a default binding, define a new binding with the same chord and a different action.</p>
+<pre><code class="language-toml">[[keybindings.bindings]]
+chord = &quot;ctrl+shift+t&quot;
+action = &quot;new_tab&quot;
+
+[[keybindings.bindings]]
+chord = &quot;ctrl+shift+e&quot;
+action = &quot;split_horizontal&quot;
+</code></pre>
+<p>You can also add keybindings through Lua configuration (<code>config.lua</code>):</p>
+<pre><code class="language-lua">wixen.bind(&quot;ctrl+shift+e&quot;, &quot;split_horizontal&quot;)
+wixen.bind(&quot;ctrl+alt+1&quot;, &quot;send_text&quot;, &quot;echo hello\n&quot;)
+</code></pre>
+<h3 id="available-actions">Available Actions</h3>
+<table>
+<thead>
+<tr>
+<th>Action name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>new_tab</code></td>
+<td>Open a new tab</td>
+</tr>
+<tr>
+<td><code>close_pane</code></td>
+<td>Close the active pane (closes tab if last pane)</td>
+</tr>
+<tr>
+<td><code>next_tab</code></td>
+<td>Switch to the next tab</td>
+</tr>
+<tr>
+<td><code>prev_tab</code></td>
+<td>Switch to the previous tab</td>
+</tr>
+<tr>
+<td><code>duplicate_tab</code></td>
+<td>Duplicate the current tab</td>
+</tr>
+<tr>
+<td><code>select_tab_1</code> through <code>select_tab_9</code></td>
+<td>Switch to tab by number</td>
+</tr>
+<tr>
+<td><code>split_horizontal</code></td>
+<td>Split the pane left/right</td>
+</tr>
+<tr>
+<td><code>split_vertical</code></td>
+<td>Split the pane top/bottom</td>
+</tr>
+<tr>
+<td><code>focus_pane_left</code></td>
+<td>Move focus to the pane on the left</td>
+</tr>
+<tr>
+<td><code>focus_pane_right</code></td>
+<td>Move focus to the pane on the right</td>
+</tr>
+<tr>
+<td><code>focus_pane_up</code></td>
+<td>Move focus to the pane above</td>
+</tr>
+<tr>
+<td><code>focus_pane_down</code></td>
+<td>Move focus to the pane below</td>
+</tr>
+<tr>
+<td><code>resize_pane_shrink</code></td>
+<td>Shrink the current pane</td>
+</tr>
+<tr>
+<td><code>resize_pane_grow</code></td>
+<td>Grow the current pane</td>
+</tr>
+<tr>
+<td><code>toggle_zoom</code></td>
+<td>Toggle pane zoom</td>
+</tr>
+<tr>
+<td><code>toggle_read_only</code></td>
+<td>Toggle read-only mode on the current pane</td>
+</tr>
+<tr>
+<td><code>toggle_broadcast_input</code></td>
+<td>Toggle broadcast input on the current pane</td>
+</tr>
+<tr>
+<td><code>copy</code></td>
+<td>Copy selected text to clipboard</td>
+</tr>
+<tr>
+<td><code>paste</code></td>
+<td>Paste from clipboard</td>
+</tr>
+<tr>
+<td><code>select_all</code></td>
+<td>Select all text in the terminal</td>
+</tr>
+<tr>
+<td><code>find</code></td>
+<td>Open the search bar</td>
+</tr>
+<tr>
+<td><code>find_next</code></td>
+<td>Jump to the next search match</td>
+</tr>
+<tr>
+<td><code>find_previous</code></td>
+<td>Jump to the previous search match</td>
+</tr>
+<tr>
+<td><code>command_palette</code></td>
+<td>Open the command palette</td>
+</tr>
+<tr>
+<td><code>settings</code></td>
+<td>Open the settings panel</td>
+</tr>
+<tr>
+<td><code>open_config_file</code></td>
+<td>Open the config file in your default editor</td>
+</tr>
+<tr>
+<td><code>toggle_fullscreen</code></td>
+<td>Toggle fullscreen mode</td>
+</tr>
+<tr>
+<td><code>new_window</code></td>
+<td>Open a new Wixen Terminal window</td>
+</tr>
+<tr>
+<td><code>zoom_in</code></td>
+<td>Increase font size</td>
+</tr>
+<tr>
+<td><code>zoom_out</code></td>
+<td>Decrease font size</td>
+</tr>
+<tr>
+<td><code>zoom_reset</code></td>
+<td>Reset font size to the configured default</td>
+</tr>
+<tr>
+<td><code>scroll_up_page</code></td>
+<td>Scroll up one page</td>
+</tr>
+<tr>
+<td><code>scroll_down_page</code></td>
+<td>Scroll down one page</td>
+</tr>
+<tr>
+<td><code>scroll_to_top</code></td>
+<td>Scroll to the top of scrollback</td>
+</tr>
+<tr>
+<td><code>scroll_to_bottom</code></td>
+<td>Scroll to the bottom</td>
+</tr>
+<tr>
+<td><code>jump_to_previous_prompt</code></td>
+<td>Jump to the previous command prompt</td>
+</tr>
+<tr>
+<td><code>jump_to_next_prompt</code></td>
+<td>Jump to the next command prompt</td>
+</tr>
+<tr>
+<td><code>clear_terminal</code></td>
+<td>Clear the terminal screen</td>
+</tr>
+<tr>
+<td><code>clear_scrollback</code></td>
+<td>Clear the scrollback buffer</td>
+</tr>
+<tr>
+<td><code>send_text</code></td>
+<td>Send text to the terminal (requires <code>args</code>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="terminal-wont-start">Terminal Won't Start</h3>
+<p>If the GPU renderer fails, Wixen falls back to software rendering automatically. If you see a blank window or crash on startup:</p>
+<ol>
+<li>Try setting <code>renderer = "software"</code> in your <code>config.toml</code>.</li>
+<li>If the config file is corrupt, delete it and restart. Wixen recreates it with defaults.</li>
+<li>Check that your Windows version is 1903 (build 18362) or later.</li>
+</ol>
+<h3 id="no-shell-integration-markers">No Shell Integration Markers</h3>
+<p>If prompt jumping and command completion announcements do not work:</p>
+<ol>
+<li>Verify the integration script is loaded. For PowerShell, check that <code>. "$env:APPDATA\wixen\wixen.ps1"</code> is in your <code>$PROFILE</code>. For cmd.exe, check that <code>wixen.lua</code> is in your Clink scripts directory.</li>
+<li>Confirm the <code>WIXEN_TERMINAL</code> environment variable is set. Run <code>echo $env:WIXEN_TERMINAL</code> in PowerShell or <code>echo %WIXEN_TERMINAL%</code> in cmd.exe. It should print a value.</li>
+<li>If shell integration is unavailable, Wixen uses heuristic prompt detection as a fallback. You can force this with <code>prompt_detection = "heuristic"</code> in your config.</li>
+</ol>
+<h3 id="screen-reader-not-reading-output">Screen Reader Not Reading Output</h3>
+<ol>
+<li>Check the <code>screen_reader_output</code> setting. It should be <code>"auto"</code> or <code>"all"</code>. If set to <code>"silent"</code>, no output is announced.</li>
+<li>Verify your screen reader is running and UIA support is enabled.</li>
+<li>Try setting <code>live_region_politeness = "assertive"</code> if announcements are being lost.</li>
+</ol>
+<h3 id="high-cpu-usage">High CPU Usage</h3>
+<ol>
+<li>If scrollback is large, the terminal may use more memory and CPU. Set <code>scrollback_lines</code> to a fixed number (e.g., <code>50000</code>) to limit it.</li>
+<li>Check if <code>cursor_blink</code> is causing redraws. Try <code>cursor_blink = false</code>.</li>
+<li>Try <code>renderer = "software"</code> if the GPU driver is causing issues.</li>
+</ol>
+<h3 id="reporting-issues">Reporting Issues</h3>
+<p>Report bugs on the GitHub issues page. Include:</p>
+<ul>
+<li>Your Windows version (<code>winver</code>)</li>
+<li>Your screen reader and version (if applicable)</li>
+<li>Steps to reproduce the problem</li>
+<li>The relevant section of your <code>config.toml</code></li>
+</ul>
+</main>
+
+<footer role="contentinfo" style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.85rem; opacity: 0.7;">
+<p>Wixen Terminal. Licensed under MIT and Apache 2.0.</p>
+</footer>
+</body>
+</html>

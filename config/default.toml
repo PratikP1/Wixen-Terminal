@@ -1,0 +1,304 @@
+# Wixen Terminal — Default Configuration
+#
+# This file documents every configuration option with its default value.
+# Copy this file to %APPDATA%\wixen\config.toml and edit to taste.
+# In portable mode, place it next to the executable as config.toml.
+
+# ─── Font ────────────────────────────────────────────────────────────────────
+
+[font]
+# Font family name (DirectWrite lookup).
+family = "Cascadia Code"
+# Font size in points (valid range: 4.0 – 128.0).
+size = 14.0
+# Line height multiplier (valid range: 0.5 – 3.0). 1.0 = tight, 1.2 = comfortable.
+line_height = 1.0
+# Fallback font families tried when the primary font lacks a glyph.
+fallback_fonts = ["Segoe UI Emoji", "Segoe UI Symbol", "MS Gothic"]
+# Enable programming ligatures (e.g., =>, ->, != in Fira Code / Cascadia Code).
+ligatures = true
+# Path to a font file (.ttf/.otf) to load directly instead of by family name.
+# When non-empty, this takes priority over `family`.
+font_path = ""
+
+# ─── Window ──────────────────────────────────────────────────────────────────
+
+[window]
+# Initial window width in pixels (minimum: 100).
+width = 1024
+# Initial window height in pixels (minimum: 100).
+height = 768
+# Window title.
+title = "Wixen Terminal"
+# Renderer: "auto", "gpu", or "software".
+renderer = "auto"
+# Window opacity (0.0 = fully transparent, 1.0 = fully opaque).
+opacity = 1.0
+# Window background style: "opaque", "acrylic", or "mica".
+# Acrylic and Mica require Windows 11 22H2+.
+background = "opaque"
+# Use dark title bar decoration.
+dark_title_bar = true
+# Path to a background image (empty = none). Supports PNG, JPEG, GIF.
+background_image = ""
+# Background image opacity (0.0 = invisible, 1.0 = fully opaque).
+background_image_opacity = 0.3
+# Enable quake-mode: a global hotkey toggles the terminal window.
+quake_mode = false
+# Quake-mode global hotkey chord.
+quake_hotkey = "win+backtick"
+# Scrollbar display mode: "auto" (when scrolled), "always", or "never".
+scrollbar = "auto"
+# Tab bar display mode: "auto-hide" (2+ tabs), "always", or "never".
+tab_bar = "auto-hide"
+
+# Terminal content padding in pixels (space between window edge and terminal grid).
+[window.padding]
+left = 4
+right = 4
+top = 4
+bottom = 4
+
+# ─── Terminal ────────────────────────────────────────────────────────────────
+
+[terminal]
+# Maximum scrollback lines (0 = infinite).
+scrollback_lines = 0
+# Cursor style: "block", "underline", or "bar".
+cursor_style = "block"
+# Whether the cursor blinks.
+cursor_blink = true
+# Cursor blink interval in milliseconds (valid range: 100 – 5000).
+cursor_blink_ms = 530
+# Bell style: "audible", "visual", "both", or "none".
+bell = "both"
+# OSC 52 clipboard access policy: "write-only", "read-write", or "disabled".
+# Write-only is the safe default — full read access could let a malicious
+# program silently exfiltrate clipboard contents.
+osc52 = "write-only"
+# Notify when a command finishes after running for at least this many seconds
+# and the window is not focused. 0 disables the notification.
+command_notify_threshold = 10
+# Session restore mode: "never", "always", or "ask".
+session_restore = "never"
+
+# ─── Colors ──────────────────────────────────────────────────────────────────
+
+[colors]
+# Built-in theme name (e.g., "dracula", "catppuccin-mocha").
+# If set, provides base colors; individual fields below override the theme.
+# theme = "dracula"
+# Foreground color as #RRGGBB hex.
+foreground = "#d9d9d9"
+# Background color as #RRGGBB hex.
+background = "#0d0d14"
+# Cursor color as #RRGGBB hex.
+cursor = "#cccccc"
+# Selection background color as #RRGGBB hex.
+selection_bg = "#264f78"
+# ANSI 16-color palette overrides (indexed 0–15). Empty = use defaults.
+palette = []
+
+# ─── Shell ───────────────────────────────────────────────────────────────────
+
+[shell]
+# Shell program to launch (empty = auto-detect).
+program = ""
+# Arguments to pass to the shell.
+args = []
+# Working directory (empty = inherit from parent process).
+working_directory = ""
+
+# ─── Keybindings ─────────────────────────────────────────────────────────────
+
+[keybindings]
+
+# Each binding has a chord (key combination) and an action.
+# Optional `args` field for actions that take a parameter (e.g., send_text).
+# Modifier order is normalized: alt+ctrl+shift+win (alphabetical).
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+t"
+action = "new_tab"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+w"
+action = "close_tab"
+
+[[keybindings.bindings]]
+chord = "ctrl+tab"
+action = "next_tab"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+tab"
+action = "prev_tab"
+
+[[keybindings.bindings]]
+chord = "alt+shift+plus"
+action = "split_horizontal"
+
+[[keybindings.bindings]]
+chord = "alt+shift+minus"
+action = "split_vertical"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+c"
+action = "copy"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+v"
+action = "paste"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+f"
+action = "find"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+p"
+action = "command_palette"
+
+[[keybindings.bindings]]
+chord = "ctrl+comma"
+action = "settings"
+
+[[keybindings.bindings]]
+chord = "f11"
+action = "toggle_fullscreen"
+
+[[keybindings.bindings]]
+chord = "ctrl+plus"
+action = "zoom_in"
+
+[[keybindings.bindings]]
+chord = "ctrl+minus"
+action = "zoom_out"
+
+[[keybindings.bindings]]
+chord = "ctrl+0"
+action = "zoom_reset"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+a"
+action = "select_all"
+
+[[keybindings.bindings]]
+chord = "shift+pageup"
+action = "scroll_up_page"
+
+[[keybindings.bindings]]
+chord = "shift+pagedown"
+action = "scroll_down_page"
+
+[[keybindings.bindings]]
+chord = "ctrl+home"
+action = "scroll_to_top"
+
+[[keybindings.bindings]]
+chord = "ctrl+end"
+action = "scroll_to_bottom"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+up"
+action = "jump_to_previous_prompt"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+down"
+action = "jump_to_next_prompt"
+
+[[keybindings.bindings]]
+chord = "ctrl+1"
+action = "select_tab_1"
+
+[[keybindings.bindings]]
+chord = "ctrl+2"
+action = "select_tab_2"
+
+[[keybindings.bindings]]
+chord = "ctrl+3"
+action = "select_tab_3"
+
+[[keybindings.bindings]]
+chord = "ctrl+4"
+action = "select_tab_4"
+
+[[keybindings.bindings]]
+chord = "ctrl+5"
+action = "select_tab_5"
+
+[[keybindings.bindings]]
+chord = "ctrl+6"
+action = "select_tab_6"
+
+[[keybindings.bindings]]
+chord = "ctrl+7"
+action = "select_tab_7"
+
+[[keybindings.bindings]]
+chord = "ctrl+8"
+action = "select_tab_8"
+
+[[keybindings.bindings]]
+chord = "ctrl+9"
+action = "select_tab_9"
+
+# ─── Profiles ────────────────────────────────────────────────────────────────
+#
+# Named shell profiles. If empty, a single profile is synthesized from [shell].
+# Example:
+#
+# [[profiles]]
+# name = "PowerShell"
+# program = "pwsh.exe"
+# args = ["-NoLogo"]
+# working_directory = ""
+# is_default = true
+#
+# [[profiles]]
+# name = "Command Prompt"
+# program = "cmd.exe"
+# args = []
+# working_directory = ""
+# is_default = false
+
+# ─── SSH Targets ─────────────────────────────────────────────────────────────
+#
+# SSH connection targets. Example:
+#
+# [[ssh]]
+# name = "dev-server"
+# host = "dev.example.com"
+# port = 22
+# user = "deploy"
+
+# ── Accessibility ────────────────────────────────────────────────────────────
+[accessibility]
+# How much output the screen reader announces: auto, all, commands-only, errors-only, silent
+screen_reader_output = "auto"
+# Announce when commands complete (includes exit code and output line count)
+announce_command_complete = true
+# Include exit codes in completion announcements
+announce_exit_codes = true
+# UIA live region politeness: "polite" (queues) or "assertive" (interrupts)
+live_region_politeness = "polite"
+# Prompt detection strategy: auto, shell-integration, heuristic, disabled
+prompt_detection = "auto"
+# High contrast mode: "auto" (follow Windows), "on", "off"
+high_contrast = "auto"
+# Minimum foreground/background contrast ratio (WCAG AA = 4.5, AAA = 7.0)
+min_contrast_ratio = 4.5
+# Reduced motion: "auto" (follow Windows), "on", "off"
+reduced_motion = "auto"
+# Announce inline images when placed (protocol, dimensions, filename if available)
+announce_images = true
+# Announce pane position when switching ("Left pane, 1 of 3")
+announce_pane_position = true
+# Announce tab details when switching (title, shell, status)
+announce_tab_details = true
+# Enable audio feedback tones (works without a screen reader)
+audio_feedback = false
+# Enable progress bar detection tones
+audio_progress = true
+# Enable error/warning detection tones
+audio_errors = true
+# Enable command completion tones
+audio_command_complete = true

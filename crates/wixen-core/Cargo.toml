@@ -1,0 +1,24 @@
+[package]
+name = "wixen-core"
+description = "Terminal state machine, grid, and buffer management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wixen-shell-integ = { path = "../wixen-shell-integ" }
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+unicode-width.workspace = true
+unicode-segmentation.workspace = true
+regex.workspace = true
+zstd.workspace = true
+base64.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+proptest = "1.10.0"

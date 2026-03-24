@@ -1,0 +1,15 @@
+[package]
+name = "wixen-a11y"
+description = "UIA provider and structured accessibility tree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wixen-core = { path = "../wixen-core" }
+wixen-shell-integ = { path = "../wixen-shell-integ" }
+windows.workspace = true
+windows-core.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true

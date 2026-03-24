@@ -1,0 +1,14 @@
+[package]
+name = "wixen-shell-integ"
+description = "Shell integration — OSC 133, OSC 7, semantic zones"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+proptest = "1.10.0"

@@ -1,0 +1,13 @@
+[package]
+name = "wixen-pty"
+description = "ConPTY wrapper and process spawning"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+portable-pty.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
