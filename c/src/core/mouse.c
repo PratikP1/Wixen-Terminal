@@ -4,7 +4,7 @@
 #include <string.h>
 
 size_t wixen_encode_mouse(WixenMouseMode mode, bool sgr_mode,
-                           WixenMouseButton button, uint16_t col, uint16_t row,
+                           WixenMouseBtn button, uint16_t col, uint16_t row,
                            bool shift, bool ctrl, bool pressed,
                            char *buf, size_t buf_size) {
     if (mode == WIXEN_MOUSE_NONE || buf_size < 16) return 0;

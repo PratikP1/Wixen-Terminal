@@ -938,9 +938,22 @@ static void terminal_esc(WixenTerminal *t, const WixenAction *action) {
         case '8': wixen_terminal_restore_cursor(t); break;
         case 'c': wixen_terminal_reset(t); break;
         case 'H': wixen_terminal_set_tab_stop(t); break;
+        case '=': t->modes.keypad_application = true; break;  /* DECKPAM */
+        case '>': t->modes.keypad_application = false; break; /* DECKPNM */
         }
     } else if (action->esc.intermediate_count == 1) {
-        if (action->esc.intermediates[0] == '#' && final == '8') {
+        uint8_t inter = action->esc.intermediates[0];
+        /* Charset designation: ESC ( X or ESC ) X */
+        if (inter == '(' || inter == ')') {
+            int gset = (inter == '(') ? 0 : 1;
+            switch (final) {
+            case 'B': t->charsets[gset] = 0; break; /* ASCII */
+            case '0': t->charsets[gset] = 1; break; /* DEC Special Graphics (box drawing) */
+            case 'A': t->charsets[gset] = 2; break; /* UK */
+            default: break;
+            }
+        }
+        if (inter == '#' && final == '8') {
             /* DECALN — fill screen with 'E' */
             for (size_t r = 0; r < t->grid.num_rows; r++) {
                 for (size_t c = 0; c < t->grid.cols; c++) {

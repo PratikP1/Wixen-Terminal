@@ -27,6 +27,7 @@ typedef struct {
     bool origin_mode;             /* DECOM */
     bool reverse_video;           /* DECSCNM */
     bool synchronized_output;     /* Mode 2026 */
+    bool keypad_application;      /* DECKPAM */
 } WixenTerminalModes;
 
 void wixen_modes_init(WixenTerminalModes *m);

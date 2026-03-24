@@ -52,6 +52,7 @@ typedef struct {
     uint32_t current_hyperlink_id;  /* 0 = no active link */
     uint8_t active_charset;          /* 0=G0, 1=G1 */
     bool in_sixel;                   /* Inside Sixel DCS sequence */
+    uint8_t charsets[4];             /* G0-G3 charset (0=ASCII, 1=DEC Special, 2=UK) */
     uint32_t last_printed_char;      /* For REP (CSI b) */
 
     /* Pending responses (DSR etc.) — simple queue */

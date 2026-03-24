@@ -26,6 +26,7 @@
 #include "wixen/ui/clipboard.h"
 #include "wixen/core/mouse.h"
 #include "wixen/shell_integ/shell_integ.h"
+#include "wixen/config/session.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -152,9 +153,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         &ps->parser, evt->data, evt->len, actions, 512);
                     for (size_t i = 0; i < count; i++) {
                         wixen_terminal_dispatch(&ps->terminal, &actions[i]);
-                        /* Free OSC/APC data */
-                        if (actions[i].type == WIXEN_ACTION_OSC_DISPATCH)
+                        /* Dispatch OSC to shell integration before freeing */
+                        if (actions[i].type == WIXEN_ACTION_OSC_DISPATCH && actions[i].osc.data) {
+                            uint8_t *d = actions[i].osc.data;
+                            size_t dl = actions[i].osc.data_len;
+                            /* Parse OSC command number */
+                            size_t sep = 0;
+                            while (sep < dl && d[sep] != ';') sep++;
+                            int cmd = 0;
+                            for (size_t k = 0; k < sep; k++)
+                                if (d[k] >= '0' && d[k] <= '9') cmd = cmd * 10 + (d[k] - '0');
+                            const char *payload = sep + 1 < dl ? (const char *)(d + sep + 1) : "";
+                            size_t plen = sep + 1 < dl ? dl - sep - 1 : 0;
+
+                            if (cmd == 133 && plen >= 1) {
+                                char marker = payload[0];
+                                char *params = NULL;
+                                if (plen > 2) {
+                                    params = (char *)malloc(plen - 1);
+                                    if (params) { memcpy(params, payload + 2, plen - 2); params[plen - 2] = '\0'; }
+                                }
+                                wixen_shell_integ_handle_osc133(&ps->shell_integ, marker, params,
+                                    ps->terminal.grid.cursor.row);
+                                free(params);
+                            } else if (cmd == 7 && plen > 0) {
+                                char *uri = (char *)malloc(plen + 1);
+                                if (uri) { memcpy(uri, payload, plen); uri[plen] = '\0';
+                                    wixen_shell_integ_handle_osc7(&ps->shell_integ, uri);
+                                    free(uri);
+                                }
+                            }
                             free(actions[i].osc.data);
+                        } else if (actions[i].type == WIXEN_ACTION_OSC_DISPATCH) {
+                            free(actions[i].osc.data);
+                        }
                         if (actions[i].type == WIXEN_ACTION_APC_DISPATCH)
                             free(actions[i].apc.data);
                     }
@@ -274,8 +306,94 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                             free(text);
                         } else if (strcmp(action, "toggle_fullscreen") == 0) {
                             wixen_window_set_fullscreen(&window, !window.fullscreen);
-                        } else if (strcmp(action, "close_pane") == 0) {
+                        } else if (strcmp(action, "close_pane") == 0 || strcmp(action, "close_tab") == 0) {
                             running = false;
+                        } else if (strcmp(action, "new_tab") == 0) {
+                            /* Spawn new PTY in new tab */
+                            wchar_t *sh = wixen_pty_detect_shell();
+                            WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                            uint16_t nc = fm.cell_width > 0 ? (uint16_t)(wixen_renderer_width(renderer) / fm.cell_width) : 80;
+                            uint16_t nr = fm.cell_height > 0 ? (uint16_t)(wixen_renderer_height(renderer) / fm.cell_height) : 24;
+                            if (pane_state_count < MAX_PANES) {
+                                WixenPaneState *nps = &pane_states[pane_state_count];
+                                wixen_terminal_init(&nps->terminal, nc, nr);
+                                wixen_parser_init(&nps->parser);
+                                wixen_shell_integ_init(&nps->shell_integ);
+                                nps->pty_running = wixen_pty_spawn(&nps->pty, nc, nr, sh, NULL, NULL, window.hwnd);
+                                pane_state_count++;
+                                WixenPaneId np;
+                                wixen_panes_init(&pane_tree, &np);
+                                wixen_tabs_add(&tabs, "Shell", np);
+                                ps = nps; /* Switch to new pane */
+                            }
+                            free(sh);
+                        } else if (strcmp(action, "next_tab") == 0) {
+                            wixen_tabs_cycle(&tabs, true);
+                        } else if (strcmp(action, "prev_tab") == 0) {
+                            wixen_tabs_cycle(&tabs, false);
+                        } else if (strcmp(action, "find") == 0) {
+                            /* TODO: Open search modal */
+                        } else if (strcmp(action, "find_next") == 0) {
+                            /* TODO: Search next match */
+                        } else if (strcmp(action, "find_previous") == 0) {
+                            /* TODO: Search prev match */
+                        } else if (strcmp(action, "select_all") == 0) {
+                            wixen_selection_clear(&ps->terminal.selection);
+                            wixen_selection_start(&ps->terminal.selection, 0, 0, WIXEN_SEL_NORMAL);
+                            wixen_selection_update(&ps->terminal.selection,
+                                ps->terminal.grid.cols - 1, ps->terminal.grid.num_rows - 1);
+                            ps->terminal.dirty = true;
+                        } else if (strcmp(action, "clear") == 0 || strcmp(action, "clear_terminal") == 0) {
+                            if (ps->pty_running)
+                                wixen_pty_write(&ps->pty, "\x1b[2J\x1b[H", 7);
+                        } else if (strcmp(action, "clear_scrollback") == 0) {
+                            if (ps->pty_running)
+                                wixen_pty_write(&ps->pty, "\x1b[3J", 4);
+                        } else if (strcmp(action, "reset_terminal") == 0) {
+                            wixen_terminal_reset(&ps->terminal);
+                            ps->terminal.dirty = true;
+                        } else if (strcmp(action, "scroll_up_page") == 0) {
+                            /* TODO: viewport scroll */
+                        } else if (strcmp(action, "scroll_down_page") == 0) {
+                            /* TODO: viewport scroll */
+                        } else if (strcmp(action, "scroll_to_top") == 0) {
+                            /* TODO: viewport scroll */
+                        } else if (strcmp(action, "scroll_to_bottom") == 0) {
+                            /* TODO: viewport scroll */
+                        } else if (strcmp(action, "split_horizontal") == 0) {
+                            WixenPaneId active = wixen_panes_active(&pane_tree);
+                            wixen_panes_split(&pane_tree, active, WIXEN_SPLIT_HORIZONTAL);
+                            ps->terminal.dirty = true;
+                        } else if (strcmp(action, "split_vertical") == 0) {
+                            WixenPaneId active = wixen_panes_active(&pane_tree);
+                            wixen_panes_split(&pane_tree, active, WIXEN_SPLIT_VERTICAL);
+                            ps->terminal.dirty = true;
+                        } else if (strcmp(action, "zoom_pane") == 0 || strcmp(action, "toggle_zoom") == 0) {
+                            if (wixen_panes_is_zoomed(&pane_tree))
+                                wixen_panes_unzoom(&pane_tree);
+                            else
+                                wixen_panes_zoom(&pane_tree, wixen_panes_active(&pane_tree));
+                            ps->terminal.dirty = true;
+                        } else if (strcmp(action, "reload_config") == 0) {
+                            WixenConfig new_cfg;
+                            wixen_config_init_defaults(&new_cfg);
+                            char cfg_path_buf[MAX_PATH];
+                            wixen_config_default_path(cfg_path_buf, sizeof(cfg_path_buf));
+                            if (wixen_config_load(&new_cfg, cfg_path_buf)) {
+                                wixen_config_free(&config);
+                                config = new_cfg;
+                            } else {
+                                wixen_config_free(&new_cfg);
+                            }
+                        } else if (strcmp(action, "copy_cwd") == 0) {
+                            if (ps->shell_integ.cwd)
+                                wixen_clipboard_set_text(window.hwnd, ps->shell_integ.cwd);
+                        } else if (strcmp(action, "open_cwd_in_explorer") == 0) {
+                            if (ps->shell_integ.cwd) {
+                                wchar_t wcwd[MAX_PATH];
+                                MultiByteToWideChar(CP_UTF8, 0, ps->shell_integ.cwd, -1, wcwd, MAX_PATH);
+                                ShellExecuteW(NULL, L"explore", wcwd, NULL, NULL, SW_SHOWNORMAL);
+                            }
                         }
                     } else if (ps->pty_running) {
                         /* Track nav keys for boundary detection */
@@ -353,11 +471,109 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     }
                 }
                 break;
-            case WIXEN_EVT_MOUSE_DOWN:
-                if (evt.mouse.button == WIXEN_MB_RIGHT) {
+            case WIXEN_EVT_MOUSE_DOWN: {
+                WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                size_t mcol = fm.cell_width > 0 ? (size_t)(evt.mouse.x / fm.cell_width) : 0;
+                size_t mrow = fm.cell_height > 0 ? (size_t)(evt.mouse.y / fm.cell_height) : 0;
+                if (evt.mouse.button == WIXEN_MB_LEFT) {
+                    /* Start selection */
+                    wixen_selection_clear(&ps->terminal.selection);
+                    wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_NORMAL);
+                    ps->terminal.dirty = true;
+                } else if (evt.mouse.button == WIXEN_MB_RIGHT) {
                     wixen_window_show_context_menu(&window, evt.mouse.x, evt.mouse.y);
+                } else if (evt.mouse.button == WIXEN_MB_MIDDLE) {
+                    /* Middle click = paste */
+                    char *text = wixen_clipboard_get_text(window.hwnd);
+                    if (text && ps->pty_running) {
+                        wixen_pty_write(&ps->pty, text, strlen(text));
+                    }
+                    free(text);
+                }
+                /* Mouse reporting to terminal app */
+                if (ps->terminal.modes.mouse_tracking != WIXEN_MOUSE_NONE) {
+                    char mbuf[32];
+                    int mb = (evt.mouse.button == WIXEN_MB_LEFT) ? WIXEN_MBTN_LEFT :
+                        (evt.mouse.button == WIXEN_MB_RIGHT) ? WIXEN_MBTN_RIGHT : WIXEN_MBTN_MIDDLE;
+                    size_t mn = wixen_encode_mouse(ps->terminal.modes.mouse_tracking,
+                        ps->terminal.modes.mouse_sgr, (WixenMouseBtn)mb,
+                        (uint16_t)mcol, (uint16_t)mrow, false, false, true, mbuf, sizeof(mbuf));
+                    if (mn > 0 && ps->pty_running)
+                        wixen_pty_write(&ps->pty, mbuf, mn);
                 }
                 break;
+            }
+            case WIXEN_EVT_MOUSE_UP: {
+                /* End selection + mouse release reporting */
+                if (ps->terminal.modes.mouse_tracking != WIXEN_MOUSE_NONE) {
+                    WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                    size_t mcol = fm.cell_width > 0 ? (size_t)(evt.mouse.x / fm.cell_width) : 0;
+                    size_t mrow = fm.cell_height > 0 ? (size_t)(evt.mouse.y / fm.cell_height) : 0;
+                    char mbuf[32];
+                    size_t mn = wixen_encode_mouse(ps->terminal.modes.mouse_tracking,
+                        ps->terminal.modes.mouse_sgr, WIXEN_MBTN_RELEASE,
+                        (uint16_t)mcol, (uint16_t)mrow, false, false, false, mbuf, sizeof(mbuf));
+                    if (mn > 0 && ps->pty_running)
+                        wixen_pty_write(&ps->pty, mbuf, mn);
+                }
+                break;
+            }
+            case WIXEN_EVT_MOUSE_MOVE: {
+                /* Drag selection update */
+                if (ps->terminal.selection.active) {
+                    WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                    size_t mcol = fm.cell_width > 0 ? (size_t)(evt.mouse_move.x / fm.cell_width) : 0;
+                    size_t mrow = fm.cell_height > 0 ? (size_t)(evt.mouse_move.y / fm.cell_height) : 0;
+                    wixen_selection_update(&ps->terminal.selection, mcol, mrow);
+                    ps->terminal.dirty = true;
+                }
+                break;
+            }
+            case WIXEN_EVT_DOUBLE_CLICK: {
+                /* Word selection */
+                WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                size_t mcol = fm.cell_width > 0 ? (size_t)(evt.dbl_click.x / fm.cell_width) : 0;
+                size_t mrow = fm.cell_height > 0 ? (size_t)(evt.dbl_click.y / fm.cell_height) : 0;
+                if (mrow < ps->terminal.grid.num_rows) {
+                    WixenRow *row = &ps->terminal.grid.rows[mrow];
+                    /* Find word boundaries */
+                    size_t ws = mcol, we = mcol;
+                    while (ws > 0 && row->cells[ws - 1].content[0] != ' '
+                           && row->cells[ws - 1].content[0] != '\0') ws--;
+                    while (we < row->count - 1 && row->cells[we + 1].content[0] != ' '
+                           && row->cells[we + 1].content[0] != '\0') we++;
+                    wixen_selection_clear(&ps->terminal.selection);
+                    wixen_selection_start(&ps->terminal.selection, ws, mrow, WIXEN_SEL_WORD);
+                    wixen_selection_update(&ps->terminal.selection, we, mrow);
+                    ps->terminal.dirty = true;
+                }
+                break;
+            }
+            case WIXEN_EVT_MOUSE_WHEEL: {
+                WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                size_t mcol = fm.cell_width > 0 ? (size_t)(evt.wheel.x / fm.cell_width) : 0;
+                size_t mrow = fm.cell_height > 0 ? (size_t)(evt.wheel.y / fm.cell_height) : 0;
+                if (ps->terminal.modes.alternate_screen) {
+                    /* In alt screen, translate wheel to arrow keys */
+                    int count = abs(evt.wheel.delta) * 3;
+                    const char *key = evt.wheel.delta > 0 ? "\x1b[A" : "\x1b[B";
+                    for (int i = 0; i < count && ps->pty_running; i++)
+                        wixen_pty_write(&ps->pty, key, 3);
+                } else if (ps->terminal.modes.mouse_tracking != WIXEN_MOUSE_NONE) {
+                    /* Mouse wheel reporting */
+                    char mbuf[32];
+                    WixenMouseBtn wb = evt.wheel.delta > 0 ? WIXEN_MBTN_WHEEL_UP : WIXEN_MBTN_WHEEL_DOWN;
+                    size_t mn = wixen_encode_mouse(ps->terminal.modes.mouse_tracking,
+                        ps->terminal.modes.mouse_sgr, wb,
+                        (uint16_t)mcol, (uint16_t)mrow, false, false, true, mbuf, sizeof(mbuf));
+                    if (mn > 0 && ps->pty_running)
+                        wixen_pty_write(&ps->pty, mbuf, mn);
+                } else {
+                    /* Scrollback viewport scroll */
+                    /* TODO: viewport scroll offset tracking */
+                }
+                break;
+            }
             case WIXEN_EVT_CONTEXT_MENU:
                 switch (evt.context_action) {
                 case WIXEN_CTX_SETTINGS:
@@ -594,6 +810,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
         /* Brief sleep to avoid spinning CPU */
         Sleep(1);
+    }
+
+    /* Save session before exit */
+    {
+        WixenSessionState session;
+        wixen_session_init(&session);
+        size_t tab_count;
+        const WixenTab *all_tabs = wixen_tabs_all(&tabs, &tab_count);
+        for (size_t i = 0; i < tab_count; i++) {
+            const char *cwd = (pane_state_count > i && pane_states[i].shell_integ.cwd)
+                ? pane_states[i].shell_integ.cwd : "";
+            wixen_session_add_tab(&session, all_tabs[i].title, "powershell.exe", cwd);
+        }
+        char session_path[MAX_PATH];
+        wixen_config_default_path(session_path, sizeof(session_path));
+        /* Change config.toml → session.json */
+        char *dot = strrchr(session_path, '.');
+        if (dot) strcpy(dot, ".session.json");
+        wixen_session_save(&session, session_path);
+        wixen_session_free(&session);
     }
 
     /* Cleanup */
