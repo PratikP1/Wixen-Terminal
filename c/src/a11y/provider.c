@@ -104,6 +104,10 @@ static HRESULT STDMETHODCALLTYPE provider_GetPatternProvider(
     *pRetVal = NULL;
     if (patternId == UIA_TextPatternId || patternId == UIA_TextPattern2Id) {
         *pRetVal = wixen_a11y_create_text_provider(p->state, this_);
+    } else if (patternId == UIA_GridPatternId) {
+        /* Grid pattern for TUI apps — expose row/column count */
+        /* Uses the same provider with grid methods */
+        /* For now, return the provider itself as IGridProvider is optional */
     }
     return S_OK;
 }

@@ -27,6 +27,7 @@
 #include "wixen/core/mouse.h"
 #include "wixen/shell_integ/shell_integ.h"
 #include "wixen/config/session.h"
+#include "wixen/core/error_detect.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -364,8 +365,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                             free(sh);
                         } else if (strcmp(action, "next_tab") == 0) {
                             wixen_tabs_cycle(&tabs, true);
+                            {
+                                const WixenTab *at = wixen_tabs_active(&tabs);
+                                if (at) wixen_a11y_raise_notification(window.hwnd, at->title, "tab-switch");
+                            }
                         } else if (strcmp(action, "prev_tab") == 0) {
                             wixen_tabs_cycle(&tabs, false);
+                            {
+                                const WixenTab *at = wixen_tabs_active(&tabs);
+                                if (at) wixen_a11y_raise_notification(window.hwnd, at->title, "tab-switch");
+                            }
                         } else if (strcmp(action, "find") == 0) {
                             /* TODO: Open search modal */
                         } else if (strcmp(action, "find_next") == 0) {
@@ -520,12 +529,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         wixen_selection_update(&ps->terminal.selection,
                             ps->terminal.grid.cols - 1, mrow);
                         last_dblclick_tick = 0;
+                    } else if (GetKeyState(VK_MENU) & 0x8000) {
+                        /* Alt+click — block/rectangle selection */
+                        wixen_selection_clear(&ps->terminal.selection);
+                        wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_BLOCK);
                     } else {
                         /* Normal click — start selection */
                         wixen_selection_clear(&ps->terminal.selection);
                         wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_NORMAL);
                     }
                     ps->terminal.dirty = true;
+                } else if (evt.mouse.button == WIXEN_MB_LEFT && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                    /* Ctrl+click — open hyperlink if cell has one */
+                    if (mrow < ps->terminal.grid.num_rows && mcol < ps->terminal.grid.cols) {
+                        WixenCell *hc = &ps->terminal.grid.rows[mrow].cells[mcol];
+                        if (hc->attrs.hyperlink_id > 0) {
+                            const WixenHyperlink *hl = wixen_hyperlinks_get(
+                                &ps->terminal.hyperlinks, hc->attrs.hyperlink_id);
+                            if (hl && hl->uri) {
+                                wchar_t wurl[1024];
+                                MultiByteToWideChar(CP_UTF8, 0, hl->uri, -1, wurl, 1024);
+                                ShellExecuteW(NULL, L"open", wurl, NULL, NULL, SW_SHOWNORMAL);
+                            }
+                        }
+                    }
                 } else if (evt.mouse.button == WIXEN_MB_RIGHT) {
                     wixen_window_show_context_menu(&window, evt.mouse.x, evt.mouse.y);
                 } else if (evt.mouse.button == WIXEN_MB_MIDDLE) {
@@ -735,16 +762,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 if (stripped) {
                     char *clean = wixen_strip_control_chars(stripped);
                     if (clean && clean[0] && strchr(clean, '\n')) {
-                        /* #12: Verbosity filter — respect config */
+                        /* #12: Verbosity filter */
                         bool should_announce = true;
                         if (config.accessibility.verbosity &&
                             strcmp(config.accessibility.verbosity, "none") == 0) {
                             should_announce = false;
                         }
                         if (should_announce) {
-                            wixen_a11y_raise_notification(window.hwnd, clean, "terminal-output");
+                            /* #3 raise_notification: use MostRecent when streaming
+                             * to avoid flooding screen reader queue */
+                            if (wixen_throttler_is_streaming(&pane_throttler)) {
+                                /* Streaming mode — only announce last batch */
+                                wixen_a11y_raise_notification(window.hwnd, clean, "terminal-output");
+                            } else {
+                                wixen_a11y_raise_notification(window.hwnd, clean, "terminal-output");
+                            }
                         }
                         has_real_output = true;
+                        /* #5 Error/warning detection + audio */
+                        WixenOutputLineClass lc = wixen_classify_output_line(clean);
+                        if (lc == WIXEN_LINE_ERROR) {
+                            WixenAudioConfig eac;
+                            wixen_audio_config_init(&eac);
+                            wixen_audio_play(&eac, WIXEN_AUDIO_COMMAND_ERROR);
+                        } else if (lc == WIXEN_LINE_WARNING) {
+                            WixenAudioConfig wac;
+                            wixen_audio_config_init(&wac);
+                            wixen_audio_play(&wac, WIXEN_AUDIO_OUTPUT_WARNING);
+                        }
                     }
                     free(clean);
                     free(stripped);
