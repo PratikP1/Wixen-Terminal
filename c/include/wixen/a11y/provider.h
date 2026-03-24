@@ -22,6 +22,10 @@ void wixen_a11y_provider_shutdown(HWND hwnd);
 void wixen_a11y_update_cursor(const void *grid);
 void wixen_a11y_raise_selection_changed(HWND hwnd);
 void wixen_a11y_raise_notification(HWND hwnd, const char *text, const char *activity_id);
+void wixen_a11y_state_update_text_global(const char *text, size_t len);
+void wixen_a11y_set_cursor_offset(int32_t utf16_offset);
+int32_t wixen_a11y_get_cursor_offset(void);
+void wixen_a11y_pump_messages(HWND hwnd);
 
 /* --- Low-level COM provider API (only for provider.c and text_provider.c) --- */
 #ifdef WIXEN_A11Y_INTERNAL

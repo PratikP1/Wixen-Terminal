@@ -350,11 +350,8 @@ static SAFEARRAY *safearray_of_range(ITextRangeProvider *range) {
 /* ITextProvider methods */
 static HRESULT STDMETHODCALLTYPE tp_GetSelection(ITextProvider *this_, SAFEARRAY **pRetVal) {
     TextProvider *tp = (TextProvider *)this_;
-    /* Return degenerate range at cursor position */
-    AcquireSRWLockShared(&tp->state->lock);
-    /* Approximate cursor offset: row * avg_line_width + col */
-    int offset = (int)(tp->state->cursor_row * 80 + tp->state->cursor_col);
-    ReleaseSRWLockShared(&tp->state->lock);
+    /* Lock-free cursor offset — updated atomically by main loop */
+    int offset = wixen_a11y_get_cursor_offset();
 
     TextRange *range = create_range(tp->state, tp->enclosing, offset, offset);
     if (!range) { *pRetVal = NULL; return E_OUTOFMEMORY; }
@@ -441,10 +438,8 @@ static HRESULT STDMETHODCALLTYPE tp2_RangeFromAnnotation(
 static HRESULT STDMETHODCALLTYPE tp2_GetCaretRange(
         ITextProvider2 *this_, BOOL *isActive, ITextRangeProvider **pRetVal) {
     TextProvider *tp = TP_FROM_V2(this_);
-    AcquireSRWLockShared(&tp->state->lock);
     *isActive = tp->state->has_focus ? TRUE : FALSE;
-    int offset = (int)(tp->state->cursor_row * 80 + tp->state->cursor_col);
-    ReleaseSRWLockShared(&tp->state->lock);
+    int offset = wixen_a11y_get_cursor_offset();
     *pRetVal = (ITextRangeProvider *)create_range(tp->state, tp->enclosing, offset, offset);
     return S_OK;
 }

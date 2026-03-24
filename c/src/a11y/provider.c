@@ -396,4 +396,27 @@ void wixen_a11y_raise_notification(HWND hwnd, const char *text, const char *acti
     free(waid);
 }
 
+void wixen_a11y_state_update_text_global(const char *text, size_t len) {
+    wixen_a11y_state_update_text(&g_a11y_state, text, len);
+}
+
+/* Lock-free cursor offset for GetSelection/GetCaretRange */
+static volatile LONG g_cursor_offset = 0;
+
+void wixen_a11y_set_cursor_offset(int32_t utf16_offset) {
+    InterlockedExchange(&g_cursor_offset, (LONG)utf16_offset);
+}
+
+int32_t wixen_a11y_get_cursor_offset(void) {
+    return (int32_t)InterlockedCompareExchange(&g_cursor_offset, 0, 0);
+}
+
+void wixen_a11y_pump_messages(HWND hwnd) {
+    MSG pump_msg;
+    while (PeekMessageW(&pump_msg, hwnd, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&pump_msg);
+        DispatchMessageW(&pump_msg);
+    }
+}
+
 #endif /* _WIN32 */

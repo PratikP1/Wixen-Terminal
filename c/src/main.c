@@ -25,16 +25,28 @@
 #include "wixen/a11y/events.h"
 #include "wixen/ui/clipboard.h"
 #include "wixen/core/mouse.h"
+#include "wixen/shell_integ/shell_integ.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Navigation key tracking for boundary detection */
+typedef enum {
+    NAV_NONE = 0,
+    NAV_LEFT, NAV_RIGHT, NAV_UP, NAV_DOWN,
+} NavKey;
 
 /* Per-pane state */
 typedef struct {
     WixenTerminal terminal;
     WixenParser parser;
     WixenPty pty;
+    WixenShellIntegration shell_integ;
+    NavKey last_nav_key;
+    bool at_history_start;
+    bool at_history_end;
+    uint64_t last_shell_gen;
     bool pty_running;
 } WixenPaneState;
 
@@ -87,6 +99,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     WixenPaneState *ps = &pane_states[0];
     wixen_terminal_init(&ps->terminal, cols, rows);
+    wixen_shell_integ_init(&ps->shell_integ);
     wixen_parser_init(&ps->parser);
     ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL, NULL, window.hwnd);
     pane_state_count = 1;
@@ -108,8 +121,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenConfigWatcher cfg_watcher = {0};
     wixen_watcher_start(&cfg_watcher, cfg_path, window.hwnd);
 
-    /* Initialize a11y provider */
+    /* Initialize a11y provider and announce focus */
     wixen_a11y_provider_init(window.hwnd, &ps->terminal);
+    wixen_a11y_raise_selection_changed(window.hwnd);
+    wixen_a11y_raise_notification(window.hwnd, "Wixen Terminal ready", "terminal-ready");
+
+    /* Output throttler — batches PTY output for screen reader */
+    WixenEventThrottler pane_throttler;
+    wixen_throttler_init(&pane_throttler, config.accessibility.output_debounce_ms);
 
     /* Main event loop */
     bool running = true;
@@ -139,6 +158,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         if (actions[i].type == WIXEN_ACTION_APC_DISPATCH)
                             free(actions[i].apc.data);
                     }
+                    /* Feed output to throttler (NOT directly to NVDA) */
+                    if (count > 0 && evt->len > 0) {
+                        char *raw = (char *)malloc(evt->len + 1);
+                        if (raw) {
+                            memcpy(raw, evt->data, evt->len);
+                            raw[evt->len] = '\0';
+                            wixen_throttler_on_output(&pane_throttler, raw, 0);
+                            free(raw);
+                        }
+                    }
                     free(evt->data);
                 }
                 free(evt);
@@ -163,9 +192,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             case WIXEN_EVT_CLOSE_REQUESTED:
                 running = false;
                 break;
-            case WIXEN_EVT_RESIZED:
+            case WIXEN_EVT_RESIZED: {
                 wixen_renderer_resize(renderer, evt.resize.width, evt.resize.height);
+                /* Recalculate terminal dimensions from new window size */
+                WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                if (fm.cell_width > 0 && fm.cell_height > 0) {
+                    uint16_t new_cols = (uint16_t)(evt.resize.width / fm.cell_width);
+                    uint16_t new_rows = (uint16_t)(evt.resize.height / fm.cell_height);
+                    if (new_cols > 0 && new_rows > 0) {
+                        wixen_terminal_resize(&ps->terminal, new_cols, new_rows);
+                        if (ps->pty_running)
+                            wixen_pty_resize(&ps->pty, new_cols, new_rows);
+                    }
+                }
                 break;
+            }
             case WIXEN_EVT_KEY_INPUT:
                 if (evt.key.down) {
                     /* Build chord string from VK + modifiers */
@@ -237,7 +278,39 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                             running = false;
                         }
                     } else if (ps->pty_running) {
-                        /* No keybinding matched — encode key for PTY */
+                        /* Track nav keys for boundary detection */
+                        switch (evt.key.vk) {
+                        case 0x25: /* VK_LEFT */
+                            ps->last_nav_key = NAV_LEFT;
+                            break;
+                        case 0x27: /* VK_RIGHT */
+                            ps->last_nav_key = NAV_RIGHT;
+                            break;
+                        case 0x26: /* VK_UP */
+                            if (ps->at_history_start) {
+                                /* Already at boundary — play sound, suppress */
+                                { WixenAudioConfig ac; wixen_audio_config_init(&ac); wixen_audio_play(&ac, WIXEN_AUDIO_HISTORY_BOUNDARY); }
+                                goto skip_pty_write;
+                            }
+                            ps->last_nav_key = NAV_UP;
+                            ps->at_history_end = false;
+                            break;
+                        case 0x28: /* VK_DOWN */
+                            if (ps->at_history_end) {
+                                { WixenAudioConfig ac; wixen_audio_config_init(&ac); wixen_audio_play(&ac, WIXEN_AUDIO_HISTORY_BOUNDARY); }
+                                goto skip_pty_write;
+                            }
+                            ps->last_nav_key = NAV_DOWN;
+                            ps->at_history_start = false;
+                            break;
+                        default:
+                            ps->last_nav_key = NAV_NONE;
+                            ps->at_history_start = false;
+                            ps->at_history_end = false;
+                            break;
+                        }
+
+                        /* Encode key for PTY */
                         char encoded[32];
                         size_t n = wixen_encode_key(evt.key.vk,
                             evt.key.shift, evt.key.ctrl, evt.key.alt,
@@ -246,6 +319,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         if (n > 0) {
                             wixen_pty_write(&ps->pty, encoded, n);
                         }
+                        skip_pty_write:;
                     }
                 }
                 break;
@@ -296,6 +370,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     break;
                 }
                 break;
+            case WIXEN_EVT_FOCUS_GAINED:
+                wixen_a11y_raise_selection_changed(window.hwnd);
+                break;
             default:
                 break;
             }
@@ -314,62 +391,177 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
         /* --- Accessibility state updates --- */
         {
+            /* Sync grid visible text to a11y state for ITextProvider */
+            if (ps->terminal.dirty) {
+                char a11y_text[8192];
+                size_t tlen = wixen_grid_visible_text(&ps->terminal.grid, a11y_text, sizeof(a11y_text));
+                wixen_a11y_state_update_text_global(a11y_text, tlen);
+                ps->terminal.dirty = false;
+            }
+
+            /* #1/#2: Drain throttled output — only announce multi-line (real output).
+             * Single-line without newline is keyboard echo — let NVDA handle it. */
+            bool has_real_output = false;
+            char *pending = wixen_throttler_take_pending(&pane_throttler);
+            if (pending) {
+                char *stripped = wixen_strip_vt_escapes(pending);
+                if (stripped) {
+                    char *clean = wixen_strip_control_chars(stripped);
+                    if (clean && clean[0] && strchr(clean, '\n')) {
+                        /* #12: Verbosity filter — respect config */
+                        bool should_announce = true;
+                        if (config.accessibility.verbosity &&
+                            strcmp(config.accessibility.verbosity, "none") == 0) {
+                            should_announce = false;
+                        }
+                        if (should_announce) {
+                            wixen_a11y_raise_notification(window.hwnd, clean, "terminal-output");
+                        }
+                        has_real_output = true;
+                    }
+                    free(clean);
+                    free(stripped);
+                }
+                free(pending);
+            }
+
+            /* Track cursor and line state */
             static size_t prev_cursor_row = SIZE_MAX;
             static size_t prev_cursor_col = SIZE_MAX;
             static char prev_line[512] = {0};
 
-            bool cursor_moved = (ps->terminal.grid.cursor.row != prev_cursor_row
-                              || ps->terminal.grid.cursor.col != prev_cursor_col);
+            size_t cur_row = ps->terminal.grid.cursor.row;
+            size_t cur_col = ps->terminal.grid.cursor.col;
+            bool cursor_moved = (cur_row != prev_cursor_row || cur_col != prev_cursor_col);
 
-            if (cursor_moved) {
-                /* Compute visible text for the current cursor line */
-                size_t crow = ps->terminal.grid.cursor.row;
-                char line_buf[512] = {0};
-                if (crow < ps->terminal.grid.num_rows) {
-                    WixenRow *row = &ps->terminal.grid.rows[crow];
-                    size_t pos = 0;
-                    for (size_t c = 0; c < row->count && pos < sizeof(line_buf) - 1; c++) {
-                        const char *ch = row->cells[c].content;
-                        if (ch[0]) {
-                            size_t len = strlen(ch);
-                            if (pos + len < sizeof(line_buf) - 1) {
-                                memcpy(line_buf + pos, ch, len);
-                                pos += len;
-                            }
-                        } else {
-                            line_buf[pos++] = ' ';
-                        }
-                    }
-                    line_buf[pos] = '\0';
-                }
-
-                bool row_changed = (crow != prev_cursor_row);
-                bool line_content_changed = (strcmp(line_buf, prev_line) != 0);
-
-                /* Update a11y cursor offset atomically */
-                wixen_a11y_update_cursor(&ps->terminal.grid);
-
-                /* Fire TextSelectionChanged for any cursor movement */
-                wixen_a11y_raise_selection_changed(window.hwnd);
-
-                /* If cursor moved to a different row, announce the line */
-                if (row_changed) {
-                    char *stripped = wixen_strip_control_chars(line_buf);
-                    if (stripped && stripped[0]) {
-                        wixen_a11y_raise_notification(window.hwnd, stripped, "line-read");
-                    }
-                    free(stripped);
-                }
-
-                /* Detect edits: same row, content changed → announce change */
-                if (!row_changed && line_content_changed) {
-                    /* Character-level announcement handled by throttler */
-                }
-
-                prev_cursor_row = crow;
-                prev_cursor_col = ps->terminal.grid.cursor.col;
-                strncpy(prev_line, line_buf, sizeof(prev_line) - 1);
+            /* Compute current line text */
+            char line_buf[512] = {0};
+            if (cur_row < ps->terminal.grid.num_rows) {
+                wixen_row_text(&ps->terminal.grid.rows[cur_row], line_buf, sizeof(line_buf));
             }
+
+            /* #8: Compute UTF-16 offset atomically for lock-free GetSelection */
+            {
+                int32_t utf16_off = 0;
+                for (size_t r = 0; r < cur_row && r < ps->terminal.grid.num_rows; r++) {
+                    char rbuf[512];
+                    size_t rlen = wixen_row_text(&ps->terminal.grid.rows[r], rbuf, sizeof(rbuf));
+                    utf16_off += (int32_t)rlen + 1; /* +1 for newline */
+                }
+                utf16_off += (int32_t)cur_col;
+                wixen_a11y_set_cursor_offset(utf16_off);
+            }
+            wixen_a11y_update_cursor(&ps->terminal.grid);
+
+            /* #9: Pump messages so COM calls dispatch against consistent state */
+            wixen_a11y_pump_messages(window.hwnd);
+
+            /* Fire TextSelectionChanged on cursor movement */
+            if (cursor_moved) {
+                wixen_a11y_raise_selection_changed(window.hwnd);
+            }
+
+            /* #5/#7: Line change detection with prompt stripping.
+             * Detects history recall (up/down changes command).
+             * Only fires for replacement — not append or deletion. */
+            bool line_changed = (strcmp(line_buf, prev_line) != 0);
+            if (line_changed && !has_real_output && prev_line[0]) {
+                size_t cur_len = strlen(line_buf);
+                size_t prv_len = strlen(prev_line);
+                while (cur_len > 0 && line_buf[cur_len - 1] == ' ') cur_len--;
+                while (prv_len > 0 && prev_line[prv_len - 1] == ' ') prv_len--;
+
+                bool is_append = (cur_len > prv_len && memcmp(line_buf, prev_line, prv_len) == 0);
+                bool is_delete = (cur_len < prv_len && memcmp(prev_line, line_buf, cur_len) == 0);
+
+                if (!is_append && !is_delete) {
+                    /* Line replaced (history recall) — strip prompt */
+                    const char *text = line_buf;
+                    const char *gt = strchr(text, '>');
+                    if (gt && gt > text && (text[1] == ':' || (text[0] == 'P' && text[1] == 'S'))) {
+                        text = gt + 1;
+                        while (*text == ' ') text++;
+                    }
+                    const char *dollar = strrchr(text, '$');
+                    if (!dollar) dollar = strrchr(text, '#');
+                    if (dollar && dollar[1] == ' ') text = dollar + 2;
+
+                    if (text[0]) {
+                        wixen_a11y_raise_notification(window.hwnd, text, "cursor-line");
+                    } else {
+                        wixen_a11y_raise_notification(window.hwnd, "line cleared", "cursor-line");
+                    }
+                }
+            }
+
+            /* #6: Command completion notification */
+            {
+                uint64_t gen = wixen_shell_integ_generation(&ps->shell_integ);
+                if (gen != ps->last_shell_gen) {
+                    ps->last_shell_gen = gen;
+                    /* #11: Tree rebuild would go here */
+                    const WixenCommandBlock *blk = wixen_shell_integ_current_block(&ps->shell_integ);
+                    if (blk && blk->state == WIXEN_BLOCK_COMPLETED && blk->has_exit_code) {
+                        char cmd_msg[256];
+                        snprintf(cmd_msg, sizeof(cmd_msg), "Command finished, exit code %d", blk->exit_code);
+                        wixen_a11y_raise_notification(window.hwnd, cmd_msg, "command-complete");
+                    }
+                }
+            }
+
+            /* #10: Password prompt detection — if terminal stopped echoing */
+            {
+                static size_t echo_check_col = SIZE_MAX;
+                if (cur_col == echo_check_col && !cursor_moved && !has_real_output) {
+                    /* Cursor didn't move after keypress — might be password prompt */
+                    /* Only announce once per position */
+                    static size_t last_password_col = SIZE_MAX;
+                    if (cur_col != last_password_col) {
+                        wixen_a11y_raise_notification(window.hwnd, "Text not echoed", "password-prompt");
+                        last_password_col = cur_col;
+                    }
+                }
+                echo_check_col = cur_col;
+            }
+
+            /* #3/#4: Boundary detection — consume nav key, check if nothing changed */
+            if (ps->last_nav_key != NAV_NONE) {
+                NavKey nav = ps->last_nav_key;
+                ps->last_nav_key = NAV_NONE;
+                WixenAudioConfig ac;
+                wixen_audio_config_init(&ac);
+
+                switch (nav) {
+                case NAV_LEFT:
+                    if (cur_col == prev_cursor_col && !cursor_moved) {
+                        wixen_audio_play(&ac, WIXEN_AUDIO_EDIT_BOUNDARY);
+                    }
+                    break;
+                case NAV_RIGHT:
+                    if (cur_col == prev_cursor_col && !cursor_moved) {
+                        wixen_audio_play(&ac, WIXEN_AUDIO_EDIT_BOUNDARY);
+                    }
+                    break;
+                case NAV_UP:
+                    if (strcmp(line_buf, prev_line) == 0) {
+                        ps->at_history_start = true;
+                        wixen_audio_play(&ac, WIXEN_AUDIO_HISTORY_BOUNDARY); /* History start */
+                    }
+                    break;
+                case NAV_DOWN:
+                    if (line_buf[0] == '\0' || (line_buf[0] == ' ' && strlen(line_buf) < 3)) {
+                        ps->at_history_end = true;
+                        wixen_audio_play(&ac, WIXEN_AUDIO_HISTORY_BOUNDARY); /* History end */
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            prev_cursor_row = cur_row;
+            prev_cursor_col = cur_col;
+            strncpy(prev_line, line_buf, sizeof(prev_line) - 1);
         }
 
         /* Handle terminal state changes */
@@ -405,11 +597,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
 
     /* Cleanup */
+    wixen_throttler_free(&pane_throttler);
     wixen_a11y_provider_shutdown(window.hwnd);
     wixen_tray_destroy(&tray);
     wixen_watcher_stop(&cfg_watcher);
     wixen_config_free(&config);
     if (ps->pty_running) wixen_pty_close(&ps->pty);
+    wixen_shell_integ_free(&ps->shell_integ);
     wixen_parser_free(&ps->parser);
     wixen_terminal_free(&ps->terminal);
     wixen_panes_free(&pane_tree);

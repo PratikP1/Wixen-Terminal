@@ -6,6 +6,9 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <uiautomation.h>
+
+#pragma comment(lib, "uiautomationcore.lib")
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -186,10 +189,10 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
     case WM_GETOBJECT:
         /* UIA provider handling — stored in window property */
         if ((DWORD)lparam == (DWORD)0xFFFFFFF0) { /* UiaRootObjectId */
-            void *provider = GetPropW(hwnd, L"WixenUiaProvider");
+            IRawElementProviderSimple *provider =
+                (IRawElementProviderSimple *)GetPropW(hwnd, L"WixenUiaProvider");
             if (provider) {
-                /* UiaReturnRawElementProvider called from a11y module */
-                return DefWindowProcW(hwnd, msg, wparam, lparam);
+                return UiaReturnRawElementProvider(hwnd, wparam, lparam, provider);
             }
         }
         return DefWindowProcW(hwnd, msg, wparam, lparam);
