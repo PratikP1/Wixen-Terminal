@@ -397,13 +397,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                             wixen_terminal_reset(&ps->terminal);
                             ps->terminal.dirty = true;
                         } else if (strcmp(action, "scroll_up_page") == 0) {
-                            /* TODO: viewport scroll */
+                            wixen_terminal_scroll_viewport(&ps->terminal, (int32_t)ps->terminal.grid.num_rows);
                         } else if (strcmp(action, "scroll_down_page") == 0) {
-                            /* TODO: viewport scroll */
+                            wixen_terminal_scroll_viewport(&ps->terminal, -(int32_t)ps->terminal.grid.num_rows);
                         } else if (strcmp(action, "scroll_to_top") == 0) {
-                            /* TODO: viewport scroll */
+                            wixen_terminal_scroll_viewport(&ps->terminal, 999999);
                         } else if (strcmp(action, "scroll_to_bottom") == 0) {
-                            /* TODO: viewport scroll */
+                            ps->terminal.scroll_offset = 0;
+                            ps->terminal.dirty = true;
                         } else if (strcmp(action, "split_horizontal") == 0) {
                             WixenPaneId active = wixen_panes_active(&pane_tree);
                             wixen_panes_split(&pane_tree, active, WIXEN_SPLIT_HORIZONTAL);
@@ -644,7 +645,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         wixen_pty_write(&ps->pty, mbuf, mn);
                 } else {
                     /* Scrollback viewport scroll */
-                    /* TODO: viewport scroll offset tracking */
+                    int32_t lines = evt.wheel.delta > 0 ? 3 : -3;
+                    wixen_terminal_scroll_viewport(&ps->terminal, lines);
                 }
                 break;
             }

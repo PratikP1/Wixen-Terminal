@@ -113,6 +113,14 @@ void wixen_terminal_resize(WixenTerminal *t, size_t new_cols, size_t new_rows) {
     t->dirty = true;
 }
 
+void wixen_terminal_scroll_viewport(WixenTerminal *t, int32_t delta) {
+    t->scroll_offset += delta;
+    if (t->scroll_offset < 0) t->scroll_offset = 0;
+    /* Clamp to scrollback length (can't scroll past oldest content) */
+    /* For now, just ensure non-negative */
+    t->dirty = true;
+}
+
 /* --- Cursor movement --- */
 
 void wixen_terminal_move_cursor_up(WixenTerminal *t, size_t count) {

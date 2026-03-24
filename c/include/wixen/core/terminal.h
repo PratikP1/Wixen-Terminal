@@ -53,6 +53,7 @@ typedef struct {
     uint8_t active_charset;          /* 0=G0, 1=G1 */
     bool in_sixel;                   /* Inside Sixel DCS sequence */
     uint8_t charsets[4];             /* G0-G3 charset (0=ASCII, 1=DEC Special, 2=UK) */
+    int32_t scroll_offset;           /* Viewport: 0=live, >0=scrolled back into history */
     uint32_t last_printed_char;      /* For REP (CSI b) */
 
     /* Pending responses (DSR etc.) — simple queue */
@@ -66,6 +67,7 @@ void wixen_terminal_init(WixenTerminal *t, size_t cols, size_t rows);
 void wixen_terminal_free(WixenTerminal *t);
 void wixen_terminal_reset(WixenTerminal *t);
 void wixen_terminal_resize(WixenTerminal *t, size_t new_cols, size_t new_rows);
+void wixen_terminal_scroll_viewport(WixenTerminal *t, int32_t delta);
 
 /* Action dispatch — main entry point for VT parser output */
 void wixen_terminal_dispatch(WixenTerminal *t, const WixenAction *action);
