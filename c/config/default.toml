@@ -1,0 +1,35 @@
+# Wixen Terminal default configuration
+
+[font]
+family = "Cascadia Mono"
+size = 14.0
+line_height = 1.2
+ligatures = true
+
+[window]
+width = 1200
+height = 800
+theme = "default"
+opacity = 1.0
+
+[terminal]
+cursor_style = "block"
+cursor_blink = true
+bell_style = "visual"
+
+[accessibility]
+screen_reader_verbosity = "all"
+output_debounce_ms = 100
+
+[behavior]
+copy_on_selection = false
+paste_with_ctrl_v = true
+
+[[profiles]]
+name = "PowerShell"
+program = "pwsh.exe"
+is_default = true
+
+[[profiles]]
+name = "Command Prompt"
+program = "cmd.exe"

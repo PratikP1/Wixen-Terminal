@@ -1,0 +1,44 @@
+# Build directories
+build/
+build-asan/
+build-debug/
+out/
+
+# MSVC artifacts
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+*.dll
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+CTestTestfile.cmake
+Testing/
+
+# vcpkg installed packages (managed by vcpkg, not committed)
+vcpkg_installed/
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Test artifacts
+test_*.toml
+test_*.json
+test_*.lua
+
+# Crash logs
+wixen-crash.log
+panic.log
+debug.log

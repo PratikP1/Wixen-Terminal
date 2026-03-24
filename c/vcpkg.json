@@ -1,0 +1,11 @@
+{
+  "name": "wixen-terminal",
+  "version": "0.1.0",
+  "description": "Wixen Terminal - Accessible GPU-accelerated terminal emulator",
+  "dependencies": [
+    "zstd",
+    "pcre2",
+    "lua",
+    "cjson"
+  ]
+}

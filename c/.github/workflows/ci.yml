@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [c-port, main]
+    paths: ['c/**']
+  pull_request:
+    branches: [c-port, main]
+    paths: ['c/**']
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        config: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install zstd:x64-windows pcre2:x64-windows lua:x64-windows cjson:x64-windows
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        working-directory: c
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }}
+        working-directory: c
+
+      - name: Run Tests
+        run: ctest --test-dir build --build-config ${{ matrix.config }} --output-on-failure
+        working-directory: c
+
+  asan:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install zstd:x64-windows pcre2:x64-windows lua:x64-windows cjson:x64-windows
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        working-directory: c
+
+      - name: Build with AddressSanitizer
+        run: cmake --build build --config Release -- /p:EnableASAN=true
+        working-directory: c
+
+      - name: Run Tests under ASan
+        run: ctest --test-dir build --build-config Release --output-on-failure --timeout 60
+        working-directory: c
