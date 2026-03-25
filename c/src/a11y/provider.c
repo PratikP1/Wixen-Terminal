@@ -27,6 +27,7 @@ typedef struct TerminalProvider {
     LONG ref_count;
     HWND hwnd;
     WixenA11yState *state;
+    IRawElementProviderSimple *host_provider; /* Cached, created on UI thread */
 } TerminalProvider;
 
 /* Offset helpers for interface casting */
@@ -63,7 +64,11 @@ static ULONG STDMETHODCALLTYPE provider_AddRef(IRawElementProviderSimple *this_)
 static ULONG STDMETHODCALLTYPE provider_Release(IRawElementProviderSimple *this_) {
     TerminalProvider *p = (TerminalProvider *)this_;
     LONG count = InterlockedDecrement(&p->ref_count);
-    if (count == 0) free(p);
+    if (count == 0) {
+        if (p->host_provider)
+            p->host_provider->lpVtbl->Release(p->host_provider);
+        free(p);
+    }
     return count;
 }
 
@@ -94,7 +99,11 @@ static ULONG STDMETHODCALLTYPE root_Release(IRawElementProviderFragmentRoot *thi
 static HRESULT STDMETHODCALLTYPE provider_get_ProviderOptions(
         IRawElementProviderSimple *this_, enum ProviderOptions *pRetVal) {
     (void)this_;
-    *pRetVal = ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading;
+    /* No UseComThreading: UIA calls arrive directly on the calling thread.
+     * This prevents the deadlock where NVDA's initial queries are marshaled
+     * to our UI thread while our UI thread is busy with initialization.
+     * Our state is protected by SRWLOCK for thread safety. */
+    *pRetVal = ProviderOptions_ServerSideProvider;
     return S_OK;
 }
 
@@ -156,7 +165,15 @@ static HRESULT STDMETHODCALLTYPE provider_GetPropertyValue(
 static HRESULT STDMETHODCALLTYPE provider_get_HostRawElementProvider(
         IRawElementProviderSimple *this_, IRawElementProviderSimple **pRetVal) {
     TerminalProvider *p = (TerminalProvider *)this_;
-    return UiaHostProviderFromHwnd(p->hwnd, pRetVal);
+    /* Return cached host provider. Created on UI thread during init,
+     * safe to return from any thread (AddRef is always thread-safe). */
+    if (p->host_provider) {
+        p->host_provider->lpVtbl->AddRef(p->host_provider);
+        *pRetVal = p->host_provider;
+        return S_OK;
+    }
+    *pRetVal = NULL;
+    return S_OK;
 }
 
 /* --- IRawElementProviderFragment --- */
@@ -274,6 +291,10 @@ IRawElementProviderSimple *wixen_a11y_create_provider(HWND hwnd, WixenA11yState 
     p->ref_count = 1;
     p->hwnd = hwnd;
     p->state = state;
+    /* Cache host provider on the UI thread. Without UseComThreading,
+     * HostRawElementProvider may be called from NVDA's UIA thread.
+     * UiaHostProviderFromHwnd must be called from the HWND's thread. */
+    UiaHostProviderFromHwnd(hwnd, &p->host_provider);
     return (IRawElementProviderSimple *)p;
 }
 
