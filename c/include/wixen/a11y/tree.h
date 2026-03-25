@@ -77,6 +77,10 @@ WixenA11yNode *wixen_a11y_tree_add_child(WixenAccessibilityTree *tree,
 void wixen_a11y_tree_clear(WixenAccessibilityTree *tree);
 size_t wixen_a11y_tree_node_count(const WixenAccessibilityTree *tree);
 
+/* Navigation helpers for provider */
+WixenA11yNode *wixen_a11y_tree_child_at(WixenA11yTree *tree, size_t index);
+int wixen_a11y_tree_find_block_at_row(const WixenA11yTree *tree, size_t row);
+
 #include "wixen/shell_integ/shell_integ.h"
 void wixen_a11y_tree_rebuild(WixenA11yTree *tree,
                               const WixenCommandBlock *blocks,

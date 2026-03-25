@@ -136,8 +136,15 @@ void wixen_a11y_tree_rebuild(WixenA11yTree *tree,
     wixen_a11y_tree_clear(tree);
     for (size_t i = 0; i < block_count; i++) {
         char name[128];
-        if (blocks[i].command_text) {
+        bool is_err = blocks[i].has_exit_code && blocks[i].exit_code != 0;
+        if (blocks[i].command_text && is_err) {
+            snprintf(name, sizeof(name), "Command: %s (error %d)",
+                     blocks[i].command_text, blocks[i].exit_code);
+        } else if (blocks[i].command_text) {
             snprintf(name, sizeof(name), "Command: %s", blocks[i].command_text);
+        } else if (is_err) {
+            snprintf(name, sizeof(name), "Command block %zu (error %d)",
+                     i + 1, blocks[i].exit_code);
         } else {
             snprintf(name, sizeof(name), "Command block %zu", i + 1);
         }
@@ -158,4 +165,19 @@ size_t wixen_a11y_tree_block_count(const WixenA11yTree *tree) {
 const WixenA11yBlock *wixen_a11y_tree_get_block(const WixenA11yTree *tree, size_t index) {
     if (index >= tree->block_count) return NULL;
     return &tree->blocks[index];
+}
+
+WixenA11yNode *wixen_a11y_tree_child_at(WixenA11yTree *tree, size_t index) {
+    if (!tree || index >= tree->root.child_count) return NULL;
+    return &tree->root.children[index];
+}
+
+int wixen_a11y_tree_find_block_at_row(const WixenA11yTree *tree, size_t row) {
+    if (!tree) return -1;
+    for (size_t i = 0; i < tree->root.child_count; i++) {
+        const WixenA11yNode *child = &tree->root.children[i];
+        if (row >= child->start_row && row <= child->end_row)
+            return (int)i;
+    }
+    return -1;
 }

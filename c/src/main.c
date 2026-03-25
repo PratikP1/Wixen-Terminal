@@ -242,6 +242,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* A11y tree for screen reader fragment navigation */
     WixenA11yTree a11y_tree;
     wixen_a11y_tree_init(&a11y_tree);
+    wixen_a11y_set_tree(&a11y_tree); /* P2: Wire tree into provider for Navigate() */
 
     /* Thread-safe a11y state for UIA threads (used by provider) */
     WixenA11yState *a11y_shared = wixen_a11y_state_create();

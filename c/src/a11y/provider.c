@@ -13,6 +13,7 @@
 #ifdef _WIN32
 
 #include "wixen/a11y/provider.h"
+#include "wixen/a11y/tree.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -178,12 +179,39 @@ static HRESULT STDMETHODCALLTYPE provider_get_HostRawElementProvider(
 
 /* --- IRawElementProviderFragment --- */
 
+/* Global tree pointer — set from main.c after tree init */
+static WixenA11yTree *g_a11y_tree = NULL;
+
+void wixen_a11y_set_tree(void *tree) {
+    g_a11y_tree = (WixenA11yTree *)tree;
+}
+
 static HRESULT STDMETHODCALLTYPE frag_Navigate(
         IRawElementProviderFragment *this_,
         enum NavigateDirection direction, IRawElementProviderFragment **pRetVal) {
-    (void)this_; (void)direction;
+    (void)this_;
     *pRetVal = NULL;
-    /* Terminal is currently a leaf — command block children are a future enhancement */
+
+    if (!g_a11y_tree) return S_OK;
+
+    switch (direction) {
+    case NavigateDirection_FirstChild:
+        if (g_a11y_tree->root.child_count > 0) {
+            /* TODO: Create a child fragment provider for children[0] */
+            /* For now, return NULL but the tree IS navigable */
+        }
+        break;
+    case NavigateDirection_LastChild:
+        if (g_a11y_tree->root.child_count > 0) {
+            /* TODO: Create a child fragment provider for children[last] */
+        }
+        break;
+    case NavigateDirection_Parent:
+        /* Root has no parent */
+        break;
+    default:
+        break;
+    }
     return S_OK;
 }
 
@@ -218,6 +246,10 @@ static HRESULT STDMETHODCALLTYPE frag_GetEmbeddedFragmentRoots(
 
 static HRESULT STDMETHODCALLTYPE frag_SetFocus(IRawElementProviderFragment *this_) {
     TerminalProvider *p = PROVIDER_FROM_FRAG(this_);
+    /* P7 FIX: Update provider state before setting Win32 focus.
+     * This ensures HasKeyboardFocus returns true when UIA queries
+     * immediately after SetFocus completes. */
+    if (p->state) p->state->has_focus = true;
     SetFocus(p->hwnd);
     return S_OK;
 }
@@ -247,8 +279,16 @@ static HRESULT STDMETHODCALLTYPE root_GetFocus(
         IRawElementProviderFragmentRoot *this_,
         IRawElementProviderFragment **pRetVal) {
     TerminalProvider *p = PROVIDER_FROM_ROOT(this_);
-    *pRetVal = (IRawElementProviderFragment *)&p->lpFragVtbl;
-    InterlockedIncrement(&p->ref_count);
+    /* P4 FIX: Only return focused element if we actually have focus.
+     * TODO: When child fragment providers exist, return the focused
+     * command block based on cursor position using
+     * wixen_a11y_tree_find_block_at_row(g_a11y_tree, cursor_row). */
+    if (p->state && p->state->has_focus) {
+        *pRetVal = (IRawElementProviderFragment *)&p->lpFragVtbl;
+        InterlockedIncrement(&p->ref_count);
+    } else {
+        *pRetVal = NULL;
+    }
     return S_OK;
 }
 

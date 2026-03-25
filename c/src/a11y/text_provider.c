@@ -10,6 +10,7 @@
 #ifdef _WIN32
 
 #include "wixen/a11y/text_provider.h"
+#include "wixen/a11y/text_boundaries.h"
 #include <stdlib.h>
 #include <string.h>
 #include <oleauto.h>
@@ -143,8 +144,34 @@ static HRESULT STDMETHODCALLTYPE range_FindAttribute(
 static HRESULT STDMETHODCALLTYPE range_FindText(
         ITextRangeProvider *this_, BSTR text, BOOL backward, BOOL ignoreCase,
         ITextRangeProvider **pRetVal) {
-    (void)this_; (void)text; (void)backward; (void)ignoreCase;
+    TextRange *r = (TextRange *)this_;
     *pRetVal = NULL;
+    if (!text || !r->state) return S_OK;
+
+    /* Get text snapshot */
+    char full[8192];
+    AcquireSRWLockShared(&r->state->lock);
+    size_t flen = r->state->full_text_len;
+    if (flen >= sizeof(full)) flen = sizeof(full) - 1;
+    if (r->state->full_text) memcpy(full, r->state->full_text, flen);
+    full[flen] = '\0';
+    ReleaseSRWLockShared(&r->state->lock);
+
+    /* Convert BSTR query to UTF-8 */
+    int qlen = WideCharToMultiByte(CP_UTF8, 0, text, -1, NULL, 0, NULL, NULL);
+    if (qlen <= 0) return S_OK;
+    char *query = (char *)malloc(qlen);
+    if (!query) return S_OK;
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, query, qlen, NULL, NULL);
+
+    size_t start, end;
+    size_t from = (backward || r->start < 0) ? 0 : (size_t)r->start;
+    bool found = wixen_text_find(full, flen, query, from, ignoreCase != 0, &start, &end);
+    free(query);
+
+    if (found) {
+        *pRetVal = (ITextRangeProvider *)create_range(r->state, r->enclosing, (int)start, (int)end);
+    }
     return S_OK;
 }
 
@@ -208,16 +235,76 @@ static HRESULT STDMETHODCALLTYPE range_GetText(
 
 static HRESULT STDMETHODCALLTYPE range_Move(
         ITextRangeProvider *this_, enum TextUnit unit, int count, int *pRetVal) {
-    (void)this_; (void)unit; (void)count;
+    TextRange *r = (TextRange *)this_;
     *pRetVal = 0;
+    if (count == 0 || !r->state) return S_OK;
+
+    char full[8192];
+    AcquireSRWLockShared(&r->state->lock);
+    size_t flen = r->state->full_text_len;
+    if (flen >= sizeof(full)) flen = sizeof(full) - 1;
+    if (r->state->full_text) memcpy(full, r->state->full_text, flen);
+    full[flen] = '\0';
+    ReleaseSRWLockShared(&r->state->lock);
+
+    size_t pos = (r->start >= 0) ? (size_t)r->start : 0;
+    int moved = 0;
+    switch (unit) {
+    case TextUnit_Character:
+        moved = wixen_text_move_by_char(full, flen, &pos, count);
+        break;
+    case TextUnit_Word:
+        moved = wixen_text_move_by_word(full, flen, &pos, count);
+        break;
+    case TextUnit_Line:
+        moved = wixen_text_move_by_line(full, flen, &pos, count);
+        break;
+    default: /* Page, Document — move to start/end */
+        if (count > 0) { pos = flen; moved = 1; }
+        else { pos = 0; moved = -1; }
+        break;
+    }
+    r->start = (int)pos;
+    r->end = (int)pos; /* Degenerate range after move */
+    *pRetVal = moved;
     return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE range_MoveEndpointByUnit(
         ITextRangeProvider *this_, enum TextPatternRangeEndpoint endpoint,
         enum TextUnit unit, int count, int *pRetVal) {
-    (void)this_; (void)endpoint; (void)unit; (void)count;
+    TextRange *r = (TextRange *)this_;
     *pRetVal = 0;
+    if (count == 0 || !r->state) return S_OK;
+
+    char full[8192];
+    AcquireSRWLockShared(&r->state->lock);
+    size_t flen = r->state->full_text_len;
+    if (flen >= sizeof(full)) flen = sizeof(full) - 1;
+    if (r->state->full_text) memcpy(full, r->state->full_text, flen);
+    full[flen] = '\0';
+    ReleaseSRWLockShared(&r->state->lock);
+
+    int *target = (endpoint == TextPatternRangeEndpoint_Start) ? &r->start : &r->end;
+    size_t pos = (*target >= 0) ? (size_t)*target : 0;
+    int moved = 0;
+    switch (unit) {
+    case TextUnit_Character:
+        moved = wixen_text_move_by_char(full, flen, &pos, count);
+        break;
+    case TextUnit_Word:
+        moved = wixen_text_move_by_word(full, flen, &pos, count);
+        break;
+    case TextUnit_Line:
+        moved = wixen_text_move_by_line(full, flen, &pos, count);
+        break;
+    default:
+        if (count > 0) { pos = flen; moved = 1; }
+        else { pos = 0; moved = -1; }
+        break;
+    }
+    *target = (int)pos;
+    *pRetVal = moved;
     return S_OK;
 }
 
