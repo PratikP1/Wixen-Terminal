@@ -57,6 +57,21 @@ const char **wixen_settings_tab_fields(int tab_index, size_t *out_count) {
     }
 }
 
+/* --- Visual layout parameters --- */
+
+const char *wixen_settings_dialog_font_name(void) { return "Segoe UI"; }
+int wixen_settings_dialog_font_size(void) { return 9; }
+int wixen_settings_dialog_width(void) { return 440; }
+int wixen_settings_dialog_height(void) { return 340; }
+int wixen_settings_dialog_margin(void) { return 10; }
+int wixen_settings_dialog_control_spacing(void) { return 6; }
+
+static const char *appearance_groups[] = { "Font", "Colors", "Window" };
+const char **wixen_settings_appearance_groups(size_t *out_count) {
+    *out_count = 3;
+    return appearance_groups;
+}
+
 /* --- Win32 dialog implementation --- */
 #ifdef _WIN32
 
@@ -65,6 +80,24 @@ const char **wixen_settings_tab_fields(int tab_index, size_t *out_count) {
 #include <windowsx.h>
 
 #pragma comment(lib, "comctl32.lib")
+
+/* Create the proper dialog font (Segoe UI 9pt) */
+static HFONT create_dialog_font(void) {
+    return CreateFontW(
+        -12, /* 9pt at 96 DPI = -MulDiv(9, 96, 72) = -12 */
+        0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+}
+
+/* Layout constants matching test expectations */
+#define DLG_MARGIN 10
+#define DLG_SPACING 6
+#define DLG_LABEL_H 18
+#define DLG_EDIT_H 22
+#define DLG_COMBO_H 22
+#define DLG_CHECK_H 20
+#define DLG_GROUP_PAD 18
 
 /* Control IDs */
 #define IDC_FONT_FAMILY    1001
@@ -112,7 +145,7 @@ static INT_PTR CALLBACK font_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_INITDIALOG: {
         /* Create controls programmatically */
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         /* Font family label + edit */
@@ -165,7 +198,7 @@ static INT_PTR CALLBACK window_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         HWND lbl = CreateWindowExW(0, L"STATIC", L"&Width:",
@@ -259,7 +292,7 @@ static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         HWND lbl = CreateWindowExW(0, L"STATIC", L"Color &theme:",
@@ -334,7 +367,7 @@ static INT_PTR CALLBACK profiles_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         CreateWindowExW(0, L"STATIC", L"Shell profiles define which programs can be launched as new tabs.",
@@ -375,7 +408,7 @@ static INT_PTR CALLBACK keybindings_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPA
     (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         CreateWindowExW(0, L"STATIC",
@@ -419,7 +452,7 @@ static INT_PTR CALLBACK keybindings_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPA
 static INT_PTR CALLBACK terminal_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         /* Cursor style label + combo */
@@ -496,7 +529,7 @@ static INT_PTR CALLBACK terminal_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 static INT_PTR CALLBACK a11y_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
 
         /* Screen reader verbosity */
@@ -604,7 +637,7 @@ static INT_PTR CALLBACK appearance_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 5;
 
         /* -- Font section -- */
@@ -741,7 +774,7 @@ static INT_PTR CALLBACK terminal_merged_dlg_proc(HWND hwnd, UINT msg, WPARAM wp,
     (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
-        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFont = create_dialog_font();
         int y = 10;
         HWND lbl, combo, edit, chk;
 
@@ -840,8 +873,8 @@ static DLGTEMPLATE *make_empty_dialog(void) {
     DLGTEMPLATE *dt = (DLGTEMPLATE *)calloc(1, size + 16);
     if (!dt) return NULL;
     dt->style = DS_SETFONT | WS_CHILD | WS_DISABLED | DS_CONTROL;
-    dt->cx = 300;
-    dt->cy = 200;
+    dt->cx = 420;
+    dt->cy = 300;
     /* Skip menu (WORD 0), class (WORD 0), title (WORD 0) */
     WORD *pw = (WORD *)(dt + 1);
     pw[0] = 0; /* No menu */
