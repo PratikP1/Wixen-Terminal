@@ -306,6 +306,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_underline_styles tests/test_red_underline_styles.c)
+target_link_libraries(test_red_underline_styles wixen_core wixen_vt)
+add_test(NAME test_red_underline_styles COMMAND test_red_underline_styles)
+
+add_executable(test_red_origin_mode tests/test_red_origin_mode.c)
+target_link_libraries(test_red_origin_mode wixen_core wixen_vt)
+add_test(NAME test_red_origin_mode COMMAND test_red_origin_mode)
+
 add_executable(test_red_save_restore tests/test_red_save_restore.c)
 target_link_libraries(test_red_save_restore wixen_core wixen_vt)
 add_test(NAME test_red_save_restore COMMAND test_red_save_restore)

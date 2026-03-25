@@ -1429,8 +1429,13 @@ static void terminal_csi(WixenTerminal *t, const WixenAction *action) {
         if (param_or(action, 0, 0) == 6) {
             /* CPR — cursor position report */
             char buf[32];
+            size_t report_row = t->grid.cursor.row + 1;
+            if (t->modes.origin_mode) {
+                /* In origin mode, report relative to scroll region */
+                report_row = t->grid.cursor.row - t->scroll_region.top + 1;
+            }
             snprintf(buf, sizeof(buf), "\x1b[%zu;%zuR",
-                     t->grid.cursor.row + 1, t->grid.cursor.col + 1);
+                     report_row, t->grid.cursor.col + 1);
             queue_response(t, buf);
         } else if (param_or(action, 0, 0) == 5) {
             /* Status report — "OK" */
