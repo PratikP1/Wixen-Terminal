@@ -329,8 +329,9 @@ static void force_foreground(HWND hwnd) {
 
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        force_foreground(w->hwnd);
-
+        /* Window was created with WS_VISIBLE so it's already shown.
+         * Just mark as visible. Focus is grabbed in the first frame
+         * of the main loop after the message pump is running. */
         w->visible = true;
     }
 }
