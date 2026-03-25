@@ -327,6 +327,10 @@ add_executable(test_red_profile_launch tests/test_red_profile_launch.c)
 target_link_libraries(test_red_profile_launch wixen_config)
 add_test(NAME test_red_profile_launch COMMAND test_red_profile_launch)
 
+add_executable(test_red_keybinding_edit tests/test_red_keybinding_edit.c)
+target_link_libraries(test_red_keybinding_edit wixen_config)
+add_test(NAME test_red_keybinding_edit COMMAND test_red_keybinding_edit)
+
 add_executable(test_red_settings_integration tests/test_red_settings_integration.c)
 target_link_libraries(test_red_settings_integration wixen_config)
 add_test(NAME test_red_settings_integration COMMAND test_red_settings_integration)
@@ -340,11 +344,11 @@ target_link_libraries(test_red_alt_f4 wixen_core wixen_config)
 add_test(NAME test_red_alt_f4 COMMAND test_red_alt_f4)
 
 add_executable(test_red_visual_quality tests/test_red_visual_quality.c)
-target_link_libraries(test_red_visual_quality wixen_ui)
+target_link_libraries(test_red_visual_quality wixen_ui wixen_config)
 add_test(NAME test_red_visual_quality COMMAND test_red_visual_quality)
 
 add_executable(test_red_keybinding_editor tests/test_red_keybinding_editor.c)
-target_link_libraries(test_red_keybinding_editor wixen_ui)
+target_link_libraries(test_red_keybinding_editor wixen_ui wixen_config)
 add_test(NAME test_red_keybinding_editor COMMAND test_red_keybinding_editor)
 
 add_executable(test_red_window_lifecycle tests/test_red_window_lifecycle.c)
@@ -368,11 +372,11 @@ target_link_libraries(test_red_ui_elements wixen_ui)
 add_test(NAME test_red_ui_elements COMMAND test_red_ui_elements)
 
 add_executable(test_red_settings_visual tests/test_red_settings_visual.c)
-target_link_libraries(test_red_settings_visual wixen_ui)
+target_link_libraries(test_red_settings_visual wixen_ui wixen_config)
 add_test(NAME test_red_settings_visual COMMAND test_red_settings_visual)
 
 add_executable(test_red_settings_tabs tests/test_red_settings_tabs.c)
-target_link_libraries(test_red_settings_tabs wixen_ui)
+target_link_libraries(test_red_settings_tabs wixen_ui wixen_config)
 add_test(NAME test_red_settings_tabs COMMAND test_red_settings_tabs)
 
 add_executable(test_red_lua_engine tests/test_red_lua_engine.c)

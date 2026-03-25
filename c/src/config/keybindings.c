@@ -170,6 +170,11 @@ void wixen_keybindings_add(WixenKeybindingMap *km,
     b->args = dup_str(args);
 }
 
+const WixenKeybinding *wixen_keybindings_get_at(const WixenKeybindingMap *km, size_t index) {
+    if (!km || index >= km->count) return NULL;
+    return &km->bindings[index];
+}
+
 const char *wixen_keybindings_lookup(const WixenKeybindingMap *km, const char *chord) {
     char *norm = wixen_chord_normalize(chord);
     if (!norm) return NULL;

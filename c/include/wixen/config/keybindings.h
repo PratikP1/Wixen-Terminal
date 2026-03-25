@@ -37,6 +37,9 @@ void wixen_keybindings_add(WixenKeybindingMap *km,
 /* Look up action by chord. Returns NULL if not found. */
 const char *wixen_keybindings_lookup(const WixenKeybindingMap *km, const char *chord);
 
+/* Get keybinding at index (for UI enumeration). Returns NULL if out of bounds. */
+const WixenKeybinding *wixen_keybindings_get_at(const WixenKeybindingMap *km, size_t index);
+
 /* Normalize a chord string: lowercase, sort modifiers, deduplicate.
    Returns heap-allocated string. Caller must free. */
 char *wixen_chord_normalize(const char *chord);

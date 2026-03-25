@@ -9,8 +9,12 @@
  * Uses native Win32 controls for full screen reader accessibility.
  */
 #include "wixen/ui/settings_dialog.h"
+#include "wixen/config/config.h"
+#include "wixen/config/keybindings.h"
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
+#include <wchar.h>
 
 /* --- Tab configuration (platform-independent, testable) --- */
 
@@ -432,53 +436,214 @@ static INT_PTR CALLBACK profiles_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 
 /* --- Keybindings Tab --- */
 
+/* Populate listbox from actual keybinding map */
+static void kb_populate_list(HWND list, const WixenKeybindingMap *km) {
+    SendMessageW(list, LB_RESETCONTENT, 0, 0);
+    for (size_t i = 0; i < km->count; i++) {
+        const WixenKeybinding *b = wixen_keybindings_get_at(km, i);
+        if (!b) continue;
+        wchar_t item[256];
+        wchar_t wchord[64], waction[64];
+        MultiByteToWideChar(CP_UTF8, 0, b->chord, -1, wchord, 64);
+        MultiByteToWideChar(CP_UTF8, 0, b->action, -1, waction, 64);
+        _snwprintf(item, 256, L"%s: %s", wchord, waction);
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)item);
+    }
+}
+
+/* Simple input dialog for chord/action */
+static bool kb_input_dialog(HWND parent, const wchar_t *title,
+                              char *chord_out, size_t chord_sz,
+                              char *action_out, size_t action_sz) {
+    /* Use a simple two-field dialog via nested message box + edit fields.
+     * For a real app, this would be a proper dialog resource. For now,
+     * use a minimal approach: prompt for chord, then prompt for action. */
+    wchar_t wchord[128] = {0}, waction[128] = {0};
+
+    /* Chord input */
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+        L"STATIC", title,
+        WS_VISIBLE | WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME,
+        CW_USEDEFAULT, CW_USEDEFAULT, 320, 200,
+        parent, NULL, NULL, NULL);
+    if (!dlg) return false;
+
+    HFONT hFont = create_dialog_font();
+    CreateWindowExW(0, L"STATIC", L"&Chord (e.g. ctrl+shift+t):",
+        WS_CHILD | WS_VISIBLE, 10, 10, 290, 20, dlg, NULL, NULL, NULL);
+    HWND ed_chord = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        10, 32, 290, 24, dlg, (HMENU)5001, NULL, NULL);
+    SendMessageW(ed_chord, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+    CreateWindowExW(0, L"STATIC", L"&Action (e.g. new_tab):",
+        WS_CHILD | WS_VISIBLE, 10, 64, 290, 20, dlg, NULL, NULL, NULL);
+    HWND ed_action = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+        10, 86, 290, 24, dlg, (HMENU)5002, NULL, NULL);
+    SendMessageW(ed_action, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+    HWND ok_btn = CreateWindowExW(0, L"BUTTON", L"OK",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+        70, 125, 80, 28, dlg, (HMENU)IDOK, NULL, NULL);
+    SendMessageW(ok_btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+    HWND cancel_btn = CreateWindowExW(0, L"BUTTON", L"Cancel",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        160, 125, 80, 28, dlg, (HMENU)IDCANCEL, NULL, NULL);
+    SendMessageW(cancel_btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+    /* Pre-fill if editing */
+    if (chord_out[0]) {
+        wchar_t pre[128];
+        MultiByteToWideChar(CP_UTF8, 0, chord_out, -1, pre, 128);
+        SetWindowTextW(ed_chord, pre);
+    }
+    if (action_out[0]) {
+        wchar_t pre[128];
+        MultiByteToWideChar(CP_UTF8, 0, action_out, -1, pre, 128);
+        SetWindowTextW(ed_action, pre);
+    }
+
+    SetFocus(ed_chord);
+    EnableWindow(parent, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+
+    bool result = false;
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0)) {
+        if (msg.message == WM_COMMAND) {
+            WORD id = LOWORD(msg.wParam);
+            if (id == IDOK) {
+                GetWindowTextW(ed_chord, wchord, 128);
+                GetWindowTextW(ed_action, waction, 128);
+                WideCharToMultiByte(CP_UTF8, 0, wchord, -1, chord_out, (int)chord_sz, NULL, NULL);
+                WideCharToMultiByte(CP_UTF8, 0, waction, -1, action_out, (int)action_sz, NULL, NULL);
+                result = (chord_out[0] && action_out[0]);
+                break;
+            } else if (id == IDCANCEL) {
+                break;
+            }
+        }
+        if (!IsWindow(dlg)) break;
+        if (IsDialogMessageW(dlg, &msg)) continue;
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    EnableWindow(parent, TRUE);
+    DestroyWindow(dlg);
+    DeleteObject(hFont);
+    return result;
+}
+
 static INT_PTR CALLBACK keybindings_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
         HFONT hFont = create_dialog_font();
         int y = 10;
 
-        CreateWindowExW(0, L"STATIC",
-            L"Keybindings can be customized in config.toml or via Lua scripts.",
-            WS_CHILD | WS_VISIBLE, 10, y, 350, 20, hwnd, NULL, NULL, NULL);
+        HWND lbl = CreateWindowExW(0, L"STATIC",
+            L"Manage keyboard shortcuts. Select a binding, then Add, Remove, or Edit.",
+            WS_CHILD | WS_VISIBLE, 10, y, 380, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
         y += 30;
 
-        /* List of current keybindings (read-only for now) */
+        /* Listbox populated from actual config */
         HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-            10, y, 350, 150, hwnd, (HMENU)3001, NULL, NULL);
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY,
+            10, y, 380, 150, hwnd, (HMENU)3001, NULL, NULL);
         SendMessageW(list, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+P: Command Palette");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+,: Settings");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+T: New Tab");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+W: Close Tab");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Tab: Next Tab");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+Tab: Previous Tab");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"F11: Toggle Fullscreen");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+F: Search");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+C: Copy");
-        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+V: Paste");
+
+        /* Load actual keybindings from global config */
+        WixenConfig tmp;
+        wixen_config_init_defaults(&tmp);
+        char cfg_path[MAX_PATH];
+        wixen_config_default_path(cfg_path, MAX_PATH);
+        wixen_config_load(&tmp, cfg_path);
+        kb_populate_list(list, &tmp.keybindings);
+        wixen_config_free(&tmp);
         y += 160;
 
-        /* Add / Remove / Edit buttons */
+        /* Action buttons */
         HWND btn;
         btn = CreateWindowExW(0, L"BUTTON", L"&Add...",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             10, y, 80, 28, hwnd, (HMENU)3010, NULL, NULL);
         SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
-
         btn = CreateWindowExW(0, L"BUTTON", L"&Remove",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             100, y, 80, 28, hwnd, (HMENU)3011, NULL, NULL);
         SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
-
         btn = CreateWindowExW(0, L"BUTTON", L"&Edit...",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             190, y, 80, 28, hwnd, (HMENU)3012, NULL, NULL);
         SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         return TRUE;
+    }
+    case WM_COMMAND: {
+        WORD id = LOWORD(wp);
+        HWND list = GetDlgItem(hwnd, 3001);
+        if (id == 3010) { /* Add */
+            char chord[128] = {0}, action[128] = {0};
+            if (kb_input_dialog(hwnd, L"Add Keybinding", chord, 128, action, 128)) {
+                WixenConfig tmp;
+                wixen_config_init_defaults(&tmp);
+                char cfg_path[MAX_PATH];
+                wixen_config_default_path(cfg_path, MAX_PATH);
+                wixen_config_load(&tmp, cfg_path);
+                wixen_keybindings_add(&tmp.keybindings, chord, action, NULL);
+                wixen_config_save(&tmp, cfg_path);
+                kb_populate_list(list, &tmp.keybindings);
+                wixen_config_free(&tmp);
+            }
+            return TRUE;
+        }
+        if (id == 3011) { /* Remove */
+            int sel = (int)SendMessageW(list, LB_GETCURSEL, 0, 0);
+            if (sel >= 0) {
+                WixenConfig tmp;
+                wixen_config_init_defaults(&tmp);
+                char cfg_path[MAX_PATH];
+                wixen_config_default_path(cfg_path, MAX_PATH);
+                wixen_config_load(&tmp, cfg_path);
+                const WixenKeybinding *b = wixen_keybindings_get_at(&tmp.keybindings, (size_t)sel);
+                if (b) {
+                    wixen_keybindings_remove(&tmp.keybindings, b->chord);
+                    wixen_config_save(&tmp, cfg_path);
+                    kb_populate_list(list, &tmp.keybindings);
+                }
+                wixen_config_free(&tmp);
+            }
+            return TRUE;
+        }
+        if (id == 3012) { /* Edit */
+            int sel = (int)SendMessageW(list, LB_GETCURSEL, 0, 0);
+            if (sel >= 0) {
+                WixenConfig tmp;
+                wixen_config_init_defaults(&tmp);
+                char cfg_path[MAX_PATH];
+                wixen_config_default_path(cfg_path, MAX_PATH);
+                wixen_config_load(&tmp, cfg_path);
+                const WixenKeybinding *b = wixen_keybindings_get_at(&tmp.keybindings, (size_t)sel);
+                if (b) {
+                    char chord[128], action[128];
+                    snprintf(chord, 128, "%s", b->chord);
+                    snprintf(action, 128, "%s", b->action);
+                    char old_chord[128];
+                    snprintf(old_chord, 128, "%s", chord);
+                    if (kb_input_dialog(hwnd, L"Edit Keybinding", chord, 128, action, 128)) {
+                        wixen_keybindings_remove(&tmp.keybindings, old_chord);
+                        wixen_keybindings_add(&tmp.keybindings, chord, action, NULL);
+                        wixen_config_save(&tmp, cfg_path);
+                        kb_populate_list(list, &tmp.keybindings);
+                    }
+                }
+                wixen_config_free(&tmp);
+            }
+            return TRUE;
+        }
+        break;
     }
     case WM_NOTIFY: {
         NMHDR *nm = (NMHDR *)lp;
@@ -490,7 +655,6 @@ static INT_PTR CALLBACK keybindings_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPA
     }
     }
     return FALSE;
-    (void)wp;
 }
 
 /* --- Terminal Tab --- */
