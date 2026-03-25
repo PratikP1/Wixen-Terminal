@@ -411,6 +411,9 @@ void wixen_terminal_save_cursor(WixenTerminal *t) {
     t->saved_cursor->row = t->grid.cursor.row;
     t->saved_cursor->attrs = t->grid.current_attrs;
     t->saved_cursor->origin_mode = t->modes.origin_mode;
+    t->saved_cursor->auto_wrap = t->modes.auto_wrap;
+    memcpy(t->saved_cursor->charsets, t->charsets, sizeof(t->charsets));
+    t->saved_cursor->active_charset = t->active_charset;
 }
 
 void wixen_terminal_restore_cursor(WixenTerminal *t) {
@@ -419,6 +422,9 @@ void wixen_terminal_restore_cursor(WixenTerminal *t) {
     t->grid.cursor.row = t->saved_cursor->row;
     t->grid.current_attrs = t->saved_cursor->attrs;
     t->modes.origin_mode = t->saved_cursor->origin_mode;
+    t->modes.auto_wrap = t->saved_cursor->auto_wrap;
+    memcpy(t->charsets, t->saved_cursor->charsets, sizeof(t->charsets));
+    t->active_charset = t->saved_cursor->active_charset;
     wixen_cursor_clamp(&t->grid.cursor, t->grid.cols, t->grid.num_rows);
     t->pending_wrap = false;
 }

@@ -23,7 +23,9 @@ typedef struct {
     size_t row;
     WixenCellAttributes attrs;
     bool origin_mode;
-    /* Charset state would go here */
+    bool auto_wrap;
+    uint8_t charsets[4];
+    uint8_t active_charset;
 } WixenSavedCursor;
 
 /* Tab stops */

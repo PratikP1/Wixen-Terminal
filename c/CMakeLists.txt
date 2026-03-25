@@ -306,6 +306,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_save_restore tests/test_red_save_restore.c)
+target_link_libraries(test_red_save_restore wixen_core wixen_vt)
+add_test(NAME test_red_save_restore COMMAND test_red_save_restore)
+
+add_executable(test_red_erase_ops tests/test_red_erase_ops.c)
+target_link_libraries(test_red_erase_ops wixen_core wixen_vt)
+add_test(NAME test_red_erase_ops COMMAND test_red_erase_ops)
+
 add_executable(test_red_misc_sequences tests/test_red_misc_sequences.c)
 target_link_libraries(test_red_misc_sequences wixen_core wixen_vt)
 add_test(NAME test_red_misc_sequences COMMAND test_red_misc_sequences)
