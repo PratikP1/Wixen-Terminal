@@ -62,6 +62,17 @@ static WixenPaneState pane_states[MAX_PANES];
 static size_t pane_state_count = 0;
 
 /* Watchdog: if cleanup takes >3s, force-kill. Prevents zombie processes. */
+/* Pump all pending Win32 messages. Must be called periodically during
+ * init so UseComThreading COM calls (from NVDA) can be dispatched.
+ * Without this, NVDA's queries queue up and its 500ms watchdog fires. */
+static void pump_messages(void) {
+    MSG msg;
+    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
+
 static DWORD WINAPI exit_watchdog_thread(LPVOID param) {
     (void)param;
     Sleep(3000);
@@ -100,6 +111,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
 
+    /* Pump messages so NVDA's initial UIA queries can be dispatched.
+     * With UseComThreading, these are marshaled to our UI thread. */
+    pump_messages();
+
     /* Create renderer */
     WixenRenderer *renderer = wixen_renderer_create(
         window.hwnd, 1200, 800, "Cascadia Mono", 14.0f, &colors);
@@ -108,6 +123,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         wixen_window_destroy(&window);
         return 1;
     }
+
+    pump_messages(); /* Let COM calls through after renderer init */
 
     /* Initialize tab and pane management */
     WixenTabManager tabs;
@@ -203,12 +220,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * before the provider is registered and permanently caches the
      * window as non-UIA. */
     wixen_a11y_provider_init(window.hwnd, &ps->terminal);
+    pump_messages(); /* Dispatch any queued UIA queries */
 
     /* NOW show the window — provider is ready for WM_GETOBJECT */
     wixen_window_show(&window);
+    pump_messages(); /* Let NVDA process the focus change */
 
+    wixen_a11y_raise_focus_changed(window.hwnd);
     wixen_a11y_raise_selection_changed(window.hwnd);
     wixen_a11y_raise_notification(window.hwnd, "Wixen Terminal ready", "terminal-ready");
+    pump_messages(); /* Deliver the events to NVDA */
 
     /* Output throttler — batches PTY output for screen reader */
     WixenEventThrottler pane_throttler;

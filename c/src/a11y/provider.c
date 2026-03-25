@@ -99,11 +99,11 @@ static ULONG STDMETHODCALLTYPE root_Release(IRawElementProviderFragmentRoot *thi
 static HRESULT STDMETHODCALLTYPE provider_get_ProviderOptions(
         IRawElementProviderSimple *this_, enum ProviderOptions *pRetVal) {
     (void)this_;
-    /* No UseComThreading: UIA calls arrive directly on the calling thread.
-     * This prevents the deadlock where NVDA's initial queries are marshaled
-     * to our UI thread while our UI thread is busy with initialization.
-     * Our state is protected by SRWLOCK for thread safety. */
-    *pRetVal = ProviderOptions_ServerSideProvider;
+    /* UseComThreading: UIA marshals calls to the UI thread. Required for
+     * NVDA to properly register our window — without it, UIA's initial
+     * probe runs on the MTA thread and may abandon our provider.
+     * The UI thread must pump messages during init to avoid timeouts. */
+    *pRetVal = ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading;
     return S_OK;
 }
 
