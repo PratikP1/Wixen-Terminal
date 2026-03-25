@@ -2,6 +2,7 @@
 #ifdef _WIN32
 
 #include "wixen/ui/window.h"
+#include "wixen/a11y/provider.h"
 #include <stdlib.h>
 #include <windowsx.h>
 #include <dwmapi.h>
@@ -48,6 +49,11 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
         CREATESTRUCTW *cs = (CREATESTRUCTW *)lparam;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
         DragAcceptFiles(hwnd, TRUE);
+        /* Register a minimal UIA provider immediately so NVDA doesn't
+         * cache this window as non-UIA. BUG #23 follow-up: even with
+         * deferred ShowWindow, NVDA discovers HWNDs from CreateWindowExW.
+         * The provider will be updated with terminal data later. */
+        wixen_a11y_provider_init_minimal(hwnd);
         return 0;
     }
 

@@ -346,6 +346,15 @@ void wixen_a11y_state_update_focus(WixenA11yState *state, bool has_focus) {
 static IRawElementProviderSimple *g_provider = NULL;
 static WixenA11yState g_a11y_state;
 
+void wixen_a11y_provider_init_minimal(HWND hwnd) {
+    /* Called from WM_CREATE — registers a minimal provider so NVDA
+     * doesn't cache the HWND as non-UIA. Full init happens later. */
+    if (g_provider) return; /* Already initialized */
+    wixen_a11y_state_init(&g_a11y_state);
+    g_provider = wixen_a11y_create_provider(hwnd, &g_a11y_state);
+    SetPropW(hwnd, L"WixenUiaProvider", (HANDLE)g_provider);
+}
+
 void wixen_a11y_provider_init(HWND hwnd, void *terminal) {
     (void)terminal;
     wixen_a11y_state_init(&g_a11y_state);
