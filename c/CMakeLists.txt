@@ -305,6 +305,18 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_mouse_encoding tests/test_red_mouse_encoding.c)
+target_link_libraries(test_red_mouse_encoding wixen_core)
+add_test(NAME test_red_mouse_encoding COMMAND test_red_mouse_encoding)
+
+add_executable(test_red_tab_lifecycle tests/test_red_tab_lifecycle.c)
+target_link_libraries(test_red_tab_lifecycle wixen_ui)
+add_test(NAME test_red_tab_lifecycle COMMAND test_red_tab_lifecycle)
+
+add_executable(test_red_pane_tree tests/test_red_pane_tree.c)
+target_link_libraries(test_red_pane_tree wixen_ui)
+add_test(NAME test_red_pane_tree COMMAND test_red_pane_tree)
+
 add_executable(test_red_selection_wide tests/test_red_selection_wide.c)
 target_link_libraries(test_red_selection_wide wixen_core wixen_vt)
 add_test(NAME test_red_selection_wide COMMAND test_red_selection_wide)
