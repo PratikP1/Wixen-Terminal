@@ -88,17 +88,20 @@ void wixen_terminal_free(WixenTerminal *t) {
         free(t->alt_grid);
         t->alt_grid = NULL;
     }
-    free(t->saved_cursor);
-    free(t->title);
+    free(t->saved_cursor); t->saved_cursor = NULL;
+    free(t->title); t->title = NULL;
     wixen_hyperlinks_free(&t->hyperlinks);
     wixen_shell_integ_free(&t->shell_integ);
-    free(t->clipboard_write_pending);
-    free(t->clipboard_injected);
+    free(t->clipboard_write_pending); t->clipboard_write_pending = NULL;
+    free(t->clipboard_injected); t->clipboard_injected = NULL;
     free_tab_stops(&t->tab_stops);
     for (size_t i = 0; i < t->response_count; i++) {
         free(t->responses[i]);
     }
     free(t->responses);
+    t->responses = NULL;
+    t->response_count = 0;
+    t->response_cap = 0;
 }
 
 void wixen_terminal_reset(WixenTerminal *t) {
@@ -515,6 +518,11 @@ void wixen_terminal_apply_sgr(WixenTerminal *t, const WixenAction *action) {
 
 void wixen_terminal_set_title(WixenTerminal *t, const char *title) {
     free(t->title);
+    if (!title) {
+        t->title = NULL;
+        t->title_dirty = true;
+        return;
+    }
     size_t len = strlen(title);
     t->title = malloc(len + 1);
     if (t->title) {
@@ -877,6 +885,7 @@ static int b64_val(char c) {
 }
 
 uint8_t *wixen_base64_decode(const char *b64, size_t *out_len) {
+    if (!b64) { *out_len = 0; return NULL; }
     size_t in_len = strlen(b64);
     /* Strip padding */
     while (in_len > 0 && b64[in_len - 1] == '=') in_len--;

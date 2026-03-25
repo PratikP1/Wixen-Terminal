@@ -11,6 +11,7 @@ static char *dup_str_n(const char *s, size_t n) {
 }
 
 static bool starts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return false;
     return strncmp(s, prefix, strlen(prefix)) == 0;
 }
 
