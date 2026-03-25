@@ -1432,11 +1432,14 @@ static void terminal_csi(WixenTerminal *t, const WixenAction *action) {
         }
         break;
     case 'c': /* DA — device attributes */
-        if (priv) {
-            /* DA2 — secondary device attributes */
+        if (action->csi.intermediate_count > 0 && action->csi.intermediates[0] == '>') {
+            /* DA2 — secondary device attributes (CSI > c) */
             queue_response(t, "\x1b[>1;1;0c");
+        } else if (action->csi.intermediate_count > 0 && action->csi.intermediates[0] == '=') {
+            /* DA3 — tertiary device attributes (CSI = c) */
+            queue_response(t, "\x1bP!|00000000\x1b\\");
         } else {
-            /* DA1 — primary device attributes (VT220) */
+            /* DA1 — primary device attributes (CSI c) */
             queue_response(t, "\x1b[?62;22c");
         }
         break;

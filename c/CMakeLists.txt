@@ -306,6 +306,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_device_attrs tests/test_red_device_attrs.c)
+target_link_libraries(test_red_device_attrs wixen_core wixen_vt)
+add_test(NAME test_red_device_attrs COMMAND test_red_device_attrs)
+
+add_executable(test_red_ich_dch tests/test_red_ich_dch.c)
+target_link_libraries(test_red_ich_dch wixen_core wixen_vt)
+add_test(NAME test_red_ich_dch COMMAND test_red_ich_dch)
+
 add_executable(test_red_paste_sync tests/test_red_paste_sync.c)
 target_link_libraries(test_red_paste_sync wixen_core wixen_vt)
 add_test(NAME test_red_paste_sync COMMAND test_red_paste_sync)
