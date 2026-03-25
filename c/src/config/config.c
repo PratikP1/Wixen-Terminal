@@ -38,6 +38,21 @@ void wixen_config_init_defaults(WixenConfig *cfg) {
     cfg->behavior.copy_on_selection = false;
     cfg->behavior.paste_with_ctrl_v = true;
 
+    /* Default profiles */
+    cfg->profile_count = 3;
+    cfg->profiles = calloc(cfg->profile_count, sizeof(WixenProfile));
+    if (cfg->profiles) {
+        cfg->profiles[0].name = dup_str("PowerShell");
+        cfg->profiles[0].program = dup_str("pwsh.exe");
+        cfg->profiles[0].is_default = true;
+        cfg->profiles[1].name = dup_str("Command Prompt");
+        cfg->profiles[1].program = dup_str("cmd.exe");
+        cfg->profiles[1].is_default = false;
+        cfg->profiles[2].name = dup_str("Windows PowerShell");
+        cfg->profiles[2].program = dup_str("powershell.exe");
+        cfg->profiles[2].is_default = false;
+    }
+
     wixen_keybindings_init(&cfg->keybindings);
     wixen_keybindings_load_defaults(&cfg->keybindings);
 }

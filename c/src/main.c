@@ -68,6 +68,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenColorScheme colors;
     wixen_colors_init_default(&colors);
 
+    /* Load config FIRST — needed for profile selection and window size */
+    WixenConfig config;
+    wixen_config_init_defaults(&config);
+    char cfg_path[MAX_PATH] = {0};
+    wixen_config_default_path(cfg_path, sizeof(cfg_path));
+    wixen_config_load(&config, cfg_path);
+
     /* Initialize keybindings */
     WixenKeybindingMap keybindings;
     wixen_keybindings_init(&keybindings);
@@ -97,10 +104,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenPaneId root_pane;
     wixen_panes_init(&pane_tree, &root_pane);
 
-    /* Detect shell and compute grid size */
-    wchar_t *shell = wixen_pty_detect_shell();
-    uint16_t cols = (uint16_t)(1200 / 8);
-    uint16_t rows = (uint16_t)(800 / 16);
+    /* Use default profile shell, fall back to detect_shell */
+    wchar_t *shell = NULL;
+    const char *tab_title = "Shell";
+    {
+        const WixenProfile *prof = wixen_config_default_profile(&config);
+        if (prof && prof->program) {
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, prof->program, -1, NULL, 0);
+            if (wlen > 0) {
+                shell = malloc(wlen * sizeof(wchar_t));
+                if (shell) MultiByteToWideChar(CP_UTF8, 0, prof->program, -1, shell, wlen);
+            }
+            if (prof->name) tab_title = prof->name;
+        }
+        if (!shell) shell = wixen_pty_detect_shell();
+    }
+    uint16_t cols = (uint16_t)(config.window.width / 8);
+    uint16_t rows = (uint16_t)(config.window.height / 16);
 
     /* Try to restore session */
     char session_path[MAX_PATH];
@@ -138,7 +158,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         wixen_parser_init(&ps->parser);
         ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL, NULL, window.hwnd);
         pane_state_count = 1;
-        wixen_tabs_add(&tabs, "Shell", root_pane);
+        wixen_tabs_add(&tabs, tab_title, root_pane);
     }
     wixen_session_free(&saved_session);
     free(shell);
@@ -150,13 +170,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenTrayIcon tray;
     wixen_tray_create(&tray, window.hwnd, L"Wixen Terminal");
 
-    /* Load config and start hot-reload watcher */
-    WixenConfig config;
-    wixen_config_init_defaults(&config);
-    char cfg_path[MAX_PATH] = {0};
-    wixen_config_default_path(cfg_path, sizeof(cfg_path));
-    wixen_config_load(&config, cfg_path);
-
+    /* Config already loaded above — start hot-reload watcher */
     WixenConfigWatcher cfg_watcher = {0};
     wixen_watcher_start(&cfg_watcher, cfg_path, window.hwnd);
 
