@@ -249,21 +249,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Main event loop */
     bool running = true;
-    bool first_frame = true;
     MSG msg;
 
     while (running) {
-        /* On first frame, grab focus now that the message pump is running.
-         * Doing it here instead of during init avoids the "not responding"
-         * detection that causes Windows to reclaim focus. */
-        if (first_frame) {
-            first_frame = false;
-            SetForegroundWindow(window.hwnd);
-            SetFocus(window.hwnd);
-            /* Also fire UIA focus so NVDA knows we're active */
-            wixen_a11y_raise_focus_changed(window.hwnd);
-            pump_messages();
-        }
         /* Process Win32 messages */
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
