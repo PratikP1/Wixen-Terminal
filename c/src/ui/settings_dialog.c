@@ -209,19 +209,19 @@ bool wixen_settings_dialog_show(HWND parent) {
     PROPSHEETPAGEW pages[3] = {0};
 
     pages[0].dwSize = sizeof(PROPSHEETPAGEW);
-    pages[0].dwFlags = PSP_DLGINDIRECT;
+    pages[0].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
     pages[0].pResource = dt1;
     pages[0].pfnDlgProc = font_dlg_proc;
     pages[0].pszTitle = L"Font";
 
     pages[1].dwSize = sizeof(PROPSHEETPAGEW);
-    pages[1].dwFlags = PSP_DLGINDIRECT;
+    pages[1].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
     pages[1].pResource = dt2;
     pages[1].pfnDlgProc = terminal_dlg_proc;
     pages[1].pszTitle = L"Terminal";
 
     pages[2].dwSize = sizeof(PROPSHEETPAGEW);
-    pages[2].dwFlags = PSP_DLGINDIRECT;
+    pages[2].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
     pages[2].pResource = dt3;
     pages[2].pfnDlgProc = a11y_dlg_proc;
     pages[2].pszTitle = L"Accessibility";
