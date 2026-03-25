@@ -306,6 +306,18 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_alt_screen_full tests/test_red_alt_screen_full.c)
+target_link_libraries(test_red_alt_screen_full wixen_core wixen_vt)
+add_test(NAME test_red_alt_screen_full COMMAND test_red_alt_screen_full)
+
+add_executable(test_red_sgr_colors tests/test_red_sgr_colors.c)
+target_link_libraries(test_red_sgr_colors wixen_core wixen_vt)
+add_test(NAME test_red_sgr_colors COMMAND test_red_sgr_colors)
+
+add_executable(test_red_tab_stops tests/test_red_tab_stops.c)
+target_link_libraries(test_red_tab_stops wixen_core wixen_vt)
+add_test(NAME test_red_tab_stops COMMAND test_red_tab_stops)
+
 add_executable(test_red_response_queue tests/test_red_response_queue.c)
 target_link_libraries(test_red_response_queue wixen_core wixen_vt)
 add_test(NAME test_red_response_queue COMMAND test_red_response_queue)

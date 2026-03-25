@@ -369,9 +369,18 @@ void wixen_terminal_enter_alt_screen(WixenTerminal *t) {
     if (t->alt_grid) return; /* Already in alt screen */
     t->alt_grid = malloc(sizeof(WixenGrid));
     if (!t->alt_grid) return;
-    /* Swap current grid to alt, create fresh main grid */
+    /* Save main grid + state */
     *t->alt_grid = t->grid;
+    t->saved_scroll_region = t->scroll_region;
+    t->saved_origin_mode = t->modes.origin_mode;
+    /* Save cursor via DECSC */
+    wixen_terminal_save_cursor(t);
+    /* Create fresh alt grid */
     wixen_grid_init(&t->grid, t->alt_grid->cols, t->alt_grid->num_rows);
+    /* Reset scroll region and origin mode for alt screen */
+    t->scroll_region.top = 0;
+    t->scroll_region.bottom = t->grid.num_rows;
+    t->modes.origin_mode = false;
     t->modes.alternate_screen = true;
     t->dirty = true;
 }
@@ -382,6 +391,11 @@ void wixen_terminal_exit_alt_screen(WixenTerminal *t) {
     t->grid = *t->alt_grid;
     free(t->alt_grid);
     t->alt_grid = NULL;
+    /* Restore saved state */
+    t->scroll_region = t->saved_scroll_region;
+    t->modes.origin_mode = t->saved_origin_mode;
+    /* Restore cursor via DECRC */
+    wixen_terminal_restore_cursor(t);
     t->modes.alternate_screen = false;
     t->dirty = true;
 }

@@ -48,6 +48,10 @@ typedef struct {
     bool bell_pending;
     bool pending_wrap;           /* Cursor at right margin, next char wraps */
 
+    /* Alt screen saved state */
+    WixenScrollRegion saved_scroll_region;
+    bool saved_origin_mode;
+
     /* Shell integration */
     WixenShellIntegration shell_integ;
 
