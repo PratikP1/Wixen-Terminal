@@ -175,3 +175,97 @@ size_t wixen_scrollback_hot_len(const WixenScrollbackBuffer *sb) {
 size_t wixen_scrollback_cold_blocks(const WixenScrollbackBuffer *sb) {
     return sb->cold_count;
 }
+
+const WixenRow *wixen_scrollback_get(WixenScrollbackBuffer *sb, size_t index) {
+    if (index >= sb->total_len) return NULL;
+
+    /* Count total cold rows */
+    size_t cold_total = 0;
+    for (size_t i = 0; i < sb->cold_count; i++) {
+        cold_total += sb->cold[i].row_count;
+    }
+
+    if (index < cold_total) {
+        /* Find which cold block contains this index */
+        size_t offset = 0;
+        for (size_t i = 0; i < sb->cold_count; i++) {
+            if (index < offset + sb->cold[i].row_count) {
+                /* Decompress this block */
+                size_t row_in_block = index - offset;
+                size_t decompressed_size = ZSTD_getFrameContentSize(
+                    sb->cold[i].data, sb->cold[i].data_len);
+                if (decompressed_size == ZSTD_CONTENTSIZE_ERROR ||
+                    decompressed_size == ZSTD_CONTENTSIZE_UNKNOWN) return NULL;
+
+                uint8_t *decompressed = malloc(decompressed_size);
+                if (!decompressed) return NULL;
+                size_t result = ZSTD_decompress(decompressed, decompressed_size,
+                                                 sb->cold[i].data, sb->cold[i].data_len);
+                if (ZSTD_isError(result)) { free(decompressed); return NULL; }
+
+                /* Deserialize using actual format:
+                 * Per row: [wrapped:1][cell_count:4LE][cells...]
+                 * Per cell: [content_len:2LE][content][width:1][attrs] */
+                size_t pos = 0;
+
+                /* Skip to target row */
+                for (size_t r = 0; r < row_in_block; r++) {
+                    if (pos + 5 > result) { free(decompressed); return NULL; }
+                    pos += 1; /* wrapped */
+                    uint32_t cc; memcpy(&cc, decompressed + pos, 4); pos += 4;
+                    for (uint32_t c = 0; c < cc; c++) {
+                        if (pos + 2 > result) { free(decompressed); return NULL; }
+                        uint16_t cl; memcpy(&cl, decompressed + pos, 2); pos += 2;
+                        pos += cl + 1 + sizeof(WixenCellAttributes);
+                    }
+                }
+
+                /* Deserialize target row */
+                static WixenRow cached_row;
+                static bool cached_inited = false;
+                if (cached_inited) wixen_row_free(&cached_row);
+
+                if (pos + 5 > result) { free(decompressed); return NULL; }
+                bool wrapped = decompressed[pos++] != 0;
+                uint32_t cell_count;
+                memcpy(&cell_count, decompressed + pos, 4); pos += 4;
+
+                wixen_row_init(&cached_row, cell_count);
+                cached_inited = true;
+                cached_row.wrapped = wrapped;
+
+                for (uint32_t c = 0; c < cell_count && pos + 2 <= result; c++) {
+                    uint16_t clen;
+                    memcpy(&clen, decompressed + pos, 2); pos += 2;
+                    if (clen > 0 && pos + clen <= result) {
+                        char *content = malloc(clen + 1);
+                        if (content) {
+                            memcpy(content, decompressed + pos, clen);
+                            content[clen] = '\0';
+                            wixen_cell_set_content(&cached_row.cells[c], content);
+                            free(content);
+                        }
+                    }
+                    pos += clen;
+                    if (pos + 1 <= result) {
+                        cached_row.cells[c].width = decompressed[pos]; pos += 1;
+                    }
+                    if (pos + sizeof(WixenCellAttributes) <= result) {
+                        memcpy(&cached_row.cells[c].attrs, decompressed + pos,
+                               sizeof(WixenCellAttributes));
+                        pos += sizeof(WixenCellAttributes);
+                    }
+                }
+
+                free(decompressed);
+                return &cached_row;
+            }
+            offset += sb->cold[i].row_count;
+        }
+        return NULL;
+    } else {
+        /* Hot tier */
+        size_t hot_index = index - cold_total;
+        return wixen_scrollback_get_hot(sb, hot_index);
+    }
+}

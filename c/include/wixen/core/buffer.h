@@ -43,6 +43,12 @@ void wixen_scrollback_push(WixenScrollbackBuffer *sb, WixenRow *row, size_t cols
 /* Get a hot row (index 0 = oldest hot row). Returns NULL if out of range. */
 const WixenRow *wixen_scrollback_get_hot(const WixenScrollbackBuffer *sb, size_t index);
 
+/* Get any row by global index (handles cold decompression + hot).
+ * index 0 = oldest row overall. Returns NULL if out of range.
+ * For cold rows, decompresses on demand — caller must NOT hold the pointer
+ * across multiple get calls (decompression buffer is reused). */
+const WixenRow *wixen_scrollback_get(WixenScrollbackBuffer *sb, size_t index);
+
 /* Total row count */
 size_t wixen_scrollback_len(const WixenScrollbackBuffer *sb);
 

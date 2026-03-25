@@ -306,6 +306,18 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_response_queue tests/test_red_response_queue.c)
+target_link_libraries(test_red_response_queue wixen_core wixen_vt)
+add_test(NAME test_red_response_queue COMMAND test_red_response_queue)
+
+add_executable(test_red_scrollback_decompress tests/test_red_scrollback_decompress.c)
+target_link_libraries(test_red_scrollback_decompress wixen_core)
+add_test(NAME test_red_scrollback_decompress COMMAND test_red_scrollback_decompress)
+
+add_executable(test_red_utf16_offset tests/test_red_utf16_offset.c)
+target_link_libraries(test_red_utf16_offset wixen_a11y)
+add_test(NAME test_red_utf16_offset COMMAND test_red_utf16_offset)
+
 add_executable(test_red_text_provider tests/test_red_text_provider.c)
 target_link_libraries(test_red_text_provider wixen_a11y)
 add_test(NAME test_red_text_provider COMMAND test_red_text_provider)
