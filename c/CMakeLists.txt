@@ -305,6 +305,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_e2e_advanced tests/test_red_e2e_advanced.c)
+target_link_libraries(test_red_e2e_advanced wixen_core wixen_vt wixen_a11y)
+add_test(NAME test_red_e2e_advanced COMMAND test_red_e2e_advanced)
+
 add_executable(test_red_config_watcher tests/test_red_config_watcher.c)
 target_link_libraries(test_red_config_watcher wixen_config)
 add_test(NAME test_red_config_watcher COMMAND test_red_config_watcher)
