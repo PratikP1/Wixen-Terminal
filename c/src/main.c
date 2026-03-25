@@ -23,6 +23,8 @@
 #include "wixen/ui/audio.h"
 #include "wixen/a11y/provider.h"
 #include "wixen/a11y/events.h"
+#include "wixen/a11y/frame_update.h"
+#include "wixen/a11y/state.h"
 #include "wixen/ui/clipboard.h"
 #include "wixen/core/mouse.h"
 #include "wixen/shell_integ/shell_integ.h"
@@ -165,6 +167,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Output throttler — batches PTY output for screen reader */
     WixenEventThrottler pane_throttler;
     wixen_throttler_init(&pane_throttler, config.accessibility.output_debounce_ms);
+
+    /* Frame-level a11y integration — tested in test_red_a11y_frame_loop */
+    WixenFrameA11yState frame_a11y;
+    wixen_frame_a11y_init(&frame_a11y, config.accessibility.output_debounce_ms);
+
+    /* Thread-safe a11y state for UIA threads */
+    WixenA11yState *a11y_shared = wixen_a11y_state_create();
 
     /* Main event loop */
     bool running = true;

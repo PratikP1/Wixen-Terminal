@@ -177,6 +177,7 @@ if(WIN32)
         src/a11y/tree.c
         src/a11y/state.c
         src/a11y/text_boundaries.c
+        src/a11y/frame_update.c
     )
 endif()
 
@@ -305,6 +306,10 @@ add_test(NAME test_grid_visible_text COMMAND test_grid_visible_text)
 add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
+
+add_executable(test_red_a11y_frame_loop tests/test_red_a11y_frame_loop.c)
+target_link_libraries(test_red_a11y_frame_loop wixen_a11y wixen_core)
+add_test(NAME test_red_a11y_frame_loop COMMAND test_red_a11y_frame_loop)
 
 add_executable(test_red_underline_styles tests/test_red_underline_styles.c)
 target_link_libraries(test_red_underline_styles wixen_core wixen_vt)
