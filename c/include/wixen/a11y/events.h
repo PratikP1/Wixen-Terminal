@@ -39,6 +39,10 @@ char *wixen_strip_vt_escapes(const char *text);
  * Returns heap-allocated cleaned text. Caller frees. */
 char *wixen_strip_control_chars(const char *text);
 
+/* Strip shell prompt prefix from a line. Returns heap-allocated text. Caller frees.
+ * Recognizes: "C:\path>", "PS C:\path>", "$ ", "# " */
+char *wixen_strip_prompt(const char *line);
+
 /* Format a command completion announcement. Caller frees. */
 char *wixen_a11y_format_command_complete(const char *command, int exit_code);
 

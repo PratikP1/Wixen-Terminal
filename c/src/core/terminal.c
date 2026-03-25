@@ -608,8 +608,9 @@ char *wixen_terminal_selected_text(const WixenTerminal *t, const WixenSelection 
         if (col_end > t->grid.cols) col_end = t->grid.cols;
 
         const WixenRow *r = &t->grid.rows[row];
-        size_t line_end = pos;
         for (size_t c = col_start; c < col_end; c++) {
+            /* Skip wide-char continuation cells (width=0) */
+            if (r->cells[c].width == 0) continue;
             const char *content = r->cells[c].content;
             if (content[0]) {
                 size_t len = strlen(content);
@@ -617,12 +618,15 @@ char *wixen_terminal_selected_text(const WixenTerminal *t, const WixenSelection 
             } else {
                 if (pos + 1 < cap) buf[pos++] = ' ';
             }
-            line_end = pos;
         }
         /* Trim trailing spaces on this line */
-        while (line_end > 0 && pos > 0 && buf[pos - 1] == ' ') pos--;
-        /* Add newline between rows */
-        if (row < end.row && pos + 1 < cap) buf[pos++] = '\n';
+        while (pos > 0 && buf[pos - 1] == ' ') pos--;
+        /* Add newline between rows — but NOT for soft-wrapped lines */
+        if (row < end.row && pos + 1 < cap) {
+            if (!r->wrapped) {
+                buf[pos++] = '\n';
+            }
+        }
     }
     buf[pos] = '\0';
     return buf;

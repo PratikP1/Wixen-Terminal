@@ -132,6 +132,59 @@ char *wixen_strip_control_chars(const char *text) {
     return out;
 }
 
+/* --- Prompt stripping --- */
+
+#ifdef _MSC_VER
+#define strdup _strdup
+#endif
+
+char *wixen_strip_prompt(const char *line) {
+    if (!line || !line[0]) return strdup("");
+
+    /* PS C:\path> command */
+    if (strncmp(line, "PS ", 3) == 0) {
+        const char *gt = strchr(line + 3, '>');
+        if (gt) {
+            const char *cmd = gt + 1;
+            while (*cmd == ' ') cmd++;
+            return strdup(cmd);
+        }
+    }
+
+    /* C:\path> command (cmd.exe) */
+    {
+        const char *gt = strchr(line, '>');
+        if (gt && gt > line) {
+            /* Check if everything before > looks like a path (contains : or \) */
+            bool looks_like_path = false;
+            for (const char *p = line; p < gt; p++) {
+                if (*p == ':' || *p == '\\' || *p == '/') {
+                    looks_like_path = true;
+                    break;
+                }
+            }
+            if (looks_like_path) {
+                const char *cmd = gt + 1;
+                while (*cmd == ' ') cmd++;
+                return strdup(cmd);
+            }
+        }
+    }
+
+    /* $ command (bash/zsh) */
+    if (line[0] == '$' && line[1] == ' ') {
+        return strdup(line + 2);
+    }
+
+    /* # command (root shell) */
+    if (line[0] == '#' && line[1] == ' ') {
+        return strdup(line + 2);
+    }
+
+    /* No recognized prompt — return as-is */
+    return strdup(line);
+}
+
 /* --- Announcement formatting --- */
 
 char *wixen_a11y_format_command_complete(const char *command, int exit_code) {

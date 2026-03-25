@@ -305,6 +305,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_selection_wide tests/test_red_selection_wide.c)
+target_link_libraries(test_red_selection_wide wixen_core wixen_vt)
+add_test(NAME test_red_selection_wide COMMAND test_red_selection_wide)
+
+add_executable(test_red_prompt_strip tests/test_red_prompt_strip.c)
+target_link_libraries(test_red_prompt_strip wixen_a11y)
+add_test(NAME test_red_prompt_strip COMMAND test_red_prompt_strip)
+
 add_executable(test_red_text_consistency tests/test_red_text_consistency.c)
 target_link_libraries(test_red_text_consistency wixen_core wixen_vt)
 add_test(NAME test_red_text_consistency COMMAND test_red_text_consistency)
