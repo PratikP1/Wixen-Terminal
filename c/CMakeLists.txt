@@ -307,6 +307,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_nvda_issues tests/test_red_nvda_issues.c)
+target_link_libraries(test_red_nvda_issues wixen_a11y wixen_core)
+add_test(NAME test_red_nvda_issues COMMAND test_red_nvda_issues)
+
 add_executable(test_red_ui_elements tests/test_red_ui_elements.c)
 target_link_libraries(test_red_ui_elements wixen_ui)
 add_test(NAME test_red_ui_elements COMMAND test_red_ui_elements)
