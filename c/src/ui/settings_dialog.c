@@ -37,7 +37,10 @@ static const char *a11y_fields[] = {
 };
 
 static const char *keybindings_fields[] = {
-    "Keybinding list"
+    "Keybinding list",
+    "Add binding",
+    "Remove binding",
+    "Edit binding"
 };
 
 int wixen_settings_tab_count(void) { return 4; }
@@ -431,6 +434,24 @@ static INT_PTR CALLBACK keybindings_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPA
         SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+F: Search");
         SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+C: Copy");
         SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+V: Paste");
+        y += 160;
+
+        /* Add / Remove / Edit buttons */
+        HWND btn;
+        btn = CreateWindowExW(0, L"BUTTON", L"&Add...",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            10, y, 80, 28, hwnd, (HMENU)3010, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        btn = CreateWindowExW(0, L"BUTTON", L"&Remove",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            100, y, 80, 28, hwnd, (HMENU)3011, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        btn = CreateWindowExW(0, L"BUTTON", L"&Edit...",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            190, y, 80, 28, hwnd, (HMENU)3012, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         return TRUE;
     }
