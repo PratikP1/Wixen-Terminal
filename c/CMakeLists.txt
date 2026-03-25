@@ -303,6 +303,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_grid_lines tests/test_red_grid_lines.c)
+target_link_libraries(test_red_grid_lines wixen_core wixen_vt)
+add_test(NAME test_red_grid_lines COMMAND test_red_grid_lines)
+
+add_executable(test_red_lua_config tests/test_red_lua_config.c)
+target_link_libraries(test_red_lua_config wixen_config)
+add_test(NAME test_red_lua_config COMMAND test_red_lua_config)
+
 add_executable(test_red_clipboard tests/test_red_clipboard.c)
 target_link_libraries(test_red_clipboard wixen_core wixen_vt)
 add_test(NAME test_red_clipboard COMMAND test_red_clipboard)

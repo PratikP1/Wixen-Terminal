@@ -74,11 +74,46 @@ bool wixen_lua_call_str(WixenLuaEngine *engine, const char *func_name, const cha
     return status == LUA_OK;
 }
 
+/* Push a nested value onto the Lua stack by resolving dot-separated path.
+ * Returns the number of items pushed (0 on failure, depth on success).
+ * Caller must pop that many items when done. */
+static int lua_push_dotted(lua_State *L, const char *path) {
+    char buf[256];
+    size_t len = strlen(path);
+    if (len >= sizeof(buf)) return 0;
+    memcpy(buf, path, len + 1);
+
+    int depth = 0;
+    char *token = buf;
+    char *dot;
+    while ((dot = strchr(token, '.')) != NULL) {
+        *dot = '\0';
+        if (depth == 0) {
+            lua_getglobal(L, token);
+        } else {
+            if (!lua_istable(L, -1)) { lua_pop(L, depth); return 0; }
+            lua_getfield(L, -1, token);
+        }
+        depth++;
+        token = dot + 1;
+    }
+    /* Last segment */
+    if (depth == 0) {
+        lua_getglobal(L, token);
+    } else {
+        if (!lua_istable(L, -1)) { lua_pop(L, depth); return 0; }
+        lua_getfield(L, -1, token);
+    }
+    depth++;
+    return depth;
+}
+
 char *wixen_lua_get_string(WixenLuaEngine *engine, const char *name) {
     if (!engine || !name) return NULL;
-    lua_getglobal(engine->L, name);
+    int depth = lua_push_dotted(engine->L, name);
+    if (depth == 0) return NULL;
     if (!lua_isstring(engine->L, -1)) {
-        lua_pop(engine->L, 1);
+        lua_pop(engine->L, depth);
         return NULL;
     }
     const char *s = lua_tostring(engine->L, -1);
@@ -88,30 +123,56 @@ char *wixen_lua_get_string(WixenLuaEngine *engine, const char *name) {
         result = (char *)malloc(len + 1);
         if (result) memcpy(result, s, len + 1);
     }
-    lua_pop(engine->L, 1);
+    lua_pop(engine->L, depth);
     return result;
 }
 
 int wixen_lua_get_int(WixenLuaEngine *engine, const char *name, int default_val) {
     if (!engine || !name) return default_val;
-    lua_getglobal(engine->L, name);
-    if (!lua_isinteger(engine->L, -1)) {
-        lua_pop(engine->L, 1);
+    int depth = lua_push_dotted(engine->L, name);
+    if (depth == 0) return default_val;
+    if (!lua_isinteger(engine->L, -1) && !lua_isnumber(engine->L, -1)) {
+        lua_pop(engine->L, depth);
         return default_val;
     }
     int val = (int)lua_tointeger(engine->L, -1);
-    lua_pop(engine->L, 1);
+    lua_pop(engine->L, depth);
     return val;
 }
 
 bool wixen_lua_get_bool(WixenLuaEngine *engine, const char *name, bool default_val) {
     if (!engine || !name) return default_val;
-    lua_getglobal(engine->L, name);
+    int depth = lua_push_dotted(engine->L, name);
+    if (depth == 0) return default_val;
     if (!lua_isboolean(engine->L, -1)) {
-        lua_pop(engine->L, 1);
+        lua_pop(engine->L, depth);
         return default_val;
     }
     bool val = lua_toboolean(engine->L, -1) != 0;
-    lua_pop(engine->L, 1);
+    lua_pop(engine->L, depth);
     return val;
+}
+
+int wixen_lua_iterate_table(WixenLuaEngine *engine, const char *table_path,
+                             WixenLuaTableCallback cb, void *userdata) {
+    if (!engine || !table_path || !cb) return -1;
+    int depth = lua_push_dotted(engine->L, table_path);
+    if (depth == 0) return -1;
+    if (!lua_istable(engine->L, -1)) {
+        lua_pop(engine->L, depth);
+        return -1;
+    }
+    int count = 0;
+    lua_pushnil(engine->L); /* First key */
+    while (lua_next(engine->L, -2) != 0) {
+        if (lua_isstring(engine->L, -2) && lua_isstring(engine->L, -1)) {
+            const char *key = lua_tostring(engine->L, -2);
+            const char *val = lua_tostring(engine->L, -1);
+            cb(key, val, userdata);
+            count++;
+        }
+        lua_pop(engine->L, 1); /* Pop value, keep key for next iteration */
+    }
+    lua_pop(engine->L, depth);
+    return count;
 }

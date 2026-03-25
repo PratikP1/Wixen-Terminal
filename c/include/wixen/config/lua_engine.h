@@ -31,4 +31,10 @@ int wixen_lua_get_int(WixenLuaEngine *engine, const char *name, int default_val)
 /* Get a global boolean. Returns default_val if not found. */
 bool wixen_lua_get_bool(WixenLuaEngine *engine, const char *name, bool default_val);
 
+/* Iterate string→string table entries. Callback called for each key/value pair.
+ * Returns number of entries visited, or -1 on error. */
+typedef void (*WixenLuaTableCallback)(const char *key, const char *value, void *userdata);
+int wixen_lua_iterate_table(WixenLuaEngine *engine, const char *table_path,
+                             WixenLuaTableCallback cb, void *userdata);
+
 #endif /* WIXEN_CONFIG_LUA_ENGINE_H */

@@ -73,6 +73,9 @@ const WixenProfile *wixen_config_default_profile(const WixenConfig *cfg);
 /* Get default config file path (~/.config/wixen/config.toml or %APPDATA%/wixen) */
 void wixen_config_default_path(char *buf, size_t buf_size);
 
+/* Apply Lua config overrides from a script file. Returns false on error. */
+bool wixen_config_apply_lua_overrides(WixenConfig *cfg, const char *lua_path);
+
 /* Reduced motion preference */
 typedef enum {
     WIXEN_REDUCED_MOTION_SYSTEM,  /* Follow OS preference */

@@ -300,6 +300,55 @@ void wixen_config_default_path(char *buf, size_t buf_size) {
 #endif
 }
 
+/* --- Lua config overrides --- */
+
+#include "wixen/config/lua_engine.h"
+
+static void keybinding_lua_cb(const char *chord, const char *action, void *userdata) {
+    WixenKeybindingMap *kb = (WixenKeybindingMap *)userdata;
+    wixen_keybindings_add(kb, chord, action, "Lua override");
+}
+
+bool wixen_config_apply_lua_overrides(WixenConfig *cfg, const char *lua_path) {
+    WixenLuaEngine *lua = wixen_lua_create();
+    if (!lua) return false;
+
+    /* Expose current config as a Lua table */
+    char setup[512];
+    snprintf(setup, sizeof(setup),
+        "config = { font = { size = %d }, window = { theme = \"%s\" }, keybindings = {} }",
+        (int)cfg->font.size,
+        cfg->window.theme ? cfg->window.theme : "default");
+
+    if (!wixen_lua_exec_string(lua, setup)) {
+        wixen_lua_destroy(lua);
+        return false;
+    }
+
+    /* Execute user script */
+    if (!wixen_lua_exec_file(lua, lua_path)) {
+        wixen_lua_destroy(lua);
+        return false;
+    }
+
+    /* Read back overridden values */
+    int font_size = wixen_lua_get_int(lua, "config.font.size", (int)cfg->font.size);
+    cfg->font.size = (float)font_size;
+
+    char *theme = wixen_lua_get_string(lua, "config.window.theme");
+    if (theme) {
+        free(cfg->window.theme);
+        cfg->window.theme = theme;
+    }
+
+    /* Read keybinding overrides from Lua table */
+    wixen_lua_iterate_table(lua, "config.keybindings",
+        (WixenLuaTableCallback)keybinding_lua_cb, &cfg->keybindings);
+
+    wixen_lua_destroy(lua);
+    return true;
+}
+
 bool wixen_should_reduce_motion(WixenReducedMotion config_pref, bool system_prefers_reduced) {
     switch (config_pref) {
     case WIXEN_REDUCED_MOTION_ALWAYS: return true;
