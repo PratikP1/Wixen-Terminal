@@ -304,6 +304,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_reset_cleanup tests/test_red_reset_cleanup.c)
+target_link_libraries(test_red_reset_cleanup wixen_core wixen_vt)
+add_test(NAME test_red_reset_cleanup COMMAND test_red_reset_cleanup)
+
 add_executable(test_red_terminal_reflow tests/test_red_terminal_reflow.c)
 target_link_libraries(test_red_terminal_reflow wixen_core wixen_vt)
 add_test(NAME test_red_terminal_reflow COMMAND test_red_terminal_reflow)
