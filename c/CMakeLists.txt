@@ -66,6 +66,12 @@ if(WIN32)
     target_link_libraries(wixen wixen_core wixen_vt wixen_pty wixen_render wixen_ui
                           wixen_shell_integ wixen_search wixen_config wixen_a11y
                           wixen_ipc)
+    # UAC manifest: asInvoker inherits parent's elevation.
+    # When launched from elevated PowerShell, Wixen runs elevated too.
+    # Without this, UIPI blocks our non-elevated window from taking
+    # foreground over elevated apps, and NVDA can't interact with us.
+    set_target_properties(wixen PROPERTIES
+        LINK_FLAGS "/MANIFEST:EMBED /MANIFESTINPUT:${CMAKE_SOURCE_DIR}/src/wixen.manifest")
     # UIA constants are __declspec(selectany) but MSVC still complains across TUs
     target_link_options(wixen PRIVATE /FORCE:MULTIPLE)
 endif()
