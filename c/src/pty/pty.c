@@ -166,24 +166,51 @@ fail:
 void wixen_pty_close(WixenPty *pty) {
     pty->running = false;
 
-    if (pty->hpc) { ClosePseudoConsole(pty->hpc); pty->hpc = NULL; }
+    /* BUG #27: Correct shutdown order to prevent freeze on exit.
+     *
+     * 1. Terminate child process (shell) — it must die first
+     * 2. Close pipes — breaks reader thread's ReadFile
+     * 3. Wait briefly for reader thread
+     * 4. Close pseudo console — now safe (child dead, pipes closed)
+     */
+
+    /* Step 1: Kill the child process immediately */
+    if (pty->process) {
+        TerminateProcess(pty->process, 0);
+        WaitForSingleObject(pty->process, 500);
+        CloseHandle(pty->process);
+        pty->process = NULL;
+    }
+
+    /* Step 2: Close all pipes — unblocks reader thread */
+    if (pty->pipe_out_read) { CloseHandle(pty->pipe_out_read); pty->pipe_out_read = NULL; }
     if (pty->pipe_in_write) { CloseHandle(pty->pipe_in_write); pty->pipe_in_write = NULL; }
     if (pty->pipe_in_read) { CloseHandle(pty->pipe_in_read); pty->pipe_in_read = NULL; }
     if (pty->pipe_out_write) { CloseHandle(pty->pipe_out_write); pty->pipe_out_write = NULL; }
-    if (pty->pipe_out_read) { CloseHandle(pty->pipe_out_read); pty->pipe_out_read = NULL; }
 
+    /* Step 3: Wait for reader thread (should exit fast now) */
     if (pty->reader_thread) {
-        WaitForSingleObject(pty->reader_thread, 2000);
+        WaitForSingleObject(pty->reader_thread, 1000);
         CloseHandle(pty->reader_thread);
         pty->reader_thread = NULL;
     }
 
-    if (pty->process) {
-        TerminateProcess(pty->process, 1);
-        WaitForSingleObject(pty->process, 1000);
-        CloseHandle(pty->process);
-        pty->process = NULL;
+    /* Step 4: Close pseudo console on background thread.
+     * ClosePseudoConsole can block for 10-30 seconds even after
+     * the child is terminated (Windows kernel cleanup). Running it
+     * on a detached thread prevents freezing the UI on exit. */
+    if (pty->hpc) {
+        HPCON hpc = pty->hpc;
+        pty->hpc = NULL;
+        HANDLE t = CreateThread(NULL, 0,
+            (LPTHREAD_START_ROUTINE)(void *)ClosePseudoConsole,
+            (LPVOID)hpc, 0, NULL);
+        if (t) CloseHandle(t); /* Detach — let it run */
     }
+
+    /* Close remaining pipe ends */
+    if (pty->pipe_in_read) { CloseHandle(pty->pipe_in_read); pty->pipe_in_read = NULL; }
+    if (pty->pipe_out_write) { CloseHandle(pty->pipe_out_write); pty->pipe_out_write = NULL; }
     if (pty->thread) { CloseHandle(pty->thread); pty->thread = NULL; }
 }
 
