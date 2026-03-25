@@ -20,6 +20,7 @@ const char **wixen_settings_tab_fields(int tab_index, size_t *out_count);
 /* Visual layout parameters */
 const char *wixen_settings_dialog_font_name(void);
 int wixen_settings_dialog_font_size(void);
+int wixen_settings_dialog_font_height(int dpi);
 int wixen_settings_dialog_width(void);
 int wixen_settings_dialog_height(void);
 int wixen_settings_dialog_margin(void);

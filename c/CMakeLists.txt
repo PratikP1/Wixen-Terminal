@@ -307,6 +307,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_visual_quality tests/test_red_visual_quality.c)
+target_link_libraries(test_red_visual_quality wixen_ui)
+add_test(NAME test_red_visual_quality COMMAND test_red_visual_quality)
+
 add_executable(test_red_keybinding_editor tests/test_red_keybinding_editor.c)
 target_link_libraries(test_red_keybinding_editor wixen_ui)
 add_test(NAME test_red_keybinding_editor COMMAND test_red_keybinding_editor)

@@ -64,6 +64,11 @@ const char **wixen_settings_tab_fields(int tab_index, size_t *out_count) {
 
 const char *wixen_settings_dialog_font_name(void) { return "Segoe UI"; }
 int wixen_settings_dialog_font_size(void) { return 9; }
+int wixen_settings_dialog_font_height(int dpi) {
+    if (dpi <= 0) dpi = 96;
+    /* -MulDiv(point_size, dpi, 72) */
+    return -(9 * dpi / 72);
+}
 int wixen_settings_dialog_width(void) { return 440; }
 int wixen_settings_dialog_height(void) { return 340; }
 int wixen_settings_dialog_margin(void) { return 10; }
@@ -84,13 +89,33 @@ const char **wixen_settings_appearance_groups(size_t *out_count) {
 
 #pragma comment(lib, "comctl32.lib")
 
-/* Create the proper dialog font (Segoe UI 9pt) */
+/* Shared dialog font — created once, destroyed on last dialog close.
+ * Avoids leaking a GDI HFONT per dialog proc (was bug: 10 leaked per open). */
+static HFONT g_dialog_font = NULL;
+static int g_dialog_font_refcount = 0;
+
 static HFONT create_dialog_font(void) {
-    return CreateFontW(
-        -12, /* 9pt at 96 DPI = -MulDiv(9, 96, 72) = -12 */
-        0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    if (!g_dialog_font) {
+        /* Get DPI from the desktop — best we can do without a specific HWND */
+        HDC hdc = GetDC(NULL);
+        int dpi = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
+        if (hdc) ReleaseDC(NULL, hdc);
+        int height = wixen_settings_dialog_font_height(dpi);
+        g_dialog_font = CreateFontW(
+            height, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    }
+    g_dialog_font_refcount++;
+    return g_dialog_font;
+}
+
+static void release_dialog_font(void) {
+    if (--g_dialog_font_refcount <= 0 && g_dialog_font) {
+        DeleteObject(g_dialog_font);
+        g_dialog_font = NULL;
+        g_dialog_font_refcount = 0;
+    }
 }
 
 /* Layout constants matching test expectations */
