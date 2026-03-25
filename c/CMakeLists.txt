@@ -337,6 +337,10 @@ add_executable(test_red_keybinding_edit tests/test_red_keybinding_edit.c)
 target_link_libraries(test_red_keybinding_edit wixen_config)
 add_test(NAME test_red_keybinding_edit COMMAND test_red_keybinding_edit)
 
+add_executable(test_red_pty_spawn_profile tests/test_red_pty_spawn_profile.c)
+target_link_libraries(test_red_pty_spawn_profile wixen_config wixen_pty)
+add_test(NAME test_red_pty_spawn_profile COMMAND test_red_pty_spawn_profile)
+
 add_executable(test_red_settings_integration tests/test_red_settings_integration.c)
 target_link_libraries(test_red_settings_integration wixen_config)
 add_test(NAME test_red_settings_integration COMMAND test_red_settings_integration)

@@ -306,8 +306,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         if (actions[i].type == WIXEN_ACTION_APC_DISPATCH)
                             free(actions[i].apc.data);
                     }
-                    /* Feed output to throttler (NOT directly to NVDA) */
-                    if (count > 0 && evt->len > 0) {
+                    /* Feed ALL PTY output to throttler, even if parser produced
+                     * zero actions (incomplete escape sequence). The raw bytes
+                     * are real terminal output that NVDA needs to hear. */
+                    if (evt->len > 0) {
                         char *raw = (char *)malloc(evt->len + 1);
                         if (raw) {
                             memcpy(raw, evt->data, evt->len);
