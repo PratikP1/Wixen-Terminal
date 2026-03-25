@@ -1,24 +1,10 @@
-/* text_provider.h — ITextProvider2 implementation for terminal text */
-#ifndef WIXEN_A11Y_TEXT_PROVIDER_H
-#define WIXEN_A11Y_TEXT_PROVIDER_H
-
-#ifdef _WIN32
-
-#ifndef WIXEN_A11Y_INTERNAL
-#define WIXEN_A11Y_INTERNAL
-#endif
-#include "wixen/a11y/provider.h"
-#include <uiautomation.h>
-
-/* Create ITextProvider for the terminal.
- * Returns IUnknown* that can be cast to ITextProvider. Caller releases. */
-IUnknown *wixen_a11y_create_text_provider(WixenA11yState *state,
-                                           IRawElementProviderSimple *enclosing);
-
-#endif /* _WIN32 */
-
-/* Pure text boundary logic — no Win32 dependency.
- * Used by ITextRangeProvider::ExpandToEnclosingUnit. */
+/* text_boundaries.h — Pure text boundary logic for UIA text ranges
+ *
+ * No Win32 dependency — usable in tests and on any platform.
+ * Used by ITextRangeProvider::ExpandToEnclosingUnit.
+ */
+#ifndef WIXEN_A11Y_TEXT_BOUNDARIES_H
+#define WIXEN_A11Y_TEXT_BOUNDARIES_H
 
 #include <stddef.h>
 
@@ -38,4 +24,4 @@ void wixen_text_offset_to_rowcol(const char *text, size_t text_len, size_t offse
 size_t wixen_text_rowcol_to_offset(const char *text, size_t text_len,
                                      size_t row, size_t col);
 
-#endif /* WIXEN_A11Y_TEXT_PROVIDER_H */
+#endif /* WIXEN_A11Y_TEXT_BOUNDARIES_H */
