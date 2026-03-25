@@ -249,20 +249,17 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
     WixenEventQueue *q = calloc(1, sizeof(WixenEventQueue));
     if (!q) return false;
 
-    /* Create window */
-    /* WS_VISIBLE: window appears immediately during CreateWindowExW.
-     * This is critical for focus — the foreground rights inherited from
-     * our parent process (Explorer) expire after ~2 seconds. If we defer
-     * ShowWindow until after PTY/renderer init, the rights are gone and
-     * SetForegroundWindow fails silently. By making the window visible
-     * at creation time, Windows activates it while we still have rights.
-     * The UIA provider is registered in WM_CREATE (before WM_SIZE fires)
-     * so NVDA won't cache us as non-UIA. */
+    /* Create window HIDDEN. All init (renderer, PTY, tray, config watcher)
+     * happens before showing. Then wixen_window_show does a single clean
+     * ShowWindow + force_foreground. This avoids the "not responding"
+     * state caused by a visible window not pumping messages during init.
+     * The UIA provider is registered in WM_CREATE so NVDA doesn't cache
+     * us as non-UIA even though the window isn't visible yet. */
     w->hwnd = CreateWindowExW(
         0,
         WIXEN_CLASS_NAME,
         title,
-        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         CW_USEDEFAULT, CW_USEDEFAULT,
         (int)width, (int)height,
         NULL, NULL, GetModuleHandleW(NULL), q);
@@ -299,30 +296,47 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
  * allocating a console, we inherit those privileges. The console window
  * is hidden and freed immediately — the user never sees it. */
 static void force_foreground(HWND hwnd) {
-    /* Try direct first — works when launched from Explorer */
+    /* Show the window first — it was created hidden */
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+    UpdateWindow(hwnd);
+
+    /* Try direct SetForegroundWindow first */
     if (SetForegroundWindow(hwnd)) {
         SetFocus(hwnd);
         return;
     }
 
-    /* AllocConsole trick: console creation carries foreground rights */
+    /* AllocConsole trick: console creation carries foreground rights.
+     * This is safe for ConPTY — pseudo consoles are separate from
+     * the process console. FreeConsole only detaches our console. */
     FreeConsole();
     if (AllocConsole()) {
         HWND console = GetConsoleWindow();
-        if (console) {
-            ShowWindow(console, SW_HIDE);
-            /* Now we have foreground rights via the console */
-            SetForegroundWindow(hwnd);
-        }
+        if (console) ShowWindow(console, SW_HIDE);
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
         FreeConsole();
+        return;
     }
 
-    /* Ensure our window is activated regardless */
+    /* AttachThreadInput trick as last resort */
+    HWND fg = GetForegroundWindow();
+    if (fg) {
+        DWORD fg_tid = GetWindowThreadProcessId(fg, NULL);
+        DWORD our_tid = GetCurrentThreadId();
+        if (fg_tid != our_tid) {
+            AttachThreadInput(our_tid, fg_tid, TRUE);
+            SetForegroundWindow(hwnd);
+            SetFocus(hwnd);
+            AttachThreadInput(our_tid, fg_tid, FALSE);
+            return;
+        }
+    }
+
+    /* Absolute last resort: flash taskbar */
     SetForegroundWindow(hwnd);
     BringWindowToTop(hwnd);
     SetFocus(hwnd);
-
-    /* Last resort: flash the taskbar if all else fails */
     FLASHWINFO fi = { sizeof(fi), hwnd, FLASHW_ALL | FLASHW_TIMERNOFG, 3, 0 };
     FlashWindowEx(&fi);
 }
