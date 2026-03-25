@@ -21,8 +21,16 @@ void wixen_a11y_state_destroy(WixenA11yState *state);
 void wixen_a11y_state_update_cursor(WixenA11yState *state, size_t row, size_t col);
 void wixen_a11y_state_set_text(WixenA11yState *state, const char *text);
 
+/* Focus tracking */
+void wixen_a11y_state_update_focus(WixenA11yState *state, bool has_focus);
+bool wixen_a11y_state_has_focus(const WixenA11yState *state);
+
 /* Reader (UIA threads — lock-free or read-locked) */
 int32_t wixen_a11y_state_cursor_offset(const WixenA11yState *state);
 size_t wixen_a11y_state_get_text(const WixenA11yState *state, char *buf, size_t buf_size);
+
+/* Lifecycle (stack-based, for tests) */
+void wixen_a11y_state_init_stack(WixenA11yState *state);
+void wixen_a11y_state_free_stack(WixenA11yState *state);
 
 #endif /* WIXEN_A11Y_STATE_H */

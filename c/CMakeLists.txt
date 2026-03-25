@@ -20,11 +20,17 @@ else()
     add_compile_options(-Wall -Wextra -Werror -pedantic)
 endif()
 
-# vcpkg toolchain
-set(VCPKG_ROOT "C:/Users/prati/Documents/projects/vcpkg")
+# vcpkg toolchain — use environment variable or CMAKE_TOOLCHAIN_FILE
+if(DEFINED ENV{VCPKG_ROOT})
+    set(VCPKG_ROOT "$ENV{VCPKG_ROOT}")
+elseif(NOT DEFINED VCPKG_ROOT)
+    set(VCPKG_ROOT "${CMAKE_SOURCE_DIR}/../vcpkg" CACHE PATH "vcpkg root")
+endif()
 
 # Find vcpkg-installed packages
-list(APPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT}/installed/x64-windows")
+if(EXISTS "${VCPKG_ROOT}/installed/x64-windows")
+    list(APPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT}/installed/x64-windows")
+endif()
 
 # Include paths
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -336,6 +342,23 @@ add_test(NAME test_red_profile_launch COMMAND test_red_profile_launch)
 add_executable(test_red_keybinding_edit tests/test_red_keybinding_edit.c)
 target_link_libraries(test_red_keybinding_edit wixen_config)
 add_test(NAME test_red_keybinding_edit COMMAND test_red_keybinding_edit)
+
+# Copilot-identified fixes (P1-P8)
+add_executable(test_red_copilot_p1_focus tests/test_red_copilot_p1_focus.c)
+target_link_libraries(test_red_copilot_p1_focus wixen_a11y)
+add_test(NAME test_red_copilot_p1_focus COMMAND test_red_copilot_p1_focus)
+
+add_executable(test_red_copilot_p2_tree_nav tests/test_red_copilot_p2_tree_nav.c)
+target_link_libraries(test_red_copilot_p2_tree_nav wixen_a11y)
+add_test(NAME test_red_copilot_p2_tree_nav COMMAND test_red_copilot_p2_tree_nav)
+
+add_executable(test_red_copilot_p5_text_provider tests/test_red_copilot_p5_text_provider.c)
+target_link_libraries(test_red_copilot_p5_text_provider wixen_a11y)
+add_test(NAME test_red_copilot_p5_text_provider COMMAND test_red_copilot_p5_text_provider)
+
+add_executable(test_red_copilot_p6_dynamic_buffers tests/test_red_copilot_p6_dynamic_buffers.c)
+target_link_libraries(test_red_copilot_p6_dynamic_buffers wixen_core)
+add_test(NAME test_red_copilot_p6_dynamic_buffers COMMAND test_red_copilot_p6_dynamic_buffers)
 
 add_executable(test_red_pty_spawn_profile tests/test_red_pty_spawn_profile.c)
 target_link_libraries(test_red_pty_spawn_profile wixen_config wixen_pty)

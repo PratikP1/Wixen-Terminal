@@ -540,3 +540,37 @@ size_t wixen_grid_visible_text(const WixenGrid *g, char *buf, size_t buf_size) {
     buf[written] = '\0';
     return written;
 }
+
+char *wixen_row_text_dynamic(const WixenRow *row) {
+    if (!row) return NULL;
+    size_t cap = row->count * 8 + 1;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+    size_t len = wixen_row_text(row, buf, cap);
+    while (len > 0 && buf[len - 1] == ' ') len--;
+    buf[len] = '\0';
+    return buf;
+}
+
+char *wixen_grid_visible_text_dynamic(const WixenGrid *g) {
+    if (!g || g->num_rows == 0) {
+        char *empty = (char *)malloc(1);
+        if (empty) empty[0] = '\0';
+        return empty;
+    }
+    size_t cap = g->num_rows * (g->cols * 4 + 2) + 1;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+    size_t written = 0;
+    for (size_t i = 0; i < g->num_rows; i++) {
+        char *row_text = wixen_row_text_dynamic(&g->rows[i]);
+        if (!row_text) continue;
+        size_t rlen = strlen(row_text);
+        if (i > 0) buf[written++] = '\n';
+        memcpy(buf + written, row_text, rlen);
+        written += rlen;
+        free(row_text);
+    }
+    buf[written] = '\0';
+    return buf;
+}

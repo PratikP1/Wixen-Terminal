@@ -17,6 +17,7 @@ struct WixenA11yState {
     size_t text_len;
     size_t cursor_row;
     size_t cursor_col;
+    bool has_focus;
     /* Lock-free cursor offset for GetSelection/GetCaretRange */
     volatile LONG cursor_offset_utf16;
 };
@@ -87,6 +88,21 @@ size_t wixen_a11y_state_get_text(const WixenA11yState *state, char *buf, size_t 
     buf[len] = '\0';
     ReleaseSRWLockShared((PSRWLOCK)&state->lock);
     return len;
+}
+
+void wixen_a11y_state_update_focus(WixenA11yState *state, bool has_focus) {
+    if (!state) return;
+    AcquireSRWLockExclusive(&state->lock);
+    state->has_focus = has_focus;
+    ReleaseSRWLockExclusive(&state->lock);
+}
+
+bool wixen_a11y_state_has_focus(const WixenA11yState *state) {
+    if (!state) return false;
+    AcquireSRWLockShared((PSRWLOCK)&state->lock);
+    bool f = state->has_focus;
+    ReleaseSRWLockShared((PSRWLOCK)&state->lock);
+    return f;
 }
 
 #endif /* _WIN32 */

@@ -801,15 +801,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 }
                 break;
             case WIXEN_EVT_FOCUS_GAINED:
-                /* Tell NVDA we have focus — without this event, NVDA
-                 * ignores our window even if Win32 focus is correct. */
+                /* P1 FIX: Update provider state BEFORE raising events.
+                 * HasKeyboardFocus and GetCaretRange.isActive read has_focus.
+                 * Without this, NVDA queries the provider and gets false. */
+                wixen_a11y_state_update_focus_global(true);
                 wixen_a11y_raise_focus_changed(window.hwnd);
                 wixen_a11y_raise_selection_changed(window.hwnd);
-                /* Report focus to terminal if focus reporting is on */
                 if (ps->terminal.modes.focus_reporting && ps->pty_running)
                     wixen_pty_write(&ps->pty, "\x1b[I", 3);
                 break;
             case WIXEN_EVT_FOCUS_LOST:
+                wixen_a11y_state_update_focus_global(false);
                 if (ps->terminal.modes.focus_reporting && ps->pty_running)
                     wixen_pty_write(&ps->pty, "\x1b[O", 3);
                 break;
@@ -837,9 +839,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         {
             /* Sync grid visible text to a11y state for ITextProvider */
             if (ps->terminal.dirty) {
-                char a11y_text[8192];
-                size_t tlen = wixen_grid_visible_text(&ps->terminal.grid, a11y_text, sizeof(a11y_text));
-                wixen_a11y_state_update_text_global(a11y_text, tlen);
+                /* P6 FIX: Use dynamic allocation — no truncation for large grids */
+                char *a11y_text = wixen_grid_visible_text_dynamic(&ps->terminal.grid);
+                if (a11y_text) {
+                    wixen_a11y_state_update_text_global(a11y_text, strlen(a11y_text));
+                    free(a11y_text);
+                }
                 ps->terminal.dirty = false;
             }
 
@@ -967,7 +972,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         const WixenCommandBlock *all_blocks =
                             wixen_shell_integ_blocks(&ps->shell_integ, &bc);
                         wixen_a11y_tree_rebuild(&a11y_tree, all_blocks, bc);
-                        /* Structure changed event would be raised via provider */
+                        /* P3 FIX: Raise structure changed so SRs re-query children */
+                        wixen_a11y_raise_structure_changed_global();
                     }
                     const WixenCommandBlock *blk = wixen_shell_integ_current_block(&ps->shell_integ);
                     if (blk && blk->state == WIXEN_BLOCK_COMPLETED && blk->has_exit_code) {

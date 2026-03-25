@@ -459,6 +459,16 @@ void wixen_a11y_state_update_text_global(const char *text, size_t len) {
     wixen_a11y_state_update_text(&g_a11y_state, text, len);
 }
 
+void wixen_a11y_state_update_focus_global(bool has_focus) {
+    g_a11y_state.has_focus = has_focus;
+}
+
+void wixen_a11y_raise_structure_changed_global(void) {
+    if (g_provider) {
+        wixen_a11y_raise_structure_changed(g_provider);
+    }
+}
+
 /* Lock-free cursor offset for GetSelection/GetCaretRange */
 static volatile LONG g_cursor_offset = 0;
 

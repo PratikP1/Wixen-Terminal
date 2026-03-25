@@ -73,4 +73,8 @@ void wixen_grid_erase_in_display(WixenGrid *g, int mode);
 /* Text extraction (full visible text, newline-separated) */
 size_t wixen_grid_visible_text(const WixenGrid *g, char *buf, size_t buf_size);
 
+/* Dynamic-allocation versions — no truncation. Caller must free(). */
+char *wixen_row_text_dynamic(const WixenRow *row);
+char *wixen_grid_visible_text_dynamic(const WixenGrid *g);
+
 #endif /* WIXEN_CORE_GRID_H */
