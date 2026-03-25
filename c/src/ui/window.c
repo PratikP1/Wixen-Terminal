@@ -62,6 +62,11 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
 
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+        /* Alt+F4 must pass through to DefWindowProc for WM_CLOSE.
+         * BUG #28: returning 0 consumed the keystroke, preventing close. */
+        if (wparam == VK_F4 && (GetKeyState(VK_MENU) & 0x8000)) {
+            break; /* Fall through to DefWindowProcW */
+        }
         if (q) {
             WixenWindowEvent evt = { .type = WIXEN_EVT_KEY_INPUT };
             evt.key.vk = (uint16_t)wparam;

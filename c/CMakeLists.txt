@@ -311,6 +311,10 @@ add_executable(test_red_pty_close tests/test_red_pty_close.c)
 target_link_libraries(test_red_pty_close wixen_pty)
 add_test(NAME test_red_pty_close COMMAND test_red_pty_close)
 
+add_executable(test_red_alt_f4 tests/test_red_alt_f4.c)
+target_link_libraries(test_red_alt_f4 wixen_core wixen_config)
+add_test(NAME test_red_alt_f4 COMMAND test_red_alt_f4)
+
 add_executable(test_red_visual_quality tests/test_red_visual_quality.c)
 target_link_libraries(test_red_visual_quality wixen_ui)
 add_test(NAME test_red_visual_quality COMMAND test_red_visual_quality)
