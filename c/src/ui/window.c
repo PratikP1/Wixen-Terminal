@@ -286,41 +286,47 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
 
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        /* Multi-strategy focus acquisition. Windows aggressively prevents
-         * background apps from stealing focus. We try multiple methods. */
+        /* Focus acquisition is notoriously difficult on Windows.
+         * Windows blocks SetForegroundWindow from background processes.
+         * See: https://github.com/microsoft/terminal/pull/12799
+         *
+         * Strategy: simulate an Alt keypress to trick Windows into thinking
+         * we have foreground rights (the system tracks the last input event),
+         * then call SetForegroundWindow. This is the same approach used by
+         * https://github.com/amarmer/SetForegroundWindow and many real apps.
+         */
 
-        /* Method 1: Allow ourselves to set foreground */
-        AllowSetForegroundWindow(GetCurrentProcessId());
-
-        /* Method 2: Temporarily disable foreground lock timeout */
-        DWORD lock_timeout = 0;
-        SystemParametersInfoW(SPI_GETFOREGROUNDLOCKTIMEOUT, 0, &lock_timeout, 0);
-        if (lock_timeout > 0)
-            SystemParametersInfoW(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, NULL, 0);
-
-        /* Method 3: Attach to foreground thread */
-        HWND fg_hwnd = GetForegroundWindow();
-        DWORD fg_thread = fg_hwnd ? GetWindowThreadProcessId(fg_hwnd, NULL) : 0;
-        DWORD our_thread = GetCurrentThreadId();
-        bool attached = false;
-        if (fg_thread && fg_thread != our_thread) {
-            attached = AttachThreadInput(fg_thread, our_thread, TRUE);
-        }
-
-        /* Show + activate */
-        ShowWindow(w->hwnd, SW_SHOW);
-        BringWindowToTop(w->hwnd);
-        SetForegroundWindow(w->hwnd);
-        SetFocus(w->hwnd);
-        SetActiveWindow(w->hwnd);
+        /* Step 1: Show the window first (minimized → normal) */
+        ShowWindow(w->hwnd, SW_SHOWNORMAL);
         UpdateWindow(w->hwnd);
 
-        /* Detach + restore */
-        if (attached)
-            AttachThreadInput(fg_thread, our_thread, FALSE);
-        if (lock_timeout > 0)
-            SystemParametersInfoW(SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
-                                   (PVOID)(uintptr_t)lock_timeout, 0);
+        /* Step 2: Simulate Alt key press+release. This gives our thread
+         * the "last input" timestamp that SetForegroundWindow checks. */
+        INPUT inputs[2] = {0};
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = VK_MENU;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = VK_MENU;
+        inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(2, inputs, sizeof(INPUT));
+
+        /* Step 3: Now we have foreground rights. Activate. */
+        SetForegroundWindow(w->hwnd);
+        BringWindowToTop(w->hwnd);
+        SetFocus(w->hwnd);
+
+        /* Step 4: As fallback, also attach to foreground thread */
+        HWND fg_hwnd = GetForegroundWindow();
+        if (fg_hwnd && fg_hwnd != w->hwnd) {
+            DWORD fg_thread = GetWindowThreadProcessId(fg_hwnd, NULL);
+            DWORD our_thread = GetCurrentThreadId();
+            if (fg_thread && fg_thread != our_thread) {
+                AttachThreadInput(our_thread, fg_thread, TRUE);
+                SetForegroundWindow(w->hwnd);
+                SetFocus(w->hwnd);
+                AttachThreadInput(our_thread, fg_thread, FALSE);
+            }
+        }
 
         w->visible = true;
     }

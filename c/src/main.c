@@ -61,6 +61,14 @@ typedef struct {
 static WixenPaneState pane_states[MAX_PANES];
 static size_t pane_state_count = 0;
 
+/* Watchdog: if cleanup takes >3s, force-kill. Prevents zombie processes. */
+static DWORD WINAPI exit_watchdog_thread(LPVOID param) {
+    (void)param;
+    Sleep(3000);
+    TerminateProcess(GetCurrentProcess(), 0);
+    return 0; /* Never reached */
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                      LPWSTR lpCmdLine, int nCmdShow) {
     (void)hInstance; (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
@@ -1063,6 +1071,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
          * when NVDA calls GetSelection during frame processing. */
         MsgWaitForMultipleObjects(0, NULL, FALSE, 16, QS_ALLINPUT);
     }
+
+    /* BUG #36: Start a watchdog thread that force-kills after 3 seconds.
+     * If PTY close or session save blocks, the watchdog ensures no zombie. */
+    CreateThread(NULL, 0, exit_watchdog_thread, NULL, 0, NULL);
 
     /* Save session before exit */
     {
