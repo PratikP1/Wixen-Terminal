@@ -310,6 +310,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             switch (evt.type) {
             case WIXEN_EVT_CLOSE_REQUESTED:
                 running = false;
+                /* Hide window immediately — user expects instant response */
+                ShowWindow(window.hwnd, SW_HIDE);
                 break;
             case WIXEN_EVT_RESIZED: {
                 wixen_renderer_resize(renderer, evt.resize.width, evt.resize.height);

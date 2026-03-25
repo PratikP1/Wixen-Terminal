@@ -286,20 +286,42 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
 
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        ShowWindow(w->hwnd, SW_SHOWNORMAL);
-        UpdateWindow(w->hwnd);
-        /* Force foreground + focus. SetForegroundWindow can fail if
-         * our process isn't currently foreground. The AttachThreadInput
-         * trick briefly attaches to the foreground thread to bypass
-         * the Windows foreground lock. */
-        DWORD fg_thread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+        /* Multi-strategy focus acquisition. Windows aggressively prevents
+         * background apps from stealing focus. We try multiple methods. */
+
+        /* Method 1: Allow ourselves to set foreground */
+        AllowSetForegroundWindow(GetCurrentProcessId());
+
+        /* Method 2: Temporarily disable foreground lock timeout */
+        DWORD lock_timeout = 0;
+        SystemParametersInfoW(SPI_GETFOREGROUNDLOCKTIMEOUT, 0, &lock_timeout, 0);
+        if (lock_timeout > 0)
+            SystemParametersInfoW(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, NULL, 0);
+
+        /* Method 3: Attach to foreground thread */
+        HWND fg_hwnd = GetForegroundWindow();
+        DWORD fg_thread = fg_hwnd ? GetWindowThreadProcessId(fg_hwnd, NULL) : 0;
         DWORD our_thread = GetCurrentThreadId();
-        if (fg_thread != our_thread)
-            AttachThreadInput(fg_thread, our_thread, TRUE);
+        bool attached = false;
+        if (fg_thread && fg_thread != our_thread) {
+            attached = AttachThreadInput(fg_thread, our_thread, TRUE);
+        }
+
+        /* Show + activate */
+        ShowWindow(w->hwnd, SW_SHOW);
+        BringWindowToTop(w->hwnd);
         SetForegroundWindow(w->hwnd);
         SetFocus(w->hwnd);
-        if (fg_thread != our_thread)
+        SetActiveWindow(w->hwnd);
+        UpdateWindow(w->hwnd);
+
+        /* Detach + restore */
+        if (attached)
             AttachThreadInput(fg_thread, our_thread, FALSE);
+        if (lock_timeout > 0)
+            SystemParametersInfoW(SPI_SETFOREGROUNDLOCKTIMEOUT, 0,
+                                   (PVOID)(uintptr_t)lock_timeout, 0);
+
         w->visible = true;
     }
 }
