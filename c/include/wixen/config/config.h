@@ -73,6 +73,20 @@ const WixenProfile *wixen_config_default_profile(const WixenConfig *cfg);
 /* Get default config file path (~/.config/wixen/config.toml or %APPDATA%/wixen) */
 void wixen_config_default_path(char *buf, size_t buf_size);
 
+/* Config delta — which fields changed between two configs */
+typedef struct {
+    bool font_changed;
+    bool colors_changed;
+    bool terminal_changed;
+    bool keybindings_changed;
+    bool window_changed;
+    bool accessibility_changed;
+} WixenConfigDelta;
+
+/* Compare two configs and report what changed */
+void wixen_config_diff(const WixenConfig *old_cfg, const WixenConfig *new_cfg,
+                        WixenConfigDelta *out_delta);
+
 /* Apply Lua config overrides from a script file. Returns false on error. */
 bool wixen_config_apply_lua_overrides(WixenConfig *cfg, const char *lua_path);
 

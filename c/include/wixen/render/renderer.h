@@ -53,5 +53,12 @@ void wixen_renderer_set_colors(WixenRenderer *r, const WixenColorScheme *colors)
 uint32_t wixen_renderer_width(const WixenRenderer *r);
 uint32_t wixen_renderer_height(const WixenRenderer *r);
 
+/* DPI helpers (usable without a renderer instance) */
+float wixen_dpi_scale_factor(uint32_t dpi);
+void wixen_dpi_grid_dimensions(uint32_t window_width, uint32_t window_height,
+                                float base_cell_width, float base_cell_height,
+                                uint32_t dpi,
+                                uint32_t *out_cols, uint32_t *out_rows);
+
 #endif /* _WIN32 */
 #endif /* WIXEN_RENDER_RENDERER_H */

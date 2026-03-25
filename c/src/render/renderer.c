@@ -444,4 +444,22 @@ void wixen_renderer_set_colors(WixenRenderer *r, const WixenColorScheme *colors)
 uint32_t wixen_renderer_width(const WixenRenderer *r) { return r->width; }
 uint32_t wixen_renderer_height(const WixenRenderer *r) { return r->height; }
 
+/* --- DPI helpers --- */
+
+float wixen_dpi_scale_factor(uint32_t dpi) {
+    if (dpi == 0) return 1.0f;
+    return (float)dpi / 96.0f;
+}
+
+void wixen_dpi_grid_dimensions(uint32_t window_width, uint32_t window_height,
+                                float base_cell_width, float base_cell_height,
+                                uint32_t dpi,
+                                uint32_t *out_cols, uint32_t *out_rows) {
+    float scale = wixen_dpi_scale_factor(dpi);
+    float cell_w = base_cell_width * scale;
+    float cell_h = base_cell_height * scale;
+    *out_cols = (cell_w > 0) ? (uint32_t)(window_width / cell_w) : 1;
+    *out_rows = (cell_h > 0) ? (uint32_t)(window_height / cell_h) : 1;
+}
+
 #endif /* _WIN32 */

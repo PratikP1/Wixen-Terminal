@@ -46,6 +46,7 @@ add_library(wixen_core STATIC
     src/core/buffer.c
     src/core/error_detect.c
     src/core/url.c
+    src/core/sixel.c
     src/core/keyboard.c
     src/core/xmalloc.c
     src/core/mouse.c
@@ -302,6 +303,18 @@ add_test(NAME test_grid_visible_text COMMAND test_grid_visible_text)
 add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
+
+add_executable(test_red_dpi tests/test_red_dpi.c)
+target_link_libraries(test_red_dpi wixen_render wixen_core)
+add_test(NAME test_red_dpi COMMAND test_red_dpi)
+
+add_executable(test_red_config_reload tests/test_red_config_reload.c)
+target_link_libraries(test_red_config_reload wixen_config)
+add_test(NAME test_red_config_reload COMMAND test_red_config_reload)
+
+add_executable(test_red_sixel tests/test_red_sixel.c)
+target_link_libraries(test_red_sixel wixen_core)
+add_test(NAME test_red_sixel COMMAND test_red_sixel)
 
 add_executable(test_red_grid_lines tests/test_red_grid_lines.c)
 target_link_libraries(test_red_grid_lines wixen_core wixen_vt)

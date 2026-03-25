@@ -300,6 +300,34 @@ void wixen_config_default_path(char *buf, size_t buf_size) {
 #endif
 }
 
+/* --- Config diff --- */
+
+static bool str_eq(const char *a, const char *b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return strcmp(a, b) == 0;
+}
+
+void wixen_config_diff(const WixenConfig *old_cfg, const WixenConfig *new_cfg,
+                        WixenConfigDelta *delta) {
+    memset(delta, 0, sizeof(*delta));
+    delta->font_changed = (old_cfg->font.size != new_cfg->font.size)
+        || !str_eq(old_cfg->font.family, new_cfg->font.family)
+        || (old_cfg->font.line_height != new_cfg->font.line_height)
+        || (old_cfg->font.ligatures != new_cfg->font.ligatures);
+    delta->colors_changed = !str_eq(old_cfg->window.theme, new_cfg->window.theme)
+        || (old_cfg->window.opacity != new_cfg->window.opacity);
+    delta->terminal_changed = !str_eq(old_cfg->terminal.cursor_style, new_cfg->terminal.cursor_style)
+        || (old_cfg->terminal.cursor_blink != new_cfg->terminal.cursor_blink)
+        || !str_eq(old_cfg->terminal.bell_style, new_cfg->terminal.bell_style);
+    delta->window_changed = (old_cfg->window.width != new_cfg->window.width)
+        || (old_cfg->window.height != new_cfg->window.height);
+    delta->accessibility_changed = !str_eq(old_cfg->accessibility.verbosity, new_cfg->accessibility.verbosity)
+        || (old_cfg->accessibility.output_debounce_ms != new_cfg->accessibility.output_debounce_ms);
+    /* Keybindings: compare count as rough heuristic */
+    delta->keybindings_changed = (old_cfg->keybindings.count != new_cfg->keybindings.count);
+}
+
 /* --- Lua config overrides --- */
 
 #include "wixen/config/lua_engine.h"
