@@ -393,9 +393,12 @@ void wixen_a11y_provider_init_minimal(HWND hwnd) {
 
 void wixen_a11y_provider_init(HWND hwnd, void *terminal) {
     (void)terminal;
+    /* If minimal init already ran (from WM_CREATE), the provider exists.
+     * Don't re-create — NVDA is already using the existing one.
+     * BUG #40: reinitializing created a new orphaned provider. */
+    if (g_provider) return;
     wixen_a11y_state_init(&g_a11y_state);
     g_provider = wixen_a11y_create_provider(hwnd, &g_a11y_state);
-    /* Store provider as window property for WM_GETOBJECT */
     SetPropW(hwnd, L"WixenUiaProvider", (HANDLE)g_provider);
 }
 
