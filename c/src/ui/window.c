@@ -244,11 +244,21 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
     }
 
     w->dpi = GetDpiForWindow(w->hwnd);
-    ShowWindow(w->hwnd, SW_SHOW);
-    UpdateWindow(w->hwnd);
-    w->visible = true;
+    /* Don't show yet — caller must init a11y provider first,
+     * then call wixen_window_show(). Otherwise NVDA's WM_GETOBJECT
+     * arrives before the provider is registered and caches the
+     * window as non-UIA permanently. (BUG #23) */
+    w->visible = false;
 
     return true;
+}
+
+void wixen_window_show(WixenWindow *w) {
+    if (!w->visible && w->hwnd) {
+        ShowWindow(w->hwnd, SW_SHOW);
+        UpdateWindow(w->hwnd);
+        w->visible = true;
+    }
 }
 
 void wixen_window_destroy(WixenWindow *w) {

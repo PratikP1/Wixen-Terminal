@@ -74,6 +74,7 @@ typedef struct {
 /* Lifecycle */
 bool wixen_window_create(WixenWindow *w, const wchar_t *title,
                           uint32_t width, uint32_t height);
+void wixen_window_show(WixenWindow *w);
 void wixen_window_destroy(WixenWindow *w);
 
 /* Event polling */

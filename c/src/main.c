@@ -160,8 +160,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenConfigWatcher cfg_watcher = {0};
     wixen_watcher_start(&cfg_watcher, cfg_path, window.hwnd);
 
-    /* Initialize a11y provider and announce focus */
+    /* Initialize a11y provider BEFORE showing window.
+     * BUG #23: If window is shown first, NVDA sends WM_GETOBJECT
+     * before the provider is registered and permanently caches the
+     * window as non-UIA. */
     wixen_a11y_provider_init(window.hwnd, &ps->terminal);
+
+    /* NOW show the window — provider is ready for WM_GETOBJECT */
+    wixen_window_show(&window);
+
     wixen_a11y_raise_selection_changed(window.hwnd);
     wixen_a11y_raise_notification(window.hwnd, "Wixen Terminal ready", "terminal-ready");
 
