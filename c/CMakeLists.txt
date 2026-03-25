@@ -307,6 +307,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_window_lifecycle tests/test_red_window_lifecycle.c)
+target_link_libraries(test_red_window_lifecycle wixen_core wixen_config)
+add_test(NAME test_red_window_lifecycle COMMAND test_red_window_lifecycle)
+
 add_executable(test_red_user_issues tests/test_red_user_issues.c)
 target_link_libraries(test_red_user_issues wixen_ui wixen_config)
 add_test(NAME test_red_user_issues COMMAND test_red_user_issues)
