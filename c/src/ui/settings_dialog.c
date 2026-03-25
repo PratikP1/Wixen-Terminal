@@ -23,6 +23,34 @@
 #define IDC_SCROLL_LINES   1007
 #define IDC_SR_VERBOSITY   1008
 #define IDC_OUTPUT_DEBOUNCE 1009
+/* Window tab */
+#define IDC_WIN_WIDTH      1010
+#define IDC_WIN_HEIGHT     1011
+#define IDC_WIN_OPACITY    1012
+#define IDC_WIN_RENDERER   1013
+#define IDC_WIN_DARK_TITLE 1014
+#define IDC_WIN_SCROLLBAR  1015
+#define IDC_WIN_TAB_BAR    1016
+/* Colors tab */
+#define IDC_COLOR_THEME    1020
+#define IDC_COLOR_FG       1021
+#define IDC_COLOR_BG       1022
+#define IDC_COLOR_CURSOR   1023
+#define IDC_COLOR_SELECTION 1024
+/* Font extras */
+#define IDC_FONT_LINE_HEIGHT 1030
+/* Terminal extras */
+#define IDC_SCROLLBACK_LINES 1031
+#define IDC_BLINK_INTERVAL   1032
+/* Accessibility extras */
+#define IDC_ANNOUNCE_EXIT    1040
+#define IDC_LIVE_REGION      1041
+#define IDC_PROMPT_DETECT    1042
+#define IDC_HIGH_CONTRAST    1043
+#define IDC_REDUCED_MOTION   1044
+#define IDC_ANNOUNCE_IMAGES  1045
+#define IDC_AUDIO_FEEDBACK   1046
+#define IDC_AUDIO_ERRORS     1047
 
 /* --- Font Tab --- */
 
@@ -54,18 +82,21 @@ static INT_PTR CALLBACK font_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
         y += 30;
 
+        /* Line height */
+        lbl = CreateWindowExW(0, L"STATIC", L"&Line height:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1.2",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            120, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_FONT_LINE_HEIGHT, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
         return TRUE;
     }
     case WM_NOTIFY: {
         NMHDR *nm = (NMHDR *)lp;
         if (nm->code == PSN_APPLY) {
-            /* Read font size from edit control and store in dialog data */
-            wchar_t buf[64];
-            HWND hFontSize = GetDlgItem(hwnd, 1001);
-            if (hFontSize) {
-                GetWindowTextW(hFontSize, buf, 64);
-                /* The caller retrieves the config from the property sheet */
-            }
             SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
             return TRUE;
         }
@@ -73,6 +104,261 @@ static INT_PTR CALLBACK font_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     }
     return FALSE;
+}
+
+/* --- Window Tab --- */
+
+static INT_PTR CALLBACK window_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)wp;
+    switch (msg) {
+    case WM_INITDIALOG: {
+        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        int y = 10;
+
+        HWND lbl = CreateWindowExW(0, L"STATIC", L"&Width:",
+            WS_CHILD | WS_VISIBLE, 10, y, 80, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1200",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+            100, y, 80, 22, hwnd, (HMENU)(UINT_PTR)IDC_WIN_WIDTH, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Height:",
+            WS_CHILD | WS_VISIBLE, 10, y, 80, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"800",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+            100, y, 80, 22, hwnd, (HMENU)(UINT_PTR)IDC_WIN_HEIGHT, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Opacity:",
+            WS_CHILD | WS_VISIBLE, 10, y, 80, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1.0",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            100, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_WIN_OPACITY, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Renderer:",
+            WS_CHILD | WS_VISIBLE, 10, y, 80, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            100, y, 150, 100, hwnd, (HMENU)(UINT_PTR)IDC_WIN_RENDERER, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Auto");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"GPU (D3D11)");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Software (GDI)");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        y += 30;
+
+        CreateWindowExW(0, L"BUTTON", L"&Dark title bar",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+            10, y, 200, 20, hwnd, (HMENU)(UINT_PTR)IDC_WIN_DARK_TITLE, NULL, NULL);
+        y += 25;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Scrollbar:",
+            WS_CHILD | WS_VISIBLE, 10, y, 80, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            100, y, 150, 100, hwnd, (HMENU)(UINT_PTR)IDC_WIN_SCROLLBAR, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Visible");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Hidden");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Auto");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"Ta&b bar:",
+            WS_CHILD | WS_VISIBLE, 10, y, 80, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            100, y, 150, 100, hwnd, (HMENU)(UINT_PTR)IDC_WIN_TAB_BAR, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Always");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Multiple tabs");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Never");
+        SendMessageW(combo, CB_SETCURSEL, 1, 0);
+
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR *nm = (NMHDR *)lp;
+        if (nm->code == PSN_APPLY) {
+            SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+    (void)wp;
+}
+
+/* --- Colors Tab --- */
+
+static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)wp;
+    switch (msg) {
+    case WM_INITDIALOG: {
+        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        int y = 10;
+
+        HWND lbl = CreateWindowExW(0, L"STATIC", L"Color &theme:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            120, y, 200, 200, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_THEME, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Default");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Solarized Dark");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Solarized Light");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Dracula");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"One Dark");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Monokai");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Foreground:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#cccccc",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_FG, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Background:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#1e1e1e",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_BG, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Cursor color:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#ffffff",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_CURSOR, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        lbl = CreateWindowExW(0, L"STATIC", L"&Selection:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#264f78",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_SELECTION, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR *nm = (NMHDR *)lp;
+        if (nm->code == PSN_APPLY) {
+            SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+    (void)wp;
+}
+
+/* --- Profiles Tab --- */
+
+static INT_PTR CALLBACK profiles_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)wp;
+    switch (msg) {
+    case WM_INITDIALOG: {
+        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        int y = 10;
+
+        CreateWindowExW(0, L"STATIC", L"Shell profiles define which programs can be launched as new tabs.",
+            WS_CHILD | WS_VISIBLE, 10, y, 350, 20, hwnd, NULL, NULL, NULL);
+        y += 30;
+
+        HWND lbl = CreateWindowExW(0, L"STATIC", L"Default &profile:",
+            WS_CHILD | WS_VISIBLE, 10, y, 120, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            140, y, 200, 200, hwnd, (HMENU)2001, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"PowerShell");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Command Prompt");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Git Bash");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"WSL");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR *nm = (NMHDR *)lp;
+        if (nm->code == PSN_APPLY) {
+            SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+    (void)wp;
+}
+
+/* --- Keybindings Tab --- */
+
+static INT_PTR CALLBACK keybindings_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    (void)wp;
+    switch (msg) {
+    case WM_INITDIALOG: {
+        HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        int y = 10;
+
+        CreateWindowExW(0, L"STATIC",
+            L"Keybindings can be customized in config.toml or via Lua scripts.",
+            WS_CHILD | WS_VISIBLE, 10, y, 350, 20, hwnd, NULL, NULL, NULL);
+        y += 30;
+
+        /* List of current keybindings (read-only for now) */
+        HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+            10, y, 350, 150, hwnd, (HMENU)3001, NULL, NULL);
+        SendMessageW(list, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+P: Command Palette");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+,: Settings");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+T: New Tab");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+W: Close Tab");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Tab: Next Tab");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+Tab: Previous Tab");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"F11: Toggle Fullscreen");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+Shift+F: Search");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+C: Copy");
+        SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)L"Ctrl+V: Paste");
+
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR *nm = (NMHDR *)lp;
+        if (nm->code == PSN_APPLY) {
+            SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+    (void)wp;
 }
 
 /* --- Terminal Tab --- */
@@ -111,6 +397,31 @@ static INT_PTR CALLBACK terminal_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
             10, y, 200, 20, hwnd, (HMENU)(UINT_PTR)IDC_AUTO_WRAP, NULL, NULL);
         SendMessageW(chk, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
+        y += 30;
+
+        /* Scrollback lines */
+        lbl = CreateWindowExW(0, L"STATIC", L"Scroll&back lines:",
+            WS_CHILD | WS_VISIBLE, 10, y, 120, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"10000",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+            140, y, 80, 22, hwnd, (HMENU)(UINT_PTR)IDC_SCROLLBACK_LINES, NULL, NULL);
+        SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        /* Bell style */
+        lbl = CreateWindowExW(0, L"STATIC", L"Be&ll style:",
+            WS_CHILD | WS_VISIBLE, 10, y, 100, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            120, y, 150, 100, hwnd, (HMENU)(UINT_PTR)IDC_BELL_STYLE, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Audible");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Visual");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Both");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Mute");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
 
         return TRUE;
     }
@@ -157,6 +468,67 @@ static INT_PTR CALLBACK a11y_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
             200, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_OUTPUT_DEBOUNCE, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += 30;
+
+        /* Announce exit codes */
+        HWND chk = CreateWindowExW(0, L"BUTTON", L"Announce &exit codes",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+            10, y, 250, 20, hwnd, (HMENU)(UINT_PTR)IDC_ANNOUNCE_EXIT, NULL, NULL);
+        SendMessageW(chk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
+        y += 25;
+
+        /* Prompt detection */
+        lbl = CreateWindowExW(0, L"STATIC", L"&Prompt detection:",
+            WS_CHILD | WS_VISIBLE, 10, y, 130, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            150, y, 170, 100, hwnd, (HMENU)(UINT_PTR)IDC_PROMPT_DETECT, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"OSC 133 + Heuristic");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"OSC 133 Only");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Heuristic Only");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Disabled");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        y += 30;
+
+        /* Reduced motion */
+        lbl = CreateWindowExW(0, L"STATIC", L"Reduced &motion:",
+            WS_CHILD | WS_VISIBLE, 10, y, 130, 20, hwnd, NULL, NULL, NULL);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        combo = CreateWindowExW(0, L"COMBOBOX", NULL,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+            150, y, 120, 100, hwnd, (HMENU)(UINT_PTR)IDC_REDUCED_MOTION, NULL, NULL);
+        SendMessageW(combo, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"System");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Always");
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Never");
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        y += 30;
+
+        /* Announce images */
+        chk = CreateWindowExW(0, L"BUTTON", L"Announce &images",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+            10, y, 250, 20, hwnd, (HMENU)(UINT_PTR)IDC_ANNOUNCE_IMAGES, NULL, NULL);
+        SendMessageW(chk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
+        y += 25;
+
+        /* Audio feedback */
+        chk = CreateWindowExW(0, L"BUTTON", L"Audio &feedback",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+            10, y, 250, 20, hwnd, (HMENU)(UINT_PTR)IDC_AUDIO_FEEDBACK, NULL, NULL);
+        SendMessageW(chk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
+        y += 25;
+
+        /* Audio errors */
+        chk = CreateWindowExW(0, L"BUTTON", L"Audio e&rrors",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+            10, y, 250, 20, hwnd, (HMENU)(UINT_PTR)IDC_AUDIO_ERRORS, NULL, NULL);
+        SendMessageW(chk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
 
         return TRUE;
     }
@@ -198,45 +570,45 @@ bool wixen_settings_dialog_show(HWND parent) {
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_TAB_CLASSES };
     InitCommonControlsEx(&icc);
 
-    DLGTEMPLATE *dt1 = make_empty_dialog();
-    DLGTEMPLATE *dt2 = make_empty_dialog();
-    DLGTEMPLATE *dt3 = make_empty_dialog();
-    if (!dt1 || !dt2 || !dt3) {
-        free(dt1); free(dt2); free(dt3);
-        return false;
+    #define NUM_SETTINGS_TABS 7
+    DLGTEMPLATE *dt[NUM_SETTINGS_TABS];
+    for (int i = 0; i < NUM_SETTINGS_TABS; i++) {
+        dt[i] = make_empty_dialog();
+        if (!dt[i]) {
+            for (int j = 0; j < i; j++) free(dt[j]);
+            return false;
+        }
     }
 
-    PROPSHEETPAGEW pages[3] = {0};
-
-    pages[0].dwSize = sizeof(PROPSHEETPAGEW);
-    pages[0].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
-    pages[0].pResource = dt1;
-    pages[0].pfnDlgProc = font_dlg_proc;
-    pages[0].pszTitle = L"Font";
-
-    pages[1].dwSize = sizeof(PROPSHEETPAGEW);
-    pages[1].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
-    pages[1].pResource = dt2;
-    pages[1].pfnDlgProc = terminal_dlg_proc;
-    pages[1].pszTitle = L"Terminal";
-
-    pages[2].dwSize = sizeof(PROPSHEETPAGEW);
-    pages[2].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
-    pages[2].pResource = dt3;
-    pages[2].pfnDlgProc = a11y_dlg_proc;
-    pages[2].pszTitle = L"Accessibility";
+    PROPSHEETPAGEW pages[NUM_SETTINGS_TABS] = {0};
+    struct { DLGPROC proc; const wchar_t *title; } tab_info[NUM_SETTINGS_TABS] = {
+        { font_dlg_proc,        L"Font" },
+        { window_dlg_proc,      L"Window" },
+        { terminal_dlg_proc,    L"Terminal" },
+        { colors_dlg_proc,      L"Colors" },
+        { profiles_dlg_proc,    L"Profiles" },
+        { keybindings_dlg_proc, L"Keybindings" },
+        { a11y_dlg_proc,        L"Accessibility" },
+    };
+    for (int i = 0; i < NUM_SETTINGS_TABS; i++) {
+        pages[i].dwSize = sizeof(PROPSHEETPAGEW);
+        pages[i].dwFlags = PSP_DLGINDIRECT | PSP_USETITLE;
+        pages[i].pResource = dt[i];
+        pages[i].pfnDlgProc = tab_info[i].proc;
+        pages[i].pszTitle = tab_info[i].title;
+    }
 
     PROPSHEETHEADERW psh = {0};
     psh.dwSize = sizeof(psh);
     psh.dwFlags = PSH_PROPSHEETPAGE | PSH_NOAPPLYNOW;
     psh.hwndParent = parent;
     psh.pszCaption = L"Wixen Terminal Settings";
-    psh.nPages = 3;
+    psh.nPages = NUM_SETTINGS_TABS;
     psh.ppsp = pages;
 
     INT_PTR result = PropertySheetW(&psh);
 
-    free(dt1); free(dt2); free(dt3);
+    for (int i = 0; i < NUM_SETTINGS_TABS; i++) free(dt[i]);
 
     return result > 0; /* Positive = OK pressed */
 }
