@@ -155,6 +155,14 @@ add_library(wixen_ui STATIC
     $<$<PLATFORM_ID:Windows>:src/ui/jumplist.c>
     $<$<PLATFORM_ID:Windows>:src/ui/default_terminal.c>
 )
+target_link_libraries(wixen_ui PUBLIC wixen_a11y)
+
+# UIA SDK constants use __declspec(selectany) which can cause LNK2005
+# when multiple .obj files include uiautomation.h in the same link unit.
+# Add /FORCE:MULTIPLE to all test exes that link wixen_a11y.
+if(MSVC)
+    add_link_options(/FORCE:MULTIPLE)
+endif()
 
 add_executable(test_tabs tests/test_tabs.c)
 target_link_libraries(test_tabs wixen_ui)
@@ -558,6 +566,11 @@ add_test(NAME test_red_ipc COMMAND test_red_ipc)
 add_executable(test_red_a11y_events tests/test_red_a11y_events.c)
 target_link_libraries(test_red_a11y_events wixen_a11y)
 add_test(NAME test_red_a11y_events COMMAND test_red_a11y_events)
+
+add_executable(test_red_wm_getobject tests/test_red_wm_getobject.c)
+target_link_libraries(test_red_wm_getobject wixen_ui wixen_a11y)
+target_link_options(test_red_wm_getobject PRIVATE /FORCE:MULTIPLE)
+add_test(NAME test_red_wm_getobject COMMAND test_red_wm_getobject)
 
 add_executable(test_red_text_extract tests/test_red_text_extract.c)
 target_link_libraries(test_red_text_extract wixen_core wixen_vt)

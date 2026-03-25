@@ -7,9 +7,10 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
-#include <uiautomation.h>
 
-#pragma comment(lib, "uiautomationcore.lib")
+/* Do NOT include <uiautomation.h> here — it causes duplicate symbol
+ * errors when linking with wixen_a11y. All UIA calls go through
+ * wixen_a11y_handle_getobject() in provider.c instead. */
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shell32.lib")
@@ -212,15 +213,10 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
         return 0;
 
     case WM_GETOBJECT:
-        /* UIA provider handling — stored in window property */
-        if ((DWORD)lparam == (DWORD)0xFFFFFFF0) { /* UiaRootObjectId */
-            IRawElementProviderSimple *provider =
-                (IRawElementProviderSimple *)GetPropW(hwnd, L"WixenUiaProvider");
-            if (provider) {
-                return UiaReturnRawElementProvider(hwnd, wparam, lparam, provider);
-            }
-        }
-        return DefWindowProcW(hwnd, msg, wparam, lparam);
+        /* Delegate to a11y provider — uses correct UiaRootObjectId constant
+         * and calls UiaReturnRawElementProvider. Provider is stored as a
+         * window property (set in WM_CREATE via init_minimal). */
+        return wixen_a11y_handle_wm_getobject(hwnd, wparam, lparam);
 
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -290,8 +286,20 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
 
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        ShowWindow(w->hwnd, SW_SHOW);
+        ShowWindow(w->hwnd, SW_SHOWNORMAL);
         UpdateWindow(w->hwnd);
+        /* Force foreground + focus. SetForegroundWindow can fail if
+         * our process isn't currently foreground. The AttachThreadInput
+         * trick briefly attaches to the foreground thread to bypass
+         * the Windows foreground lock. */
+        DWORD fg_thread = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+        DWORD our_thread = GetCurrentThreadId();
+        if (fg_thread != our_thread)
+            AttachThreadInput(fg_thread, our_thread, TRUE);
+        SetForegroundWindow(w->hwnd);
+        SetFocus(w->hwnd);
+        if (fg_thread != our_thread)
+            AttachThreadInput(fg_thread, our_thread, FALSE);
         w->visible = true;
     }
 }

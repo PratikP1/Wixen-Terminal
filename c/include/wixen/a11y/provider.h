@@ -18,6 +18,7 @@
 /* --- High-level convenience API (no UIA headers needed) --- */
 
 void wixen_a11y_provider_init_minimal(HWND hwnd);
+LRESULT wixen_a11y_handle_wm_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam);
 void wixen_a11y_provider_init(HWND hwnd, void *terminal);
 void wixen_a11y_provider_shutdown(HWND hwnd);
 void wixen_a11y_update_cursor(const void *grid);

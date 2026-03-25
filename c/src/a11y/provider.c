@@ -277,9 +277,22 @@ IRawElementProviderSimple *wixen_a11y_create_provider(HWND hwnd, WixenA11yState 
     return (IRawElementProviderSimple *)p;
 }
 
+bool wixen_wm_getobject_matches(LPARAM lparam) {
+    return (DWORD)lparam == (DWORD)UiaRootObjectId;
+}
+
 LRESULT wixen_a11y_handle_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam,
                                      IRawElementProviderSimple *provider) {
-    if ((DWORD)lparam == UiaRootObjectId) {
+    if (wixen_wm_getobject_matches(lparam)) {
+        return UiaReturnRawElementProvider(hwnd, wparam, lparam, provider);
+    }
+    return DefWindowProcW(hwnd, WM_GETOBJECT, wparam, lparam);
+}
+
+LRESULT wixen_a11y_handle_wm_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam) {
+    IRawElementProviderSimple *provider =
+        (IRawElementProviderSimple *)GetPropW(hwnd, L"WixenUiaProvider");
+    if (provider && wixen_wm_getobject_matches(lparam)) {
         return UiaReturnRawElementProvider(hwnd, wparam, lparam, provider);
     }
     return DefWindowProcW(hwnd, WM_GETOBJECT, wparam, lparam);

@@ -8,7 +8,8 @@
 #define WIXEN_A11Y_INTERNAL
 #endif
 #include "wixen/a11y/provider.h"
-#include <uiautomation.h>
+/* uiautomation.h is included via provider.h when WIXEN_A11Y_INTERNAL
+ * is defined — do not include it again to avoid duplicate symbols. */
 
 /* Create ITextProvider for the terminal.
  * Returns IUnknown* that can be cast to ITextProvider. Caller releases. */

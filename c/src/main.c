@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <objbase.h>
 
 /* Navigation key tracking for boundary detection */
 typedef enum {
@@ -63,6 +64,10 @@ static size_t pane_state_count = 0;
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                      LPWSTR lpCmdLine, int nCmdShow) {
     (void)hInstance; (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
+
+    /* COM apartment for UIA UseComThreading — without this, NVDA's
+     * marshaled UIA calls hang and focus never completes. */
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
     /* Initialize color scheme */
     WixenColorScheme colors;
@@ -999,9 +1004,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             ps->terminal.bell_pending = false;
         }
         if (ps->terminal.title_dirty && ps->terminal.title) {
-            wchar_t wtitle[256];
-            MultiByteToWideChar(CP_UTF8, 0, ps->terminal.title, -1, wtitle, 256);
-            wixen_window_set_title(&window, wtitle);
+            char *formatted = wixen_window_format_title(ps->terminal.title, NULL);
+            if (formatted) {
+                wchar_t wtitle[512];
+                MultiByteToWideChar(CP_UTF8, 0, formatted, -1, wtitle, 512);
+                wixen_window_set_title(&window, wtitle);
+                free(formatted);
+            }
             ps->terminal.title_dirty = false;
         }
 
@@ -1097,7 +1106,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     wixen_tabs_free(&tabs);
     wixen_keybindings_free(&keybindings);
 
-    return 0;
+    CoUninitialize();
+
+    /* Force exit — ClosePseudoConsole runs on a detached background
+     * thread and can take 10-30 seconds. The CRT's ExitProcess waits
+     * for all threads by default. We've already cleaned up everything
+     * that matters; kill lingering kernel-cleanup threads. BUG #30. */
+    ExitProcess(0);
 }
 
 #else

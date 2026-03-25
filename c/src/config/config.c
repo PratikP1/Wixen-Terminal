@@ -126,6 +126,7 @@ bool wixen_config_load(WixenConfig *cfg, const char *path) {
 
     char line[1024];
     TomlSection section = TOML_NONE;
+    bool profiles_from_file = false;
 
     while (fgets(line, sizeof(line), f)) {
         char *s = trim(line);
@@ -135,6 +136,19 @@ bool wixen_config_load(WixenConfig *cfg, const char *path) {
         if (s[0] == '[') {
             if (strncmp(s, "[[profiles]]", 12) == 0) {
                 section = TOML_PROFILES;
+                /* First [[profiles]] replaces defaults */
+                if (!profiles_from_file) {
+                    for (size_t i = 0; i < cfg->profile_count; i++) {
+                        free(cfg->profiles[i].name);
+                        free(cfg->profiles[i].program);
+                        free(cfg->profiles[i].args);
+                        free(cfg->profiles[i].working_directory);
+                    }
+                    free(cfg->profiles);
+                    cfg->profiles = NULL;
+                    cfg->profile_count = 0;
+                    profiles_from_file = true;
+                }
                 add_profile(cfg);
             } else if (strncmp(s, "[[keybindings]]", 15) == 0) {
                 section = TOML_KEYBINDINGS;
