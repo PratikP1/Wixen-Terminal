@@ -1,10 +1,23 @@
-/* settings_dialog.h — Native Win32 settings dialog (PropertySheet) */
+/* settings_dialog.h — Native Win32 settings dialog (PropertySheet)
+ *
+ * 4-tab layout:
+ *   Appearance   — Font + Colors + Window chrome
+ *   Terminal     — Cursor + Bell + Scrollback + Profiles + Renderer
+ *   Accessibility — SR verbosity, audio, prompts, motion
+ *   Keybindings  — Standalone listbox
+ */
 #ifndef WIXEN_UI_SETTINGS_DIALOG_H
 #define WIXEN_UI_SETTINGS_DIALOG_H
 
-#ifdef _WIN32
-
 #include <stdbool.h>
+#include <stddef.h>
+
+/* Tab configuration (testable without Win32) */
+int wixen_settings_tab_count(void);
+const char *wixen_settings_tab_name(int index);
+const char **wixen_settings_tab_fields(int tab_index, size_t *out_count);
+
+#ifdef _WIN32
 #include <windows.h>
 
 /* Show the settings dialog (modal). Returns true if settings were changed. */
