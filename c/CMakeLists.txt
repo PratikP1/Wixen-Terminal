@@ -306,6 +306,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_paste_sync tests/test_red_paste_sync.c)
+target_link_libraries(test_red_paste_sync wixen_core wixen_vt)
+add_test(NAME test_red_paste_sync COMMAND test_red_paste_sync)
+
 add_executable(test_red_alt_screen_full tests/test_red_alt_screen_full.c)
 target_link_libraries(test_red_alt_screen_full wixen_core wixen_vt)
 add_test(NAME test_red_alt_screen_full COMMAND test_red_alt_screen_full)
