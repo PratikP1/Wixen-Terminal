@@ -305,6 +305,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_config_watcher tests/test_red_config_watcher.c)
+target_link_libraries(test_red_config_watcher wixen_config)
+add_test(NAME test_red_config_watcher COMMAND test_red_config_watcher)
+
+add_executable(test_red_audio tests/test_red_audio.c)
+target_link_libraries(test_red_audio wixen_ui)
+add_test(NAME test_red_audio COMMAND test_red_audio)
+
 add_executable(test_red_mouse_encoding tests/test_red_mouse_encoding.c)
 target_link_libraries(test_red_mouse_encoding wixen_core)
 add_test(NAME test_red_mouse_encoding COMMAND test_red_mouse_encoding)

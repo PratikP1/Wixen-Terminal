@@ -76,4 +76,39 @@ void wixen_watcher_stop(WixenConfigWatcher *w) {
     }
 }
 
+/* --- Poll-based watcher (for tests and simple use) --- */
+
+static bool get_file_time(const char *path, FILETIME *ft) {
+    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            NULL, OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool ok = GetFileTime(h, NULL, NULL, ft) != 0;
+    CloseHandle(h);
+    return ok;
+}
+
+bool wixen_config_watcher_init(WixenConfigPollWatcher *w, const char *path) {
+    if (!w || !path) return false;
+    memset(w, 0, sizeof(*w));
+    strncpy(w->path, path, MAX_PATH - 1);
+    if (!get_file_time(path, &w->last_write)) return false;
+    w->valid = true;
+    return true;
+}
+
+bool wixen_config_watcher_check(WixenConfigPollWatcher *w) {
+    if (!w || !w->valid) return false;
+    FILETIME current;
+    if (!get_file_time(w->path, &current)) return false;
+    if (CompareFileTime(&current, &w->last_write) != 0) {
+        w->last_write = current;
+        return true;
+    }
+    return false;
+}
+
+void wixen_config_watcher_destroy(WixenConfigPollWatcher *w) {
+    if (w) { w->valid = false; }
+}
+
 #endif /* _WIN32 */

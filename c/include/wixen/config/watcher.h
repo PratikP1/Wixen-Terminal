@@ -21,5 +21,16 @@ typedef struct {
 bool wixen_watcher_start(WixenConfigWatcher *w, const char *config_path, HWND notify_hwnd);
 void wixen_watcher_stop(WixenConfigWatcher *w);
 
+/* Lightweight poll-based checker (for tests and simple use) */
+typedef struct {
+    char path[MAX_PATH];
+    FILETIME last_write;
+    bool valid;
+} WixenConfigPollWatcher;
+
+bool wixen_config_watcher_init(WixenConfigPollWatcher *w, const char *path);
+bool wixen_config_watcher_check(WixenConfigPollWatcher *w);
+void wixen_config_watcher_destroy(WixenConfigPollWatcher *w);
+
 #endif /* _WIN32 */
 #endif /* WIXEN_CONFIG_WATCHER_H */
