@@ -281,16 +281,36 @@ bool wixen_config_load(WixenConfig *cfg, const char *path) {
             }
             break;
 
-        case TOML_KEYBINDINGS:
-            /* Format: chord = "action" or chord = { action = "name", args = "..." } */
+        case TOML_KEYBINDINGS: {
+            /* Two formats:
+             * Legacy: ctrl+c = "copy"  (chord = key, action = val)
+             * Structured: chord = "ctrl+c"  / action = "copy" / description = "..." */
+            static char kb_chord[128] = {0};
+            static char kb_action[128] = {0};
             if (eq) {
-                const char *chord = key;
-                const char *action_str = unquote(val);
-                if (chord[0] && action_str[0]) {
-                    wixen_keybindings_add(&cfg->keybindings, chord, action_str, NULL);
+                if (strcmp(key, "chord") == 0) {
+                    snprintf(kb_chord, sizeof(kb_chord), "%s", unquote(val));
+                } else if (strcmp(key, "action") == 0) {
+                    snprintf(kb_action, sizeof(kb_action), "%s", unquote(val));
+                    /* If we have both chord and action, add it */
+                    if (kb_chord[0] && kb_action[0]) {
+                        wixen_keybindings_add(&cfg->keybindings, kb_chord, kb_action, NULL);
+                        kb_chord[0] = '\0';
+                        kb_action[0] = '\0';
+                    }
+                } else if (strcmp(key, "description") == 0) {
+                    /* Ignore description on load — it's informational */
+                } else {
+                    /* Legacy format: chord = "action" */
+                    const char *chord = key;
+                    const char *action_str = unquote(val);
+                    if (chord[0] && action_str[0]) {
+                        wixen_keybindings_add(&cfg->keybindings, chord, action_str, NULL);
+                    }
                 }
             }
             break;
+        }
 
         default:
             break;
@@ -337,6 +357,18 @@ bool wixen_config_save(const WixenConfig *cfg, const char *path) {
         fprintf(f, "program = \"%s\"\n", cfg->profiles[i].program ? cfg->profiles[i].program : "");
         if (cfg->profiles[i].is_default) fprintf(f, "is_default = true\n");
         fprintf(f, "\n");
+    }
+
+    /* Write keybindings */
+    if (cfg->keybindings.count > 0) {
+        for (size_t i = 0; i < cfg->keybindings.count; i++) {
+            fprintf(f, "[[keybindings]]\n");
+            fprintf(f, "chord = \"%s\"\n", cfg->keybindings.bindings[i].chord);
+            fprintf(f, "action = \"%s\"\n", cfg->keybindings.bindings[i].action);
+            if (cfg->keybindings.bindings[i].args)
+                fprintf(f, "args = \"%s\"\n", cfg->keybindings.bindings[i].args);
+            fprintf(f, "\n");
+        }
     }
 
     fclose(f);
