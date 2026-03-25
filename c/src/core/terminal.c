@@ -620,6 +620,152 @@ char *wixen_terminal_selected_text(const WixenTerminal *t, const WixenSelection 
     return buf;
 }
 
+/* --- Resize with reflow --- */
+
+void wixen_terminal_resize_reflow(WixenTerminal *t, size_t new_cols, size_t new_rows) {
+    if (new_cols == 0 || new_rows == 0) return;
+
+    /* Extract all row text, tracking which rows are wrapped continuations */
+    typedef struct { char *text; bool wrapped; } RowInfo;
+    size_t row_count = t->grid.num_rows;
+    RowInfo *rows = calloc(row_count, sizeof(RowInfo));
+    if (!rows) { wixen_terminal_resize(t, new_cols, new_rows); return; }
+
+    for (size_t r = 0; r < row_count; r++) {
+        rows[r].text = wixen_terminal_extract_row_text(t, r);
+        rows[r].wrapped = t->grid.rows[r].wrapped;
+    }
+
+    /* Merge wrapped lines into logical lines */
+    typedef struct { char *text; size_t len; } LogicalLine;
+    LogicalLine *lines = calloc(row_count, sizeof(LogicalLine));
+    size_t line_count = 0;
+
+    for (size_t r = 0; r < row_count; r++) {
+        size_t tlen = rows[r].text ? strlen(rows[r].text) : 0;
+        if (line_count > 0 && r > 0 && rows[r - 1].wrapped) {
+            /* Append to previous logical line */
+            size_t old_len = lines[line_count - 1].len;
+            size_t new_len = old_len + tlen;
+            char *merged = realloc(lines[line_count - 1].text, new_len + 1);
+            if (merged) {
+                if (tlen > 0) memcpy(merged + old_len, rows[r].text, tlen);
+                merged[new_len] = '\0';
+                lines[line_count - 1].text = merged;
+                lines[line_count - 1].len = new_len;
+            }
+        } else {
+            lines[line_count].text = rows[r].text ? strdup(rows[r].text) : strdup("");
+            lines[line_count].len = tlen;
+            line_count++;
+        }
+    }
+
+    /* Track cursor position in the logical text */
+    size_t cursor_logical_line = 0;
+    size_t cursor_logical_col = t->grid.cursor.col;
+    {
+        size_t phys_row = 0;
+        size_t log_line = 0;
+        for (size_t r = 0; r < row_count && log_line < line_count; r++) {
+            if (r == t->grid.cursor.row) {
+                cursor_logical_line = log_line;
+                /* Add offset from previous wrapped rows in this logical line */
+                size_t offset = 0;
+                for (size_t pr = phys_row; pr < r; pr++) {
+                    offset += rows[pr].text ? strlen(rows[pr].text) : 0;
+                }
+                cursor_logical_col = offset + t->grid.cursor.col;
+                break;
+            }
+            if (!rows[r].wrapped) {
+                log_line++;
+                phys_row = r + 1;
+            }
+        }
+    }
+
+    /* Resize grid */
+    wixen_terminal_resize(t, new_cols, new_rows);
+
+    /* Re-lay logical lines into the new grid */
+    size_t dest_row = 0;
+    size_t cursor_new_row = 0, cursor_new_col = 0;
+
+    for (size_t l = 0; l < line_count && dest_row < new_rows; l++) {
+        const char *text = lines[l].text;
+        size_t tlen = lines[l].len;
+        size_t col = 0;
+        size_t char_idx = 0;
+
+        while (char_idx < tlen && dest_row < new_rows) {
+            /* Track cursor */
+            if (l == cursor_logical_line && char_idx == cursor_logical_col) {
+                cursor_new_row = dest_row;
+                cursor_new_col = col;
+            }
+
+            char ch = text[char_idx];
+            if (col < new_cols) {
+                wixen_cell_set_content(&t->grid.rows[dest_row].cells[col], (char[]){ch, '\0'});
+                col++;
+                char_idx++;
+            }
+
+            /* Wrap to next row */
+            if (col >= new_cols && char_idx < tlen) {
+                t->grid.rows[dest_row].wrapped = true;
+                dest_row++;
+                col = 0;
+            }
+        }
+
+        /* Handle cursor at end of logical line */
+        if (l == cursor_logical_line && char_idx >= cursor_logical_col) {
+            cursor_new_row = dest_row;
+            cursor_new_col = col;
+        }
+
+        if (dest_row < new_rows) {
+            t->grid.rows[dest_row].wrapped = false;
+            dest_row++;
+        }
+    }
+
+    t->grid.cursor.row = cursor_new_row;
+    t->grid.cursor.col = cursor_new_col;
+
+    /* Cleanup */
+    for (size_t r = 0; r < row_count; r++) free(rows[r].text);
+    free(rows);
+    for (size_t l = 0; l < line_count; l++) free(lines[l].text);
+    free(lines);
+    t->dirty = true;
+}
+
+/* --- Hyperlink at cell --- */
+
+const char *wixen_terminal_hyperlink_at(const WixenTerminal *t, size_t col, size_t row) {
+    if (row >= t->grid.num_rows || col >= t->grid.cols) return NULL;
+    uint32_t link_id = t->grid.rows[row].cells[col].hyperlink_id;
+    if (link_id == 0) return NULL;
+    const WixenHyperlink *link = wixen_hyperlinks_get(&t->hyperlinks, link_id);
+    return link ? link->uri : NULL;
+}
+
+/* --- Selection helpers --- */
+
+void wixen_terminal_select_all(WixenTerminal *t) {
+    wixen_selection_start(&t->selection, 0, 0, WIXEN_SEL_NORMAL);
+    size_t last_row = t->grid.num_rows > 0 ? t->grid.num_rows - 1 : 0;
+    size_t last_col = t->grid.cols > 0 ? t->grid.cols - 1 : 0;
+    wixen_selection_update(&t->selection, last_col, last_row);
+}
+
+void wixen_terminal_clear_selection(WixenTerminal *t) {
+    wixen_selection_clear(&t->selection);
+}
+
 /* --- Echo timeout detection --- */
 
 #ifdef _WIN32
@@ -869,6 +1015,7 @@ static void terminal_print(WixenTerminal *t, uint32_t codepoint) {
     wixen_cell_set_content(cell, utf8);
     cell->attrs = t->grid.current_attrs;
     cell->width = char_width;
+    cell->hyperlink_id = t->current_hyperlink_id;
 
     /* Continuation cell for wide chars */
     if (char_width == 2 && t->grid.cursor.col + 1 < t->grid.cols) {

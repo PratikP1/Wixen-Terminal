@@ -57,6 +57,7 @@ typedef struct {
     char *content;               /* UTF-8, heap-allocated. " " for empty. */
     WixenCellAttributes attrs;
     uint8_t width;               /* 0=wide continuation, 1=normal, 2=wide char */
+    uint32_t hyperlink_id;       /* 0=no link, >0=index into HyperlinkStore */
 } WixenCell;
 
 /* Lifecycle */

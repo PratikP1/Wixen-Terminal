@@ -304,6 +304,18 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_terminal_reflow tests/test_red_terminal_reflow.c)
+target_link_libraries(test_red_terminal_reflow wixen_core wixen_vt)
+add_test(NAME test_red_terminal_reflow COMMAND test_red_terminal_reflow)
+
+add_executable(test_red_hyperlink_open tests/test_red_hyperlink_open.c)
+target_link_libraries(test_red_hyperlink_open wixen_core wixen_vt)
+add_test(NAME test_red_hyperlink_open COMMAND test_red_hyperlink_open)
+
+add_executable(test_red_select_all tests/test_red_select_all.c)
+target_link_libraries(test_red_select_all wixen_core wixen_vt)
+add_test(NAME test_red_select_all COMMAND test_red_select_all)
+
 add_executable(test_red_dpi tests/test_red_dpi.c)
 target_link_libraries(test_red_dpi wixen_render wixen_core)
 add_test(NAME test_red_dpi COMMAND test_red_dpi)

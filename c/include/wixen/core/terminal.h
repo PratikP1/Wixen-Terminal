@@ -150,6 +150,16 @@ bool wixen_terminal_check_echo_timeout(WixenTerminal *t);
 bool wixen_terminal_jump_to_next_prompt(WixenTerminal *t);
 bool wixen_terminal_jump_to_previous_prompt(WixenTerminal *t);
 
+/* Resize with text reflow */
+void wixen_terminal_resize_reflow(WixenTerminal *t, size_t new_cols, size_t new_rows);
+
+/* Hyperlink at grid position. Returns URL or NULL. Do not free. */
+const char *wixen_terminal_hyperlink_at(const WixenTerminal *t, size_t col, size_t row);
+
+/* Selection helpers */
+void wixen_terminal_select_all(WixenTerminal *t);
+void wixen_terminal_clear_selection(WixenTerminal *t);
+
 /* Clipboard (OSC 52) */
 char *wixen_terminal_drain_clipboard_write(WixenTerminal *t);
 void wixen_terminal_inject_clipboard(WixenTerminal *t, const char *text);
