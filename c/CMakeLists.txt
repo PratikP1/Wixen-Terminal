@@ -311,6 +311,10 @@ add_executable(test_red_pty_close tests/test_red_pty_close.c)
 target_link_libraries(test_red_pty_close wixen_pty)
 add_test(NAME test_red_pty_close COMMAND test_red_pty_close)
 
+add_executable(test_red_shell_path tests/test_red_shell_path.c)
+target_link_libraries(test_red_shell_path wixen_config wixen_pty)
+add_test(NAME test_red_shell_path COMMAND test_red_shell_path)
+
 add_executable(test_red_profile_launch tests/test_red_profile_launch.c)
 target_link_libraries(test_red_profile_launch wixen_config)
 add_test(NAME test_red_profile_launch COMMAND test_red_profile_launch)

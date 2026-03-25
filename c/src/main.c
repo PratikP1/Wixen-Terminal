@@ -134,17 +134,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     bool has_session = wixen_session_load(&saved_session, session_path);
 
     if (has_session && saved_session.tab_count > 0) {
-        /* Restore tabs from saved session */
+        /* Restore tabs from saved session — spawn PTY for each */
         for (size_t i = 0; i < saved_session.tab_count && pane_state_count < MAX_PANES; i++) {
-            WixenPaneState *ps = &pane_states[pane_state_count];
-            wixen_terminal_init(&ps->terminal, cols, rows);
-            wixen_shell_integ_init(&ps->shell_integ);
-            wixen_parser_init(&ps->parser);
-            /* Use saved CWD if available */
+            WixenPaneState *pst = &pane_states[pane_state_count];
+            wixen_terminal_init(&pst->terminal, cols, rows);
+            wixen_shell_integ_init(&pst->shell_integ);
+            wixen_parser_init(&pst->parser);
+            /* Use saved program/CWD if available, fall back to default */
             const char *cwd = saved_session.tabs[i].working_directory;
             wchar_t wcwd[MAX_PATH] = {0};
             if (cwd && cwd[0]) MultiByteToWideChar(CP_UTF8, 0, cwd, -1, wcwd, MAX_PATH);
-            ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL,
+            wchar_t *spawn_shell = shell; /* Default from profile */
+            wchar_t saved_shell[MAX_PATH] = {0};
+            const char *sp = saved_session.tabs[i].profile_name;
+            if (sp && sp[0]) {
+                MultiByteToWideChar(CP_UTF8, 0, sp, -1, saved_shell, MAX_PATH);
+                /* Only use saved shell if it exists on PATH */
+                wchar_t found[MAX_PATH];
+                if (SearchPathW(NULL, saved_shell, NULL, MAX_PATH, found, NULL))
+                    spawn_shell = saved_shell;
+            }
+            pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows, spawn_shell, NULL,
                 wcwd[0] ? wcwd : NULL, window.hwnd);
             pane_state_count++;
             WixenPaneId np = (WixenPaneId)(i + 1);
