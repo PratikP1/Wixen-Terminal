@@ -1508,13 +1508,17 @@ static void terminal_esc(WixenTerminal *t, const WixenAction *action) {
             }
         }
         if (inter == '#' && final == '8') {
-            /* DECALN — fill screen with 'E' */
+            /* DECALN — fill screen with 'E' and home cursor */
             for (size_t r = 0; r < t->grid.num_rows; r++) {
                 for (size_t c = 0; c < t->grid.cols; c++) {
                     WixenCell *cell = wixen_grid_cell(&t->grid, c, r);
                     if (cell) wixen_cell_set_content(cell, "E");
                 }
             }
+            t->grid.cursor.row = 0;
+            t->grid.cursor.col = 0;
+            t->scroll_region.top = 0;
+            t->scroll_region.bottom = t->grid.num_rows;
             t->dirty = true;
         }
     }
