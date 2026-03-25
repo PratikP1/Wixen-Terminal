@@ -298,9 +298,11 @@ LRESULT wixen_a11y_handle_wm_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam) 
     return DefWindowProcW(hwnd, WM_GETOBJECT, wparam, lparam);
 }
 
-void wixen_a11y_raise_focus_changed(IRawElementProviderSimple *provider) {
+void wixen_a11y_raise_focus_changed_provider(IRawElementProviderSimple *provider) {
     UiaRaiseAutomationEvent(provider, UIA_AutomationFocusChangedEventId);
 }
+
+/* wixen_a11y_raise_focus_changed(HWND) is defined below, after g_provider */
 
 void wixen_a11y_raise_text_changed(IRawElementProviderSimple *provider) {
     UiaRaiseAutomationEvent(provider, UIA_Text_TextChangedEventId);
@@ -389,6 +391,13 @@ void wixen_a11y_update_cursor(const void *grid_ptr) {
     if (!grid_ptr) return;
     const WixenGrid *grid = (const WixenGrid *)grid_ptr;
     wixen_a11y_state_update_cursor(&g_a11y_state, grid->cursor.row, grid->cursor.col);
+}
+
+void wixen_a11y_raise_focus_changed(HWND hwnd) {
+    (void)hwnd;
+    if (g_provider) {
+        UiaRaiseAutomationEvent(g_provider, UIA_AutomationFocusChangedEventId);
+    }
 }
 
 void wixen_a11y_raise_selection_changed(HWND hwnd) {

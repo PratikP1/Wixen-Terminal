@@ -778,6 +778,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 }
                 break;
             case WIXEN_EVT_FOCUS_GAINED:
+                /* Tell NVDA we have focus — without this event, NVDA
+                 * ignores our window even if Win32 focus is correct. */
+                wixen_a11y_raise_focus_changed(window.hwnd);
                 wixen_a11y_raise_selection_changed(window.hwnd);
                 /* Report focus to terminal if focus reporting is on */
                 if (ps->terminal.modes.focus_reporting && ps->pty_running)

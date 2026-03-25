@@ -23,6 +23,7 @@ void wixen_a11y_provider_init(HWND hwnd, void *terminal);
 void wixen_a11y_provider_shutdown(HWND hwnd);
 void wixen_a11y_update_cursor(const void *grid);
 void wixen_a11y_raise_selection_changed(HWND hwnd);
+void wixen_a11y_raise_focus_changed(HWND hwnd);
 void wixen_a11y_raise_notification(HWND hwnd, const char *text, const char *activity_id);
 void wixen_a11y_state_update_text_global(const char *text, size_t len);
 void wixen_a11y_set_cursor_offset(int32_t utf16_offset);
@@ -41,7 +42,7 @@ IRawElementProviderSimple *wixen_a11y_create_provider(HWND hwnd, WixenA11yState 
 LRESULT wixen_a11y_handle_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam,
                                      IRawElementProviderSimple *provider);
 
-void wixen_a11y_raise_focus_changed(IRawElementProviderSimple *provider);
+void wixen_a11y_raise_focus_changed_provider(IRawElementProviderSimple *provider);
 void wixen_a11y_raise_text_changed(IRawElementProviderSimple *provider);
 void wixen_a11y_raise_structure_changed(IRawElementProviderSimple *provider);
 

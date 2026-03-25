@@ -292,13 +292,44 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
     return true;
 }
 
+/* Reliably acquire foreground focus using the AllocConsole trick.
+ * See: https://github.com/amarmer/SetForegroundWindow
+ *
+ * The console subsystem has special foreground privileges. By briefly
+ * allocating a console, we inherit those privileges. The console window
+ * is hidden and freed immediately — the user never sees it. */
+static void force_foreground(HWND hwnd) {
+    /* Try direct first — works when launched from Explorer */
+    if (SetForegroundWindow(hwnd)) {
+        SetFocus(hwnd);
+        return;
+    }
+
+    /* AllocConsole trick: console creation carries foreground rights */
+    FreeConsole();
+    if (AllocConsole()) {
+        HWND console = GetConsoleWindow();
+        if (console) {
+            ShowWindow(console, SW_HIDE);
+            /* Now we have foreground rights via the console */
+            SetForegroundWindow(hwnd);
+        }
+        FreeConsole();
+    }
+
+    /* Ensure our window is activated regardless */
+    SetForegroundWindow(hwnd);
+    BringWindowToTop(hwnd);
+    SetFocus(hwnd);
+
+    /* Last resort: flash the taskbar if all else fails */
+    FLASHWINFO fi = { sizeof(fi), hwnd, FLASHW_ALL | FLASHW_TIMERNOFG, 3, 0 };
+    FlashWindowEx(&fi);
+}
+
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        /* Window was created with WS_VISIBLE so it's already showing.
-         * Just ensure it's activated and has focus. If launched from
-         * Explorer, the window should already be foreground from creation. */
-        SetForegroundWindow(w->hwnd);
-        SetFocus(w->hwnd);
+        force_foreground(w->hwnd);
 
         w->visible = true;
     }
