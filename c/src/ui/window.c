@@ -180,7 +180,9 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
 
     case WM_SYSCOMMAND:
         /* Custom system menu items (Alt+Space → Settings) */
-        if ((wparam & 0xFFF0) == WIXEN_CTX_SETTINGS) {
+        /* System menu custom IDs use SC_* range. Our settings = 0x0100 */
+        #define SC_WIXEN_SETTINGS 0x0100
+        if ((wparam & 0xFFF0) == SC_WIXEN_SETTINGS) {
             if (q) {
                 WixenWindowEvent evt = { .type = WIXEN_EVT_CONTEXT_MENU };
                 evt.context_action = WIXEN_CTX_SETTINGS;
@@ -262,7 +264,7 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
         HMENU sys_menu = GetSystemMenu(w->hwnd, FALSE);
         if (sys_menu) {
             AppendMenuW(sys_menu, MF_SEPARATOR, 0, NULL);
-            AppendMenuW(sys_menu, MF_STRING, WIXEN_CTX_SETTINGS, L"S&ettings\tCtrl+,");
+            AppendMenuW(sys_menu, MF_STRING, SC_WIXEN_SETTINGS, L"S&ettings\tCtrl+,");
         }
     }
 

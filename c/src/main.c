@@ -1021,8 +1021,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
         }
 
-        /* Brief sleep to avoid spinning CPU */
-        Sleep(1);
+        /* Wait for messages or 16ms timeout (~60fps).
+         * MsgWaitForMultipleObjects wakes on COM dispatches from
+         * UIA threads — Sleep(1) would not. This prevents freezes
+         * when NVDA calls GetSelection during frame processing. */
+        MsgWaitForMultipleObjects(0, NULL, FALSE, 16, QS_ALLINPUT);
     }
 
     /* Save session before exit */
