@@ -26,7 +26,7 @@ TEST red_hyperlink_at_cell(void) {
     wixen_terminal_init(&t, 40, 5);
     wixen_parser_init(&p);
     /* OSC 8 ; ; https://example.com BEL  + text + OSC 8 ;; BEL (close) */
-    feed(&t, &p, "\x1b]8;;https://example.com\x07Click me\x1b]8;;\x07");
+    feed(&t, &p, "\x1b]8;;https://example.com\x07" "Click me" "\x1b]8;;\x07");
     /* Cell at (0,0) should have a hyperlink */
     const char *url = wixen_terminal_hyperlink_at(&t, 0, 0);
     ASSERT(url != NULL);
