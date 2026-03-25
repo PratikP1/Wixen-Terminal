@@ -175,6 +175,7 @@ if(WIN32)
         src/a11y/text_provider.c
         src/a11y/events.c
         src/a11y/tree.c
+        src/a11y/state.c
     )
 endif()
 
@@ -303,6 +304,14 @@ add_test(NAME test_grid_visible_text COMMAND test_grid_visible_text)
 add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
+
+add_executable(test_red_parser_recovery tests/test_red_parser_recovery.c)
+target_link_libraries(test_red_parser_recovery wixen_core wixen_vt)
+add_test(NAME test_red_parser_recovery COMMAND test_red_parser_recovery)
+
+add_executable(test_red_threads tests/test_red_threads.c)
+target_link_libraries(test_red_threads wixen_a11y)
+add_test(NAME test_red_threads COMMAND test_red_threads)
 
 add_executable(test_red_leaks tests/test_red_leaks.c)
 target_link_libraries(test_red_leaks wixen_core wixen_vt wixen_a11y wixen_search wixen_config)
