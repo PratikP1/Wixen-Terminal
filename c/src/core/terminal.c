@@ -5,6 +5,10 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef _MSC_VER
+#define strdup _strdup
+#endif
+
 /* --- Helpers --- */
 
 static size_t effective_top(const WixenTerminal *t) {
@@ -88,6 +92,8 @@ void wixen_terminal_free(WixenTerminal *t) {
     free(t->title);
     wixen_hyperlinks_free(&t->hyperlinks);
     wixen_shell_integ_free(&t->shell_integ);
+    free(t->clipboard_write_pending);
+    free(t->clipboard_injected);
     free_tab_stops(&t->tab_stops);
     for (size_t i = 0; i < t->response_count; i++) {
         free(t->responses[i]);
@@ -693,6 +699,88 @@ const char *wixen_terminal_pop_response(WixenTerminal *t) {
     return resp; /* Caller must free */
 }
 
+/* --- Base64 --- */
+
+static const char b64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+char *wixen_base64_encode(const uint8_t *data, size_t len) {
+    size_t out_len = ((len + 2) / 3) * 4;
+    char *out = malloc(out_len + 1);
+    if (!out) return NULL;
+    size_t j = 0;
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t triple = ((uint32_t)data[i]) << 16;
+        if (i + 1 < len) triple |= ((uint32_t)data[i + 1]) << 8;
+        if (i + 2 < len) triple |= data[i + 2];
+        out[j++] = b64_chars[(triple >> 18) & 0x3F];
+        out[j++] = b64_chars[(triple >> 12) & 0x3F];
+        out[j++] = (i + 1 < len) ? b64_chars[(triple >> 6) & 0x3F] : '=';
+        out[j++] = (i + 2 < len) ? b64_chars[triple & 0x3F] : '=';
+    }
+    out[j] = '\0';
+    return out;
+}
+
+static int b64_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+uint8_t *wixen_base64_decode(const char *b64, size_t *out_len) {
+    size_t in_len = strlen(b64);
+    /* Strip padding */
+    while (in_len > 0 && b64[in_len - 1] == '=') in_len--;
+    size_t out_cap = (in_len * 3) / 4 + 3;
+    uint8_t *out = malloc(out_cap);
+    if (!out) { *out_len = 0; return NULL; }
+    size_t j = 0;
+    for (size_t i = 0; i < in_len; i += 4) {
+        int a = b64_val(b64[i]);
+        int b = (i + 1 < in_len) ? b64_val(b64[i + 1]) : 0;
+        int c = (i + 2 < in_len) ? b64_val(b64[i + 2]) : 0;
+        int d = (i + 3 < in_len) ? b64_val(b64[i + 3]) : 0;
+        if (a < 0) a = 0; if (b < 0) b = 0;
+        uint32_t triple = ((uint32_t)a << 18) | ((uint32_t)b << 12) | ((uint32_t)c << 6) | d;
+        if (j < out_cap) out[j++] = (triple >> 16) & 0xFF;
+        if (i + 2 < in_len && j < out_cap) out[j++] = (triple >> 8) & 0xFF;
+        if (i + 3 < in_len && j < out_cap) out[j++] = triple & 0xFF;
+    }
+    *out_len = j;
+    return out;
+}
+
+/* --- Clipboard (OSC 52) --- */
+
+char *wixen_terminal_drain_clipboard_write(WixenTerminal *t) {
+    char *text = t->clipboard_write_pending;
+    t->clipboard_write_pending = NULL;
+    if (!text) {
+        text = malloc(1);
+        if (text) text[0] = '\0';
+    }
+    return text;
+}
+
+void wixen_terminal_inject_clipboard(WixenTerminal *t, const char *text) {
+    free(t->clipboard_injected);
+    t->clipboard_injected = text ? strdup(text) : NULL;
+}
+
+static void push_response(WixenTerminal *t, const char *resp) {
+    if (t->response_count >= t->response_cap) {
+        size_t new_cap = t->response_cap ? t->response_cap * 2 : 8;
+        char **new_buf = realloc(t->responses, new_cap * sizeof(char *));
+        if (!new_buf) return;
+        t->responses = new_buf;
+        t->response_cap = new_cap;
+    }
+    t->responses[t->response_count++] = strdup(resp);
+}
+
 /* --- Print character (from ground state) --- */
 
 /* DEC Special Graphics charset mapping (box drawing) */
@@ -893,6 +981,52 @@ static void terminal_osc(WixenTerminal *t, const uint8_t *data, size_t len) {
         /* For now, acknowledge but don't change palette */
         break;
     }
+    case 52: { /* Clipboard — OSC 52;target;data */
+        /* target: c=clipboard, p=primary. data: ?=query, base64=write, empty=clear */
+        const char *semi = memchr(payload, ';', payload_len);
+        if (semi) {
+            const char *data_start = semi + 1;
+            size_t data_len = payload_len - (size_t)(data_start - payload);
+            if (data_len == 1 && data_start[0] == '?') {
+                /* Query — respond with current clipboard content */
+                const char *clip = t->clipboard_injected ? t->clipboard_injected : "";
+                char *b64 = wixen_base64_encode((const uint8_t *)clip, strlen(clip));
+                if (b64) {
+                    size_t resp_len = 16 + strlen(b64);
+                    char *resp = malloc(resp_len);
+                    if (resp) {
+                        snprintf(resp, resp_len, "\x1b]52;c;%s\x07", b64);
+                        push_response(t, resp);
+                    }
+                    free(b64);
+                }
+            } else {
+                /* Write or clear */
+                free(t->clipboard_write_pending);
+                if (data_len == 0) {
+                    t->clipboard_write_pending = strdup("");
+                } else {
+                    char *b64_str = malloc(data_len + 1);
+                    if (b64_str) {
+                        memcpy(b64_str, data_start, data_len);
+                        b64_str[data_len] = '\0';
+                        size_t decoded_len = 0;
+                        uint8_t *decoded = wixen_base64_decode(b64_str, &decoded_len);
+                        free(b64_str);
+                        if (decoded) {
+                            t->clipboard_write_pending = malloc(decoded_len + 1);
+                            if (t->clipboard_write_pending) {
+                                memcpy(t->clipboard_write_pending, decoded, decoded_len);
+                                t->clipboard_write_pending[decoded_len] = '\0';
+                            }
+                            free(decoded);
+                        }
+                    }
+                }
+            }
+        }
+        break;
+    }
     case 8: { /* Hyperlinks — OSC 8;params;uri */
         /* Format: params (e.g., "id=xxx") ; uri */
         /* Empty uri = close link. Non-empty = open link. */
@@ -931,12 +1065,7 @@ static void terminal_osc(WixenTerminal *t, const uint8_t *data, size_t len) {
         }
         break;
     }
-    case 52: { /* Clipboard — OSC 52;selection;base64-data */
-        /* selection = "c" (clipboard), "p" (primary), "s" (select) */
-        /* For now, store the clipboard request for the host to handle */
-        /* A "?" query means the app wants clipboard contents */
-        break;
-    }
+    /* OSC 52 handled above (line ~980) */
     case 12: /* Cursor color query */
         if (payload_len > 0 && payload[0] == '?') {
             queue_response(t, "\x1b]12;rgb:ff/ff/ff\x1b\\");

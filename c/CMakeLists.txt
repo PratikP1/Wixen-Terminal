@@ -303,6 +303,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_clipboard tests/test_red_clipboard.c)
+target_link_libraries(test_red_clipboard wixen_core wixen_vt)
+add_test(NAME test_red_clipboard COMMAND test_red_clipboard)
+
+add_executable(test_red_ipc tests/test_red_ipc.c)
+target_link_libraries(test_red_ipc wixen_ipc)
+add_test(NAME test_red_ipc COMMAND test_red_ipc)
+
 add_executable(test_red_a11y_events tests/test_red_a11y_events.c)
 target_link_libraries(test_red_a11y_events wixen_a11y)
 add_test(NAME test_red_a11y_events COMMAND test_red_a11y_events)

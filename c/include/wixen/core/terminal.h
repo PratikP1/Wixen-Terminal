@@ -66,6 +66,10 @@ typedef struct {
     char last_char_sent;             /* The char we're waiting to see echoed */
     bool last_char_was_echoed;       /* Terminal echoed it back */
 
+    /* Clipboard (OSC 52) */
+    char *clipboard_write_pending;   /* Text to write to clipboard (NULL if none) */
+    char *clipboard_injected;        /* Injected clipboard content for query response */
+
     /* Pending responses (DSR etc.) — simple queue */
     char **responses;
     size_t response_count;
@@ -145,6 +149,14 @@ bool wixen_terminal_check_echo_timeout(WixenTerminal *t);
 /* Prompt jumping (requires shell integration) */
 bool wixen_terminal_jump_to_next_prompt(WixenTerminal *t);
 bool wixen_terminal_jump_to_previous_prompt(WixenTerminal *t);
+
+/* Clipboard (OSC 52) */
+char *wixen_terminal_drain_clipboard_write(WixenTerminal *t);
+void wixen_terminal_inject_clipboard(WixenTerminal *t, const char *text);
+
+/* Base64 */
+char *wixen_base64_encode(const uint8_t *data, size_t len);
+uint8_t *wixen_base64_decode(const char *b64, size_t *out_len);
 
 /* Queued responses */
 const char *wixen_terminal_pop_response(WixenTerminal *t);

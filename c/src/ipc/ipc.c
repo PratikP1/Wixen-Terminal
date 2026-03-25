@@ -101,4 +101,87 @@ bool wixen_ipc_server_exists(void) {
     return false;
 }
 
+/* --- Message serialization --- */
+/* Simple binary format: [4-byte type][4-byte window_id][4-byte profile_len][profile][4-byte cwd_len][cwd] */
+#define IPC_MAGIC 0x57495843  /* "WIXC" */
+
+#include <stdlib.h>
+#include <stdio.h>
+
+bool wixen_ipc_msg_serialize(const WixenIpcMessage *msg, uint8_t **out_buf, size_t *out_len) {
+    size_t prof_len = (msg->new_tab.profile) ? strlen(msg->new_tab.profile) : 0;
+    size_t cwd_len = (msg->new_tab.cwd) ? strlen(msg->new_tab.cwd) : 0;
+    size_t total = 4 + 4 + 4 + 4 + prof_len + 4 + cwd_len;
+    uint8_t *buf = malloc(total);
+    if (!buf) return false;
+    size_t pos = 0;
+    /* Magic */
+    memcpy(buf + pos, &(uint32_t){IPC_MAGIC}, 4); pos += 4;
+    /* Type */
+    uint32_t type = (uint32_t)msg->type;
+    memcpy(buf + pos, &type, 4); pos += 4;
+    /* Window ID */
+    memcpy(buf + pos, &msg->window_id, 4); pos += 4;
+    /* Profile string */
+    uint32_t plen = (uint32_t)prof_len;
+    memcpy(buf + pos, &plen, 4); pos += 4;
+    if (prof_len > 0) { memcpy(buf + pos, msg->new_tab.profile, prof_len); pos += prof_len; }
+    /* CWD string */
+    uint32_t clen = (uint32_t)cwd_len;
+    memcpy(buf + pos, &clen, 4); pos += 4;
+    if (cwd_len > 0) { memcpy(buf + pos, msg->new_tab.cwd, cwd_len); pos += cwd_len; }
+    *out_buf = buf;
+    *out_len = pos;
+    return true;
+}
+
+bool wixen_ipc_msg_deserialize(const uint8_t *buf, size_t len, WixenIpcMessage *out_msg) {
+    if (len < 16) return false; /* Minimum: magic + type + window_id + prof_len */
+    size_t pos = 0;
+    uint32_t magic;
+    memcpy(&magic, buf + pos, 4); pos += 4;
+    if (magic != IPC_MAGIC) return false;
+    memset(out_msg, 0, sizeof(*out_msg));
+    uint32_t type;
+    memcpy(&type, buf + pos, 4); pos += 4;
+    out_msg->type = (WixenIpcMessageType)type;
+    memcpy(&out_msg->window_id, buf + pos, 4); pos += 4;
+    /* Profile */
+    uint32_t plen;
+    memcpy(&plen, buf + pos, 4); pos += 4;
+    if (pos + plen > len) return false;
+    if (plen > 0) {
+        out_msg->new_tab.profile = malloc(plen + 1);
+        if (out_msg->new_tab.profile) {
+            memcpy(out_msg->new_tab.profile, buf + pos, plen);
+            out_msg->new_tab.profile[plen] = '\0';
+        }
+        pos += plen;
+    }
+    /* CWD */
+    if (pos + 4 <= len) {
+        uint32_t clen;
+        memcpy(&clen, buf + pos, 4); pos += 4;
+        if (pos + clen <= len && clen > 0) {
+            out_msg->new_tab.cwd = malloc(clen + 1);
+            if (out_msg->new_tab.cwd) {
+                memcpy(out_msg->new_tab.cwd, buf + pos, clen);
+                out_msg->new_tab.cwd[clen] = '\0';
+            }
+        }
+    }
+    return true;
+}
+
+void wixen_ipc_msg_free(WixenIpcMessage *msg) {
+    free(msg->new_tab.profile);
+    free(msg->new_tab.cwd);
+    msg->new_tab.profile = NULL;
+    msg->new_tab.cwd = NULL;
+}
+
+void wixen_ipc_pipe_name(char *buf, size_t buf_size) {
+    snprintf(buf, buf_size, "\\\\.\\pipe\\wixen-terminal-ipc");
+}
+
 #endif /* _WIN32 */
