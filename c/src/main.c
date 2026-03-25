@@ -25,6 +25,7 @@
 #include "wixen/a11y/events.h"
 #include "wixen/a11y/frame_update.h"
 #include "wixen/a11y/state.h"
+#include "wixen/a11y/tree.h"
 #include "wixen/ui/clipboard.h"
 #include "wixen/core/mouse.h"
 #include "wixen/shell_integ/shell_integ.h"
@@ -172,8 +173,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenFrameA11yState frame_a11y;
     wixen_frame_a11y_init(&frame_a11y, config.accessibility.output_debounce_ms);
 
-    /* Thread-safe a11y state for UIA threads */
+    /* A11y tree for screen reader fragment navigation */
+    WixenA11yTree a11y_tree;
+    wixen_a11y_tree_init(&a11y_tree);
+
+    /* Thread-safe a11y state for UIA threads (used by provider) */
     WixenA11yState *a11y_shared = wixen_a11y_state_create();
+    (void)a11y_shared; /* Will be wired to provider in next step */
 
     /* Main event loop */
     bool running = true;
@@ -882,7 +888,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 uint64_t gen = wixen_shell_integ_generation(&ps->shell_integ);
                 if (gen != ps->last_shell_gen) {
                     ps->last_shell_gen = gen;
-                    /* #11: Tree rebuild would go here */
+                    /* #11: Rebuild a11y tree from shell_integ blocks */
+                    {
+                        size_t bc = 0;
+                        const WixenCommandBlock *all_blocks =
+                            wixen_shell_integ_blocks(&ps->shell_integ, &bc);
+                        wixen_a11y_tree_rebuild(&a11y_tree, all_blocks, bc);
+                        /* Structure changed event would be raised via provider */
+                    }
                     const WixenCommandBlock *blk = wixen_shell_integ_current_block(&ps->shell_integ);
                     if (blk && blk->state == WIXEN_BLOCK_COMPLETED && blk->has_exit_code) {
                         char cmd_msg[256];
@@ -1025,6 +1038,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
 
     /* Cleanup */
+    wixen_frame_a11y_free(&frame_a11y);
+    wixen_a11y_tree_free(&a11y_tree);
+    wixen_a11y_state_destroy(a11y_shared);
     wixen_throttler_free(&pane_throttler);
     wixen_a11y_provider_shutdown(window.hwnd);
     wixen_tray_destroy(&tray);

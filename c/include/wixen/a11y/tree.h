@@ -45,25 +45,43 @@ struct WixenA11yNode {
     size_t child_cap;
 };
 
+/* Command block view (for screen reader navigation) */
+typedef struct {
+    size_t prompt_start_row;
+    size_t output_start_row;
+    size_t output_end_row;
+    int exit_code;
+    bool completed;
+    char *command_text;
+} WixenA11yBlock;
+
 typedef struct {
     WixenA11yNode root;
     WixenNodeId next_id;
+    WixenA11yBlock *blocks;
+    size_t block_count;
+    size_t block_cap;
 } WixenAccessibilityTree;
+
+typedef WixenAccessibilityTree WixenA11yTree;
 
 void wixen_a11y_tree_init(WixenAccessibilityTree *tree);
 void wixen_a11y_tree_free(WixenAccessibilityTree *tree);
 
-/* Add a child node to parent. Returns pointer to the new child. */
 WixenA11yNode *wixen_a11y_tree_add_child(WixenAccessibilityTree *tree,
                                           WixenA11yNode *parent,
                                           WixenNodeType type,
                                           WixenSemanticRole role,
                                           const char *name);
 
-/* Clear all children and rebuild */
 void wixen_a11y_tree_clear(WixenAccessibilityTree *tree);
-
-/* Count total nodes in tree */
 size_t wixen_a11y_tree_node_count(const WixenAccessibilityTree *tree);
+
+#include "wixen/shell_integ/shell_integ.h"
+void wixen_a11y_tree_rebuild(WixenA11yTree *tree,
+                              const WixenCommandBlock *blocks,
+                              size_t block_count);
+size_t wixen_a11y_tree_block_count(const WixenA11yTree *tree);
+const WixenA11yBlock *wixen_a11y_tree_get_block(const WixenA11yTree *tree, size_t index);
 
 #endif /* WIXEN_A11Y_TREE_H */
