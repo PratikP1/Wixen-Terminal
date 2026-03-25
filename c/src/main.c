@@ -1072,7 +1072,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         for (size_t i = 0; i < tab_count; i++) {
             const char *cwd = (pane_state_count > i && pane_states[i].shell_integ.cwd)
                 ? pane_states[i].shell_integ.cwd : "";
-            wixen_session_add_tab(&session, all_tabs[i].title, "powershell.exe", cwd);
+            /* Save the default profile's program, not a hardcoded shell */
+            const WixenProfile *prof = wixen_config_default_profile(&config);
+            const char *prog = (prof && prof->program) ? prof->program : "pwsh.exe";
+            wixen_session_add_tab(&session, all_tabs[i].title, prog, cwd);
         }
         char save_path[MAX_PATH];
         wixen_config_default_path(save_path, sizeof(save_path));
@@ -1082,39 +1085,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         wixen_session_free(&session);
     }
 
-    /* Cleanup — destroy window and renderer FIRST so the user sees
-     * the window disappear immediately. PTY cleanup can take seconds
-     * (TerminateProcess + ClosePseudoConsole) and must not freeze
-     * a visible window. BUG #27 follow-up. */
-    wixen_a11y_provider_shutdown(window.hwnd);
-    wixen_tray_destroy(&tray);
-    wixen_renderer_destroy(renderer);
-    wixen_window_destroy(&window);
-
-    /* Now clean up PTY (may block briefly — window already gone) */
-    if (ps->pty_running) wixen_pty_close(&ps->pty);
-
-    /* Remaining cleanup (fast) */
-    wixen_frame_a11y_free(&frame_a11y);
-    wixen_a11y_tree_free(&a11y_tree);
-    wixen_a11y_state_destroy(a11y_shared);
-    wixen_throttler_free(&pane_throttler);
-    wixen_watcher_stop(&cfg_watcher);
-    wixen_config_free(&config);
-    wixen_shell_integ_free(&ps->shell_integ);
-    wixen_parser_free(&ps->parser);
-    wixen_terminal_free(&ps->terminal);
-    wixen_panes_free(&pane_tree);
-    wixen_tabs_free(&tabs);
-    wixen_keybindings_free(&keybindings);
-
-    CoUninitialize();
-
-    /* Force exit — ClosePseudoConsole runs on a detached background
-     * thread and can take 10-30 seconds. The CRT's ExitProcess waits
-     * for all threads by default. We've already cleaned up everything
-     * that matters; kill lingering kernel-cleanup threads. BUG #30. */
-    ExitProcess(0);
+    /* BUG #30: ExitProcess(0) hangs — a DllMain or thread cleanup blocks.
+     * TerminateProcess is the only guaranteed instant kill. It skips
+     * DLL detach notifications entirely. Windows reclaims all resources. */
+    TerminateProcess(GetCurrentProcess(), 0);
 }
 
 #else
