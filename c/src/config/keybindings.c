@@ -118,17 +118,52 @@ void wixen_keybindings_free(WixenKeybindingMap *km) {
     memset(km, 0, sizeof(*km));
 }
 
+bool wixen_keybindings_remove(WixenKeybindingMap *km, const char *chord) {
+    char *norm = wixen_chord_normalize(chord);
+    if (!norm) return false;
+    for (size_t i = 0; i < km->count; i++) {
+        if (strcmp(km->bindings[i].chord, norm) == 0) {
+            free(km->bindings[i].chord);
+            free(km->bindings[i].action);
+            free(km->bindings[i].args);
+            /* Shift remaining entries */
+            memmove(&km->bindings[i], &km->bindings[i + 1],
+                    (km->count - i - 1) * sizeof(WixenKeybinding));
+            km->count--;
+            free(norm);
+            return true;
+        }
+    }
+    free(norm);
+    return false;
+}
+
 void wixen_keybindings_add(WixenKeybindingMap *km,
                             const char *chord, const char *action, const char *args) {
+    char *norm = wixen_chord_normalize(chord);
+    if (!norm) return;
+
+    /* Check for existing binding with same chord — update in place */
+    for (size_t i = 0; i < km->count; i++) {
+        if (strcmp(km->bindings[i].chord, norm) == 0) {
+            free(km->bindings[i].action);
+            free(km->bindings[i].args);
+            km->bindings[i].action = dup_str(action);
+            km->bindings[i].args = dup_str(args);
+            free(norm);
+            return;
+        }
+    }
+
+    /* New binding */
     if (km->count >= km->cap) {
         size_t new_cap = km->cap ? km->cap * 2 : 64;
         WixenKeybinding *new_arr = realloc(km->bindings, new_cap * sizeof(WixenKeybinding));
-        if (!new_arr) return;
+        if (!new_arr) { free(norm); return; }
         km->bindings = new_arr;
         km->cap = new_cap;
     }
 
-    char *norm = wixen_chord_normalize(chord);
     WixenKeybinding *b = &km->bindings[km->count++];
     b->chord = norm;
     b->action = dup_str(action);

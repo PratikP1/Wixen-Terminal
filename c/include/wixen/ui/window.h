@@ -104,6 +104,15 @@ typedef struct {
 } WixenContextMenuItem;
 
 const WixenContextMenuItem *wixen_context_menu_items(size_t *out_count);
+bool wixen_context_menu_focus_first(void);
+
+typedef struct {
+    const char *label;
+    const char *action;
+} WixenSystemMenuItem;
+
+const WixenSystemMenuItem *wixen_system_menu_items(size_t *out_count);
+
 const char *wixen_window_default_title(void);
 char *wixen_window_format_title(const char *tab_name, const char *cwd);
 

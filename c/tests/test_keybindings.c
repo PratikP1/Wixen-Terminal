@@ -169,8 +169,8 @@ TEST map_override_binding(void) {
     wixen_keybindings_init(&km);
     wixen_keybindings_add(&km, "ctrl+t", "action1", NULL);
     wixen_keybindings_add(&km, "ctrl+t", "action2", NULL);
-    /* First match wins (like the Rust version) */
-    ASSERT_STR_EQ("action1", wixen_keybindings_lookup(&km, "ctrl+t"));
+    /* Second add updates in place — latest action wins */
+    ASSERT_STR_EQ("action2", wixen_keybindings_lookup(&km, "ctrl+t"));
     wixen_keybindings_free(&km);
     PASS();
 }

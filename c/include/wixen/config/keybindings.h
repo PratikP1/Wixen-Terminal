@@ -44,6 +44,9 @@ char *wixen_chord_normalize(const char *chord);
 /* Parse a chord into components */
 bool wixen_chord_parse(const char *chord, WixenParsedChord *out);
 
+/* Remove a keybinding by chord. Returns true if found and removed. */
+bool wixen_keybindings_remove(WixenKeybindingMap *km, const char *chord);
+
 /* Load default keybindings (Windows Terminal-compatible) */
 void wixen_keybindings_load_defaults(WixenKeybindingMap *km);
 

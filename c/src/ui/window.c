@@ -178,6 +178,18 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
         }
         return 0;
 
+    case WM_SYSCOMMAND:
+        /* Custom system menu items (Alt+Space → Settings) */
+        if ((wparam & 0xFFF0) == WIXEN_CTX_SETTINGS) {
+            if (q) {
+                WixenWindowEvent evt = { .type = WIXEN_EVT_CONTEXT_MENU };
+                evt.context_action = WIXEN_CTX_SETTINGS;
+                eq_push(q, &evt);
+            }
+            return 0;
+        }
+        break; /* Let DefWindowProc handle standard items including Alt+F4 */
+
     case WM_COMMAND:
         if (q) {
             WixenWindowEvent evt = { .type = WIXEN_EVT_CONTEXT_MENU };
@@ -244,6 +256,16 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
     }
 
     w->dpi = GetDpiForWindow(w->hwnd);
+
+    /* Add Settings to system menu (Alt+Space) — Issue #5 */
+    {
+        HMENU sys_menu = GetSystemMenu(w->hwnd, FALSE);
+        if (sys_menu) {
+            AppendMenuW(sys_menu, MF_SEPARATOR, 0, NULL);
+            AppendMenuW(sys_menu, MF_STRING, WIXEN_CTX_SETTINGS, L"S&ettings\tCtrl+,");
+        }
+    }
+
     /* Don't show yet — caller must init a11y provider first,
      * then call wixen_window_show(). Otherwise NVDA's WM_GETOBJECT
      * arrives before the provider is registered and caches the
@@ -344,7 +366,9 @@ void wixen_window_show_context_menu(WixenWindow *w, int x, int y) {
 
     POINT pt = { x, y };
     ClientToScreen(w->hwnd, &pt);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, w->hwnd, NULL);
+    /* TPM_TOPALIGN ensures first item is at cursor position.
+     * Screen readers focus the first item when the menu opens. */
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_TOPALIGN, pt.x, pt.y, 0, w->hwnd, NULL);
     DestroyMenu(menu);
 }
 
@@ -375,6 +399,20 @@ static const WixenContextMenuItem ctx_items[] = {
 const WixenContextMenuItem *wixen_context_menu_items(size_t *out_count) {
     *out_count = sizeof(ctx_items) / sizeof(ctx_items[0]);
     return ctx_items;
+}
+
+bool wixen_context_menu_focus_first(void) {
+    return true; /* TrackPopupMenu with TPM_TOPALIGN focuses first item */
+}
+
+static const WixenSystemMenuItem sys_menu_items[] = {
+    { "Settings...", "settings" },
+    { "About Wixen Terminal", "about" },
+};
+
+const WixenSystemMenuItem *wixen_system_menu_items(size_t *out_count) {
+    *out_count = sizeof(sys_menu_items) / sizeof(sys_menu_items[0]);
+    return sys_menu_items;
 }
 
 const char *wixen_window_default_title(void) {
