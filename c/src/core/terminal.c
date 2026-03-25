@@ -1,5 +1,6 @@
 /* terminal.c — Terminal emulator state machine */
 #include "wixen/core/terminal.h"
+#include "wixen/core/selection.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -71,6 +72,7 @@ void wixen_terminal_init(WixenTerminal *t, size_t cols, size_t rows) {
     t->scroll_region.bottom = rows;
     wixen_selection_init(&t->selection);
     wixen_hyperlinks_init(&t->hyperlinks);
+    wixen_shell_integ_init(&t->shell_integ);
     init_tab_stops(&t->tab_stops, cols);
     t->dirty = true;
 }
@@ -85,6 +87,7 @@ void wixen_terminal_free(WixenTerminal *t) {
     free(t->saved_cursor);
     free(t->title);
     wixen_hyperlinks_free(&t->hyperlinks);
+    wixen_shell_integ_free(&t->shell_integ);
     free_tab_stops(&t->tab_stops);
     for (size_t i = 0; i < t->response_count; i++) {
         free(t->responses[i]);
@@ -516,8 +519,167 @@ void wixen_terminal_set_title(WixenTerminal *t, const char *title) {
 
 /* --- Text extraction --- */
 
-size_t wixen_terminal_visible_text(const WixenTerminal *t, char *buf, size_t buf_size) {
+size_t wixen_terminal_visible_text_buf(const WixenTerminal *t, char *buf, size_t buf_size) {
     return wixen_grid_visible_text(&t->grid, buf, buf_size);
+}
+
+char *wixen_terminal_visible_text(const WixenTerminal *t) {
+    /* Estimate: max 4 bytes per cell * cols * rows + newlines */
+    size_t est = t->grid.cols * t->grid.num_rows * 4 + t->grid.num_rows + 1;
+    char *buf = malloc(est);
+    if (!buf) return NULL;
+    size_t written = wixen_grid_visible_text(&t->grid, buf, est);
+    buf[written] = '\0';
+    return buf;
+}
+
+char *wixen_terminal_extract_row_text(const WixenTerminal *t, size_t row) {
+    if (row >= t->grid.num_rows) {
+        char *empty = malloc(1);
+        if (empty) empty[0] = '\0';
+        return empty;
+    }
+    const WixenRow *r = &t->grid.rows[row];
+    /* Build text, then trim trailing spaces */
+    size_t cap = t->grid.cols * 4 + 1;
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+    size_t pos = 0;
+    for (size_t c = 0; c < t->grid.cols; c++) {
+        const char *content = r->cells[c].content;
+        if (content[0]) {
+            size_t len = strlen(content);
+            if (pos + len < cap) {
+                memcpy(buf + pos, content, len);
+                pos += len;
+            }
+        } else {
+            if (pos + 1 < cap) buf[pos++] = ' ';
+        }
+    }
+    buf[pos] = '\0';
+    /* Trim trailing spaces */
+    while (pos > 0 && buf[pos - 1] == ' ') {
+        pos--;
+        buf[pos] = '\0';
+    }
+    return buf;
+}
+
+char *wixen_terminal_selected_text(const WixenTerminal *t, const WixenSelection *sel) {
+    if (!sel || !sel->active) {
+        char *empty = malloc(1);
+        if (empty) empty[0] = '\0';
+        return empty;
+    }
+    const WixenSelection *s = sel;
+    WixenGridPoint start, end;
+    wixen_selection_ordered(s, &start, &end);
+
+    size_t cap = (end.row - start.row + 1) * (t->grid.cols * 4 + 2) + 1;
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+    size_t pos = 0;
+
+    for (size_t row = start.row; row <= end.row && row < t->grid.num_rows; row++) {
+        size_t col_start = 0, col_end = t->grid.cols;
+        if (s->type == WIXEN_SEL_NORMAL) {
+            if (row == start.row) col_start = start.col;
+            if (row == end.row) col_end = end.col + 1;
+        } else if (s->type == WIXEN_SEL_BLOCK) {
+            col_start = start.col;
+            col_end = end.col + 1;
+        }
+        /* LINE selection: full row */
+        if (col_end > t->grid.cols) col_end = t->grid.cols;
+
+        const WixenRow *r = &t->grid.rows[row];
+        size_t line_end = pos;
+        for (size_t c = col_start; c < col_end; c++) {
+            const char *content = r->cells[c].content;
+            if (content[0]) {
+                size_t len = strlen(content);
+                if (pos + len < cap) { memcpy(buf + pos, content, len); pos += len; }
+            } else {
+                if (pos + 1 < cap) buf[pos++] = ' ';
+            }
+            line_end = pos;
+        }
+        /* Trim trailing spaces on this line */
+        while (line_end > 0 && pos > 0 && buf[pos - 1] == ' ') pos--;
+        /* Add newline between rows */
+        if (row < end.row && pos + 1 < cap) buf[pos++] = '\n';
+    }
+    buf[pos] = '\0';
+    return buf;
+}
+
+/* --- Echo timeout detection --- */
+
+#ifdef _WIN32
+#include <windows.h>
+static uint64_t get_ms(void) {
+    return GetTickCount64();
+}
+#else
+#include <time.h>
+static uint64_t get_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+#endif
+
+void wixen_terminal_on_char_sent(WixenTerminal *t, char ch) {
+    t->last_char_sent_ms = get_ms();
+    t->last_char_sent = ch;
+    t->char_sent_pending = true;
+    t->last_char_was_echoed = false;
+}
+
+bool wixen_terminal_check_echo_timeout(WixenTerminal *t) {
+    if (!t->char_sent_pending) return false;
+    if (t->last_char_was_echoed) {
+        t->char_sent_pending = false;
+        return false;
+    }
+    uint64_t now = get_ms();
+    if (now - t->last_char_sent_ms > 1000) {
+        t->char_sent_pending = false;
+        return true; /* No echo after 1 second — password prompt */
+    }
+    return false;
+}
+
+/* --- Prompt jumping --- */
+
+bool wixen_terminal_jump_to_previous_prompt(WixenTerminal *t) {
+    /* Search backward from current cursor row for a shell_integ prompt marker */
+    if (t->shell_integ.block_count == 0) return false;
+    size_t cur = t->grid.cursor.row;
+    for (int i = (int)t->shell_integ.block_count - 1; i >= 0; i--) {
+        size_t prompt_row = t->shell_integ.blocks[i].prompt.start;
+        if (prompt_row < cur) {
+            t->grid.cursor.row = prompt_row;
+            t->grid.cursor.col = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool wixen_terminal_jump_to_next_prompt(WixenTerminal *t) {
+    if (t->shell_integ.block_count == 0) return false;
+    size_t cur = t->grid.cursor.row;
+    for (size_t i = 0; i < t->shell_integ.block_count; i++) {
+        size_t prompt_row = t->shell_integ.blocks[i].prompt.start;
+        if (prompt_row > cur) {
+            t->grid.cursor.row = prompt_row;
+            t->grid.cursor.col = 0;
+            return true;
+        }
+    }
+    return false;
 }
 
 /* --- Response queue --- */
@@ -549,6 +711,11 @@ static const uint32_t dec_special_graphics[128] = {
 
 static void terminal_print(WixenTerminal *t, uint32_t codepoint) {
     t->last_printed_char = codepoint;
+
+    /* Echo detection for password prompt */
+    if (t->char_sent_pending && codepoint == (uint32_t)(unsigned char)t->last_char_sent) {
+        t->last_char_was_echoed = true;
+    }
 
     /* Apply charset translation (DEC Special Graphics for box drawing) */
     uint8_t active_set = t->charsets[t->active_charset];
@@ -706,7 +873,7 @@ static void terminal_osc(WixenTerminal *t, const uint8_t *data, size_t len) {
         if (uri) {
             memcpy(uri, payload, payload_len);
             uri[payload_len] = '\0';
-            /* Shell integration will handle this when connected */
+            wixen_shell_integ_handle_osc7(&t->shell_integ, uri);
             free(uri);
         }
         break;
@@ -716,9 +883,8 @@ static void terminal_osc(WixenTerminal *t, const uint8_t *data, size_t len) {
         if (payload_len >= 1) {
             char marker = payload[0];
             const char *params = payload_len > 2 ? payload + 2 : NULL;
-            /* Shell integration tracker will handle this when connected */
-            (void)marker;
-            (void)params;
+            wixen_shell_integ_handle_osc133(
+                &t->shell_integ, marker, params, t->grid.cursor.row);
         }
         break;
     }

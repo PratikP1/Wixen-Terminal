@@ -299,3 +299,12 @@ void wixen_config_default_path(char *buf, size_t buf_size) {
     }
 #endif
 }
+
+bool wixen_should_reduce_motion(WixenReducedMotion config_pref, bool system_prefers_reduced) {
+    switch (config_pref) {
+    case WIXEN_REDUCED_MOTION_ALWAYS: return true;
+    case WIXEN_REDUCED_MOTION_NEVER:  return false;
+    case WIXEN_REDUCED_MOTION_SYSTEM: return system_prefers_reduced;
+    default: return system_prefers_reduced;
+    }
+}

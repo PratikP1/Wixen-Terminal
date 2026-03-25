@@ -53,7 +53,7 @@ add_library(wixen_core STATIC
     src/core/table_detect.c
     src/core/image.c
 )
-target_link_libraries(wixen_core PUBLIC zstd::libzstd)
+target_link_libraries(wixen_core PUBLIC zstd::libzstd wixen_shell_integ)
 
 # --- Test framework (greatest.h) ---
 include_directories(${CMAKE_SOURCE_DIR}/tests)
@@ -302,6 +302,26 @@ add_test(NAME test_grid_visible_text COMMAND test_grid_visible_text)
 add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
+
+add_executable(test_red_a11y_events tests/test_red_a11y_events.c)
+target_link_libraries(test_red_a11y_events wixen_a11y)
+add_test(NAME test_red_a11y_events COMMAND test_red_a11y_events)
+
+add_executable(test_red_text_extract tests/test_red_text_extract.c)
+target_link_libraries(test_red_text_extract wixen_core wixen_vt)
+add_test(NAME test_red_text_extract COMMAND test_red_text_extract)
+
+add_executable(test_red_echo_timeout tests/test_red_echo_timeout.c)
+target_link_libraries(test_red_echo_timeout wixen_core wixen_vt)
+add_test(NAME test_red_echo_timeout COMMAND test_red_echo_timeout)
+
+add_executable(test_red_prompt_jump tests/test_red_prompt_jump.c)
+target_link_libraries(test_red_prompt_jump wixen_core wixen_vt)
+add_test(NAME test_red_prompt_jump COMMAND test_red_prompt_jump)
+
+add_executable(test_red_reduced_motion tests/test_red_reduced_motion.c)
+target_link_libraries(test_red_reduced_motion wixen_config)
+add_test(NAME test_red_reduced_motion COMMAND test_red_reduced_motion)
 
 add_executable(test_red_viewport tests/test_red_viewport.c)
 target_link_libraries(test_red_viewport wixen_core wixen_vt)

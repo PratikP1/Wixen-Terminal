@@ -2,6 +2,7 @@
 #include "wixen/a11y/events.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 static char *dup_str(const char *s) {
     if (!s) return NULL;
@@ -129,4 +130,40 @@ char *wixen_strip_control_chars(const char *text) {
     }
     out[j] = '\0';
     return out;
+}
+
+/* --- Announcement formatting --- */
+
+char *wixen_a11y_format_command_complete(const char *command, int exit_code) {
+    const char *cmd = command ? command : "command";
+    size_t len = strlen(cmd) + 48;
+    char *buf = malloc(len);
+    if (!buf) return NULL;
+    if (exit_code == 0) {
+        snprintf(buf, len, "%s succeeded", cmd);
+    } else {
+        snprintf(buf, len, "%s failed (exit %d)", cmd, exit_code);
+    }
+    return buf;
+}
+
+char *wixen_a11y_format_mode_change(const char *mode, bool enabled) {
+    const char *state = enabled ? "on" : "off";
+    size_t len = strlen(mode) + 16;
+    char *buf = malloc(len);
+    if (!buf) return NULL;
+    snprintf(buf, len, "%s %s", mode, state);
+    return buf;
+}
+
+char *wixen_a11y_format_image_placed(int width, int height, const char *name) {
+    size_t len = 128 + (name ? strlen(name) : 0);
+    char *buf = malloc(len);
+    if (!buf) return NULL;
+    if (name) {
+        snprintf(buf, len, "image placed: %s (%dx%d)", name, width, height);
+    } else {
+        snprintf(buf, len, "image placed (%dx%d)", width, height);
+    }
+    return buf;
 }

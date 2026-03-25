@@ -73,4 +73,14 @@ const WixenProfile *wixen_config_default_profile(const WixenConfig *cfg);
 /* Get default config file path (~/.config/wixen/config.toml or %APPDATA%/wixen) */
 void wixen_config_default_path(char *buf, size_t buf_size);
 
+/* Reduced motion preference */
+typedef enum {
+    WIXEN_REDUCED_MOTION_SYSTEM,  /* Follow OS preference */
+    WIXEN_REDUCED_MOTION_ALWAYS,  /* Always reduce */
+    WIXEN_REDUCED_MOTION_NEVER    /* Never reduce */
+} WixenReducedMotion;
+
+/* Check if motion should be reduced based on config + system preference */
+bool wixen_should_reduce_motion(WixenReducedMotion config_pref, bool system_prefers_reduced);
+
 #endif /* WIXEN_CONFIG_H */

@@ -39,4 +39,13 @@ char *wixen_strip_vt_escapes(const char *text);
  * Returns heap-allocated cleaned text. Caller frees. */
 char *wixen_strip_control_chars(const char *text);
 
+/* Format a command completion announcement. Caller frees. */
+char *wixen_a11y_format_command_complete(const char *command, int exit_code);
+
+/* Format a mode change announcement. Caller frees. */
+char *wixen_a11y_format_mode_change(const char *mode, bool enabled);
+
+/* Format an image placed announcement. Caller frees. */
+char *wixen_a11y_format_image_placed(int width, int height, const char *name);
+
 #endif /* WIXEN_A11Y_EVENTS_H */

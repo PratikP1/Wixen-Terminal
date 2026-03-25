@@ -6,6 +6,7 @@
 #include "wixen/core/modes.h"
 #include "wixen/core/selection.h"
 #include "wixen/core/hyperlink.h"
+#include "wixen/shell_integ/shell_integ.h"
 #include "wixen/vt/action.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -47,6 +48,9 @@ typedef struct {
     bool bell_pending;
     bool pending_wrap;           /* Cursor at right margin, next char wraps */
 
+    /* Shell integration */
+    WixenShellIntegration shell_integ;
+
     /* Hyperlink store (OSC 8) */
     WixenHyperlinkStore hyperlinks;
     uint32_t current_hyperlink_id;  /* 0 = no active link */
@@ -55,6 +59,12 @@ typedef struct {
     uint8_t charsets[4];             /* G0-G3 charset (0=ASCII, 1=DEC Special, 2=UK) */
     int32_t scroll_offset;           /* Viewport: 0=live, >0=scrolled back into history */
     uint32_t last_printed_char;      /* For REP (CSI b) */
+
+    /* Echo timeout detection (password prompts) */
+    uint64_t last_char_sent_ms;      /* When user last typed a char */
+    bool char_sent_pending;          /* Waiting for echo */
+    char last_char_sent;             /* The char we're waiting to see echoed */
+    bool last_char_was_echoed;       /* Terminal echoed it back */
 
     /* Pending responses (DSR etc.) — simple queue */
     char **responses;
@@ -121,7 +131,20 @@ void wixen_terminal_apply_sgr(WixenTerminal *t, const WixenAction *action);
 void wixen_terminal_set_title(WixenTerminal *t, const char *title);
 
 /* Text extraction */
-size_t wixen_terminal_visible_text(const WixenTerminal *t, char *buf, size_t buf_size);
+size_t wixen_terminal_visible_text_buf(const WixenTerminal *t, char *buf, size_t buf_size);
+char *wixen_terminal_visible_text(const WixenTerminal *t);
+char *wixen_terminal_extract_row_text(const WixenTerminal *t, size_t row);
+
+/* Selection text extraction */
+char *wixen_terminal_selected_text(const WixenTerminal *t, const WixenSelection *sel);
+
+/* Echo timeout detection (password prompts) */
+void wixen_terminal_on_char_sent(WixenTerminal *t, char ch);
+bool wixen_terminal_check_echo_timeout(WixenTerminal *t);
+
+/* Prompt jumping (requires shell integration) */
+bool wixen_terminal_jump_to_next_prompt(WixenTerminal *t);
+bool wixen_terminal_jump_to_previous_prompt(WixenTerminal *t);
 
 /* Queued responses */
 const char *wixen_terminal_pop_response(WixenTerminal *t);
