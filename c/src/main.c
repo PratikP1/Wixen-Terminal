@@ -261,7 +261,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             SetForegroundWindow(window.hwnd);
             SetFocus(window.hwnd);
             /* Also fire UIA focus so NVDA knows we're active */
-            wixen_a11y_raise_focus(window.hwnd);
+            wixen_a11y_raise_focus_changed(window.hwnd);
             pump_messages();
         }
         /* Process Win32 messages */
