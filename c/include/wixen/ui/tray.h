@@ -27,4 +27,15 @@ void wixen_tray_destroy(WixenTrayIcon *tray);
 void wixen_tray_show_menu(WixenTrayIcon *tray);
 
 #endif /* _WIN32 */
+
+/* Platform-independent tray menu data */
+#include <stddef.h>
+
+typedef struct {
+    const char *label;
+    int action_id;
+} WixenTrayMenuItem;
+
+const WixenTrayMenuItem *wixen_tray_menu_items(size_t *out_count);
+
 #endif /* WIXEN_UI_TRAY_H */

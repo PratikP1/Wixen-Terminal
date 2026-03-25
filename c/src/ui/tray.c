@@ -50,3 +50,18 @@ void wixen_tray_show_menu(WixenTrayIcon *tray) {
 }
 
 #endif /* _WIN32 */
+
+/* --- Platform-independent tray menu data --- */
+#include "wixen/ui/tray.h"
+
+static const WixenTrayMenuItem tray_items[] = {
+    { "Show/Hide Window", 1 },
+    { "New Tab",          2 },
+    { "Settings",         3 },
+    { "Quit Wixen",       100 },
+};
+
+const WixenTrayMenuItem *wixen_tray_menu_items(size_t *out_count) {
+    *out_count = sizeof(tray_items) / sizeof(tray_items[0]);
+    return tray_items;
+}

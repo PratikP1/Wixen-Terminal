@@ -339,3 +339,47 @@ void wixen_window_show_context_menu(WixenWindow *w, int x, int y) {
 }
 
 #endif /* _WIN32 */
+
+/* --- Platform-independent UI data --- */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _MSC_VER
+#define strdup _strdup
+#endif
+
+static const WixenContextMenuItem ctx_items[] = {
+    { "Copy",           "copy",           false },
+    { "Paste",          "paste",          false },
+    { "Select All",     "select_all",     false },
+    { NULL,             NULL,             true  }, /* separator */
+    { "Search...",      "search",         false },
+    { NULL,             NULL,             true  }, /* separator */
+    { "Split Right",    "split_horizontal", false },
+    { "Split Down",     "split_vertical",   false },
+    { NULL,             NULL,             true  }, /* separator */
+    { "Settings",       "settings",       false },
+};
+
+const WixenContextMenuItem *wixen_context_menu_items(size_t *out_count) {
+    *out_count = sizeof(ctx_items) / sizeof(ctx_items[0]);
+    return ctx_items;
+}
+
+const char *wixen_window_default_title(void) {
+    return "Wixen Terminal";
+}
+
+char *wixen_window_format_title(const char *tab_name, const char *cwd) {
+    char buf[512];
+    if (cwd && cwd[0]) {
+        snprintf(buf, sizeof(buf), "%s \xe2\x80\x94 %s \xe2\x80\x94 Wixen Terminal",
+                 tab_name ? tab_name : "Shell", cwd);
+    } else if (tab_name && tab_name[0]) {
+        snprintf(buf, sizeof(buf), "%s \xe2\x80\x94 Wixen Terminal", tab_name);
+    } else {
+        snprintf(buf, sizeof(buf), "Wixen Terminal");
+    }
+    return strdup(buf);
+}

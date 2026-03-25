@@ -1,10 +1,36 @@
-/* palette_dialog.c — Native Win32 command palette
- *
- * Modeless dialog with:
- * - Edit control for fuzzy search (accessible to screen readers)
- * - ListView showing filtered results (accessible to screen readers)
- * - Enter to execute, Escape to cancel
- */
+/* palette_dialog.c — Native Win32 command palette */
+#include "wixen/ui/palette_dialog.h"
+#include <stddef.h>
+#include <string.h>
+
+/* --- Platform-independent palette data --- */
+
+static const WixenPaletteEntry default_entries[] = {
+    { "Command Palette",      "command_palette",   "Ctrl+Shift+P" },
+    { "Settings",             "settings",          "Ctrl+," },
+    { "New Tab",              "new_tab",           "Ctrl+Shift+T" },
+    { "Close Tab",            "close_tab",         "Ctrl+Shift+W" },
+    { "Split Horizontally",   "split_horizontal",  "Alt+Shift+H" },
+    { "Split Vertically",     "split_vertical",    "Alt+Shift+V" },
+    { "Toggle Fullscreen",    "toggle_fullscreen", "F11" },
+    { "Search",               "search",            "Ctrl+Shift+F" },
+    { "Copy",                 "copy",              "Ctrl+C" },
+    { "Paste",                "paste",             "Ctrl+V" },
+    { "Select All",           "select_all",        "Ctrl+Shift+A" },
+    { "Zoom Pane",            "toggle_zoom",       "Ctrl+Shift+Z" },
+    { "Reset Terminal",       "reset",             NULL },
+    { "Rename Tab",           "rename_tab",        NULL },
+};
+
+const WixenPaletteEntry *wixen_palette_default_entries(size_t *out_count) {
+    *out_count = sizeof(default_entries) / sizeof(default_entries[0]);
+    return default_entries;
+}
+
+const char *wixen_palette_font_name(void) { return "Segoe UI"; }
+int wixen_palette_font_size(void) { return 10; }
+
+/* --- Win32 implementation --- */
 #ifdef _WIN32
 
 #include "wixen/ui/palette_dialog.h"

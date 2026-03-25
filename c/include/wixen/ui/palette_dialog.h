@@ -1,19 +1,32 @@
-/* palette_dialog.h — Native Win32 command palette (modeless dialog) */
+/* palette_dialog.h — Native Win32 command palette */
 #ifndef WIXEN_UI_PALETTE_DIALOG_H
 #define WIXEN_UI_PALETTE_DIALOG_H
 
-#ifdef _WIN32
-
 #include <stdbool.h>
+#include <stddef.h>
+
+/* Palette entry (testable without Win32) */
+typedef struct {
+    const char *label;     /* Display text */
+    const char *action;    /* Action ID */
+    const char *shortcut;  /* Keyboard shortcut hint (or NULL) */
+} WixenPaletteEntry;
+
+/* Default palette entries */
+const WixenPaletteEntry *wixen_palette_default_entries(size_t *out_count);
+
+/* Visual parameters */
+const char *wixen_palette_font_name(void);
+int wixen_palette_font_size(void);
+
+#ifdef _WIN32
 #include <windows.h>
 
-/* Command palette result */
 typedef struct {
-    char *action;       /* Action ID (heap-allocated, caller frees) */
-    char *args;         /* Optional args (heap-allocated, caller frees) */
+    char *action;
+    char *args;
 } WixenPaletteResult;
 
-/* Show the command palette. Returns false if cancelled, true if action selected. */
 bool wixen_palette_dialog_show(HWND parent, WixenPaletteResult *out_result);
 
 #endif /* _WIN32 */

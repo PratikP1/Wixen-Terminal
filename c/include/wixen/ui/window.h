@@ -92,4 +92,18 @@ void wixen_window_pump_messages(WixenWindow *w);
 void wixen_window_show_context_menu(WixenWindow *w, int x, int y);
 
 #endif /* _WIN32 */
+
+/* Platform-independent UI data (testable) */
+#include <stddef.h>
+
+typedef struct {
+    const char *label;   /* Menu item text (NULL for separator) */
+    const char *action;  /* Action ID */
+    bool is_separator;
+} WixenContextMenuItem;
+
+const WixenContextMenuItem *wixen_context_menu_items(size_t *out_count);
+const char *wixen_window_default_title(void);
+char *wixen_window_format_title(const char *tab_name, const char *cwd);
+
 #endif /* WIXEN_UI_WINDOW_H */
