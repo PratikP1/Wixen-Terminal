@@ -8,7 +8,7 @@ TEST key_f1_normal(void) {
     char buf[32] = {0};
     size_t n = wixen_encode_key(0x70, false, false, false, false, buf, sizeof(buf));
     ASSERT(n > 0);
-    ASSERT_STR_EQ("\x1b[11~", buf); /* F1 = CSI 11 ~ */
+    ASSERT_STR_EQ("\x1bOP", buf); /* F1 = SS3 P */
     PASS();
 }
 

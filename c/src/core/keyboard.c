@@ -99,12 +99,19 @@ size_t wixen_encode_key(uint16_t vk, bool shift, bool ctrl, bool alt,
         return (size_t)snprintf(buf, buf_size, "\x1b[6~");
     }
 
-    /* Function keys F1-F12 */
-    if (vk >= VK_F1 && vk <= VK_F12) {
+    /* Function keys F1-F4 use SS3 (ESC O), F5-F12 use CSI ~ */
+    if (vk >= VK_F1 && vk <= VK_F1 + 3) {
+        /* F1=P, F2=Q, F3=R, F4=S */
+        char final_ch = (char)('P' + (vk - VK_F1));
+        if (has_mod) return (size_t)snprintf(buf, buf_size, "\x1b[1;%d%c", mod, final_ch);
+        return (size_t)snprintf(buf, buf_size, "\x1bO%c", final_ch);
+    }
+    if (vk >= VK_F1 + 4 && vk <= VK_F12) {
         static const int fkey_codes[] = {
-            11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 23, 24
+            /* F5=15, F6=17, F7=18, F8=19, F9=20, F10=21, F11=23, F12=24 */
+            15, 17, 18, 19, 20, 21, 23, 24
         };
-        int code = fkey_codes[vk - VK_F1];
+        int code = fkey_codes[vk - VK_F1 - 4];
         if (has_mod) return (size_t)snprintf(buf, buf_size, "\x1b[%d;%d~", code, mod);
         return (size_t)snprintf(buf, buf_size, "\x1b[%d~", code);
     }

@@ -117,7 +117,7 @@ TEST key_delete(void) {
 TEST key_f1(void) {
     size_t n = wixen_encode_key(0x70, false, false, false, false, kbuf, sizeof(kbuf));
     kbuf[n] = 0;
-    ASSERT_STR_EQ("\x1b[11~", kbuf);
+    ASSERT_STR_EQ("\x1bOP", kbuf);
     PASS();
 }
 

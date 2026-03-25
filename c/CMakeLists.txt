@@ -305,6 +305,14 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_text_consistency tests/test_red_text_consistency.c)
+target_link_libraries(test_red_text_consistency wixen_core wixen_vt)
+add_test(NAME test_red_text_consistency COMMAND test_red_text_consistency)
+
+add_executable(test_red_key_encoding tests/test_red_key_encoding.c)
+target_link_libraries(test_red_key_encoding wixen_core)
+add_test(NAME test_red_key_encoding COMMAND test_red_key_encoding)
+
 add_executable(test_red_parser_recovery tests/test_red_parser_recovery.c)
 target_link_libraries(test_red_parser_recovery wixen_core wixen_vt)
 add_test(NAME test_red_parser_recovery COMMAND test_red_parser_recovery)
