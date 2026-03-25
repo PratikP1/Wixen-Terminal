@@ -304,6 +304,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_overflow tests/test_red_overflow.c)
+target_link_libraries(test_red_overflow wixen_core wixen_vt wixen_a11y)
+add_test(NAME test_red_overflow COMMAND test_red_overflow)
+
 add_executable(test_red_null_safety tests/test_red_null_safety.c)
 target_link_libraries(test_red_null_safety wixen_core wixen_vt wixen_a11y wixen_search wixen_config)
 add_test(NAME test_red_null_safety COMMAND test_red_null_safety)
