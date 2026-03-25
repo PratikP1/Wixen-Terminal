@@ -250,11 +250,19 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
     if (!q) return false;
 
     /* Create window */
+    /* WS_VISIBLE: window appears immediately during CreateWindowExW.
+     * This is critical for focus — the foreground rights inherited from
+     * our parent process (Explorer) expire after ~2 seconds. If we defer
+     * ShowWindow until after PTY/renderer init, the rights are gone and
+     * SetForegroundWindow fails silently. By making the window visible
+     * at creation time, Windows activates it while we still have rights.
+     * The UIA provider is registered in WM_CREATE (before WM_SIZE fires)
+     * so NVDA won't cache us as non-UIA. */
     w->hwnd = CreateWindowExW(
         0,
         WIXEN_CLASS_NAME,
         title,
-        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT,
         (int)width, (int)height,
         NULL, NULL, GetModuleHandleW(NULL), q);
@@ -286,47 +294,11 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
 
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        /* Focus acquisition is notoriously difficult on Windows.
-         * Windows blocks SetForegroundWindow from background processes.
-         * See: https://github.com/microsoft/terminal/pull/12799
-         *
-         * Strategy: simulate an Alt keypress to trick Windows into thinking
-         * we have foreground rights (the system tracks the last input event),
-         * then call SetForegroundWindow. This is the same approach used by
-         * https://github.com/amarmer/SetForegroundWindow and many real apps.
-         */
-
-        /* Step 1: Show the window first (minimized → normal) */
-        ShowWindow(w->hwnd, SW_SHOWNORMAL);
-        UpdateWindow(w->hwnd);
-
-        /* Step 2: Simulate Alt key press+release. This gives our thread
-         * the "last input" timestamp that SetForegroundWindow checks. */
-        INPUT inputs[2] = {0};
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].ki.wVk = VK_MENU;
-        inputs[1].type = INPUT_KEYBOARD;
-        inputs[1].ki.wVk = VK_MENU;
-        inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(2, inputs, sizeof(INPUT));
-
-        /* Step 3: Now we have foreground rights. Activate. */
+        /* Window was created with WS_VISIBLE so it's already showing.
+         * Just ensure it's activated and has focus. If launched from
+         * Explorer, the window should already be foreground from creation. */
         SetForegroundWindow(w->hwnd);
-        BringWindowToTop(w->hwnd);
         SetFocus(w->hwnd);
-
-        /* Step 4: As fallback, also attach to foreground thread */
-        HWND fg_hwnd = GetForegroundWindow();
-        if (fg_hwnd && fg_hwnd != w->hwnd) {
-            DWORD fg_thread = GetWindowThreadProcessId(fg_hwnd, NULL);
-            DWORD our_thread = GetCurrentThreadId();
-            if (fg_thread && fg_thread != our_thread) {
-                AttachThreadInput(our_thread, fg_thread, TRUE);
-                SetForegroundWindow(w->hwnd);
-                SetFocus(w->hwnd);
-                AttachThreadInput(our_thread, fg_thread, FALSE);
-            }
-        }
 
         w->visible = true;
     }
