@@ -307,6 +307,10 @@ add_executable(test_terminal_scroll tests/test_terminal_scroll.c)
 target_link_libraries(test_terminal_scroll wixen_core wixen_vt)
 add_test(NAME test_terminal_scroll COMMAND test_terminal_scroll)
 
+add_executable(test_red_lua_engine tests/test_red_lua_engine.c)
+target_link_libraries(test_red_lua_engine wixen_config)
+add_test(NAME test_red_lua_engine COMMAND test_red_lua_engine)
+
 add_executable(test_red_shell_integ_lifecycle tests/test_red_shell_integ_lifecycle.c)
 target_link_libraries(test_red_shell_integ_lifecycle wixen_core)
 add_test(NAME test_red_shell_integ_lifecycle COMMAND test_red_shell_integ_lifecycle)
