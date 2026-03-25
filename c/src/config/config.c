@@ -4,6 +4,12 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#include <unistd.h>
+#endif
 
 static char *dup_str(const char *s) {
     if (!s) return NULL;
@@ -11,6 +17,31 @@ static char *dup_str(const char *s) {
     char *p = malloc(len + 1);
     if (p) memcpy(p, s, len + 1);
     return p;
+}
+
+/* Generate a simple UUID v4 (random). Uses rand() seeded from time+pid.
+ * Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx */
+static char *generate_uuid(void) {
+    static int seeded = 0;
+    if (!seeded) {
+#ifdef _WIN32
+        srand((unsigned)(GetTickCount64() ^ GetCurrentProcessId()));
+#else
+        srand((unsigned)time(NULL) ^ (unsigned)getpid());
+#endif
+        seeded = 1;
+    }
+    char *buf = malloc(37);
+    if (!buf) return NULL;
+    const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 36; i++) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) buf[i] = '-';
+        else if (i == 14) buf[i] = '4'; /* version 4 */
+        else if (i == 19) buf[i] = hex[(rand() & 0x3) | 0x8]; /* variant 1 */
+        else buf[i] = hex[rand() & 0xF];
+    }
+    buf[36] = '\0';
+    return buf;
 }
 
 /* --- Defaults --- */
@@ -42,12 +73,15 @@ void wixen_config_init_defaults(WixenConfig *cfg) {
     cfg->profile_count = 3;
     cfg->profiles = calloc(cfg->profile_count, sizeof(WixenProfile));
     if (cfg->profiles) {
+        cfg->profiles[0].uuid = generate_uuid();
         cfg->profiles[0].name = dup_str("PowerShell");
         cfg->profiles[0].program = dup_str("pwsh.exe");
         cfg->profiles[0].is_default = true;
+        cfg->profiles[1].uuid = generate_uuid();
         cfg->profiles[1].name = dup_str("Command Prompt");
         cfg->profiles[1].program = dup_str("cmd.exe");
         cfg->profiles[1].is_default = false;
+        cfg->profiles[2].uuid = generate_uuid();
         cfg->profiles[2].name = dup_str("Windows PowerShell");
         cfg->profiles[2].program = dup_str("powershell.exe");
         cfg->profiles[2].is_default = false;
@@ -65,6 +99,7 @@ void wixen_config_free(WixenConfig *cfg) {
     free(cfg->accessibility.verbosity);
 
     for (size_t i = 0; i < cfg->profile_count; i++) {
+        free(cfg->profiles[i].uuid);
         free(cfg->profiles[i].name);
         free(cfg->profiles[i].program);
         for (size_t j = 0; j < cfg->profiles[i].arg_count; j++)
@@ -115,6 +150,7 @@ static void add_profile(WixenConfig *cfg) {
     if (!new_arr) return;
     cfg->profiles = new_arr;
     memset(&cfg->profiles[cfg->profile_count], 0, sizeof(WixenProfile));
+    cfg->profiles[cfg->profile_count].uuid = generate_uuid(); /* Assign UUID on creation */
     cfg->profile_count = new_count;
 }
 
@@ -139,6 +175,7 @@ bool wixen_config_load(WixenConfig *cfg, const char *path) {
                 /* First [[profiles]] replaces defaults */
                 if (!profiles_from_file) {
                     for (size_t i = 0; i < cfg->profile_count; i++) {
+                        free(cfg->profiles[i].uuid);
                         free(cfg->profiles[i].name);
                         free(cfg->profiles[i].program);
                         free(cfg->profiles[i].args);
@@ -229,7 +266,9 @@ bool wixen_config_load(WixenConfig *cfg, const char *path) {
         case TOML_PROFILES:
             if (cfg->profile_count > 0) {
                 WixenProfile *p = &cfg->profiles[cfg->profile_count - 1];
-                if (strcmp(key, "name") == 0) {
+                if (strcmp(key, "uuid") == 0) {
+                    free(p->uuid); p->uuid = dup_str(unquote(val));
+                } else if (strcmp(key, "name") == 0) {
                     free(p->name); p->name = dup_str(unquote(val));
                 } else if (strcmp(key, "program") == 0) {
                     free(p->program); p->program = dup_str(unquote(val));
@@ -293,6 +332,7 @@ bool wixen_config_save(const WixenConfig *cfg, const char *path) {
 
     for (size_t i = 0; i < cfg->profile_count; i++) {
         fprintf(f, "[[profiles]]\n");
+        if (cfg->profiles[i].uuid) fprintf(f, "uuid = \"%s\"\n", cfg->profiles[i].uuid);
         fprintf(f, "name = \"%s\"\n", cfg->profiles[i].name ? cfg->profiles[i].name : "Shell");
         fprintf(f, "program = \"%s\"\n", cfg->profiles[i].program ? cfg->profiles[i].program : "");
         if (cfg->profiles[i].is_default) fprintf(f, "is_default = true\n");
@@ -309,6 +349,30 @@ const WixenProfile *wixen_config_default_profile(const WixenConfig *cfg) {
     }
     if (cfg->profile_count > 0) return &cfg->profiles[0];
     return NULL;
+}
+
+const WixenProfile *wixen_config_profile_by_uuid(const WixenConfig *cfg, const char *uuid) {
+    if (!cfg || !uuid) return wixen_config_default_profile(cfg);
+    for (size_t i = 0; i < cfg->profile_count; i++) {
+        if (cfg->profiles[i].uuid && strcmp(cfg->profiles[i].uuid, uuid) == 0)
+            return &cfg->profiles[i];
+    }
+    /* UUID not found — fall back to default */
+    return wixen_config_default_profile(cfg);
+}
+
+void wixen_config_add_profile(WixenConfig *cfg, const char *name,
+                               const char *program, bool is_default) {
+    size_t n = cfg->profile_count + 1;
+    WixenProfile *arr = realloc(cfg->profiles, n * sizeof(WixenProfile));
+    if (!arr) return;
+    cfg->profiles = arr;
+    memset(&cfg->profiles[cfg->profile_count], 0, sizeof(WixenProfile));
+    cfg->profiles[cfg->profile_count].uuid = generate_uuid();
+    cfg->profiles[cfg->profile_count].name = dup_str(name);
+    cfg->profiles[cfg->profile_count].program = dup_str(program);
+    cfg->profiles[cfg->profile_count].is_default = is_default;
+    cfg->profile_count = n;
 }
 
 void wixen_config_default_path(char *buf, size_t buf_size) {

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 typedef struct {
+    char *uuid;              /* Stable identifier (survives rename/program change) */
     char *name;
     char *program;
     char **args;
@@ -69,6 +70,13 @@ bool wixen_config_save(const WixenConfig *cfg, const char *path);
 
 /* Get the default profile (first with is_default=true, or first) */
 const WixenProfile *wixen_config_default_profile(const WixenConfig *cfg);
+
+/* Look up a profile by UUID. Falls back to default profile if not found. */
+const WixenProfile *wixen_config_profile_by_uuid(const WixenConfig *cfg, const char *uuid);
+
+/* Add a new profile with auto-generated UUID */
+void wixen_config_add_profile(WixenConfig *cfg, const char *name,
+                               const char *program, bool is_default);
 
 /* Get default config file path (~/.config/wixen/config.toml or %APPDATA%/wixen) */
 void wixen_config_default_path(char *buf, size_t buf_size);

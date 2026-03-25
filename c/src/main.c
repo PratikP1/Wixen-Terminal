@@ -145,19 +145,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             wixen_terminal_init(&pst->terminal, cols, rows);
             wixen_shell_integ_init(&pst->shell_integ);
             wixen_parser_init(&pst->parser);
-            /* Use saved program/CWD if available, fall back to default */
+            /* Resolve profile by UUID. Session saves UUIDs, not program paths.
+             * If UUID not found (profile deleted), falls back to default. */
             const char *cwd = saved_session.tabs[i].working_directory;
             wchar_t wcwd[MAX_PATH] = {0};
             if (cwd && cwd[0]) MultiByteToWideChar(CP_UTF8, 0, cwd, -1, wcwd, MAX_PATH);
             wchar_t *spawn_shell = shell; /* Default from profile */
-            wchar_t saved_shell[MAX_PATH] = {0};
-            const char *sp = saved_session.tabs[i].profile_name;
-            if (sp && sp[0]) {
-                MultiByteToWideChar(CP_UTF8, 0, sp, -1, saved_shell, MAX_PATH);
-                /* Only use saved shell if it exists on PATH */
-                wchar_t found[MAX_PATH];
-                if (SearchPathW(NULL, saved_shell, NULL, MAX_PATH, found, NULL))
-                    spawn_shell = saved_shell;
+            wchar_t resolved_shell[MAX_PATH] = {0};
+            const char *saved_uuid = saved_session.tabs[i].profile_name;
+            if (saved_uuid && saved_uuid[0]) {
+                const WixenProfile *prof = wixen_config_profile_by_uuid(&config, saved_uuid);
+                if (prof && prof->program) {
+                    MultiByteToWideChar(CP_UTF8, 0, prof->program, -1, resolved_shell, MAX_PATH);
+                    spawn_shell = resolved_shell;
+                }
             }
             pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows, spawn_shell, NULL,
                 wcwd[0] ? wcwd : NULL, window.hwnd);
@@ -1072,10 +1073,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         for (size_t i = 0; i < tab_count; i++) {
             const char *cwd = (pane_state_count > i && pane_states[i].shell_integ.cwd)
                 ? pane_states[i].shell_integ.cwd : "";
-            /* Save the default profile's program, not a hardcoded shell */
+            /* Save the profile UUID, not program path. On restore, look up
+             * the profile by UUID to get the current program. BUG #33 fix. */
             const WixenProfile *prof = wixen_config_default_profile(&config);
-            const char *prog = (prof && prof->program) ? prof->program : "pwsh.exe";
-            wixen_session_add_tab(&session, all_tabs[i].title, prog, cwd);
+            const char *uuid = (prof && prof->uuid) ? prof->uuid : "";
+            wixen_session_add_tab(&session, all_tabs[i].title, uuid, cwd);
         }
         char save_path[MAX_PATH];
         wixen_config_default_path(save_path, sizeof(save_path));
@@ -1089,6 +1091,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * TerminateProcess is the only guaranteed instant kill. It skips
      * DLL detach notifications entirely. Windows reclaims all resources. */
     TerminateProcess(GetCurrentProcess(), 0);
+    __assume(0); /* TerminateProcess never returns */
 }
 
 #else

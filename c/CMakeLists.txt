@@ -327,6 +327,10 @@ add_executable(test_red_profile_launch tests/test_red_profile_launch.c)
 target_link_libraries(test_red_profile_launch wixen_config)
 add_test(NAME test_red_profile_launch COMMAND test_red_profile_launch)
 
+add_executable(test_red_profile_uuid tests/test_red_profile_uuid.c)
+target_link_libraries(test_red_profile_uuid wixen_config)
+add_test(NAME test_red_profile_uuid COMMAND test_red_profile_uuid)
+
 add_executable(test_red_alt_f4 tests/test_red_alt_f4.c)
 target_link_libraries(test_red_alt_f4 wixen_core wixen_config)
 add_test(NAME test_red_alt_f4 COMMAND test_red_alt_f4)
