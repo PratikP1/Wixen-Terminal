@@ -10,15 +10,27 @@
 #define strdup _strdup
 #endif
 
+/* Concurrency contract:
+ *
+ *   SRWLOCK-protected fields (acquire exclusive to write, shared to read):
+ *     full_text, text_len, cursor_row, cursor_col, has_focus
+ *
+ *   Lock-free field (InterlockedExchange to write, InterlockedCompareExchange to read):
+ *     cursor_offset_utf16
+ *
+ *   cursor_offset_utf16 is updated AFTER releasing the SRWLOCK in
+ *   wixen_a11y_state_update_cursor() so that UIA threads can read it
+ *   without acquiring the lock (GetSelection / GetCaretRange hot path).
+ */
 struct WixenA11yState {
     SRWLOCK lock;
-    /* Protected by lock */
+    /* --- Protected by SRWLOCK (exclusive write, shared read) --- */
     char *full_text;
     size_t text_len;
     size_t cursor_row;
     size_t cursor_col;
     bool has_focus;
-    /* Lock-free cursor offset for GetSelection/GetCaretRange */
+    /* --- Lock-free via Interlocked* (no SRWLOCK needed) --- */
     volatile LONG cursor_offset_utf16;
 };
 

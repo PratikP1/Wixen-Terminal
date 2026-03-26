@@ -666,7 +666,24 @@ void wixen_a11y_raise_structure_changed(IRawElementProviderSimple *provider) {
                                    ids, 0);
 }
 
-/* --- Shared state --- */
+/* --- Shared state (provider.h struct variant) ---
+ *
+ * Concurrency contract for the provider.h WixenA11yState:
+ *
+ *   SRWLOCK-protected fields (exclusive write, shared read):
+ *     full_text, full_text_len, has_focus, title,
+ *     cursor_row, cursor_col, cell_width, cell_height,
+ *     window_width, window_height
+ *
+ *   Lock-free field (via InterlockedExchange / InterlockedCompareExchange):
+ *     g_cursor_offset (file-static volatile LONG, below)
+ *
+ *   Safe without lock (written once before concurrent access):
+ *     hwnd (set in provider_init before UIA threads can reach state)
+ *
+ * Note: wixen_a11y_state_init / wixen_a11y_state_free are lifecycle
+ * functions called when no concurrent access is possible.
+ */
 
 void wixen_a11y_state_init(WixenA11yState *state) {
     memset(state, 0, sizeof(*state));
@@ -674,6 +691,7 @@ void wixen_a11y_state_init(WixenA11yState *state) {
 }
 
 void wixen_a11y_state_free(WixenA11yState *state) {
+    /* Teardown — no concurrent access expected */
     free(state->full_text);
     free(state->title);
     state->full_text = NULL;
@@ -681,7 +699,7 @@ void wixen_a11y_state_free(WixenA11yState *state) {
 }
 
 void wixen_a11y_state_update_text(WixenA11yState *state, const char *text, size_t len) {
-    AcquireSRWLockExclusive(&state->lock);
+    AcquireSRWLockExclusive(&state->lock);  /* Lock-protected write */
     free(state->full_text);
     state->full_text = malloc(len + 1);
     if (state->full_text) {
@@ -693,14 +711,14 @@ void wixen_a11y_state_update_text(WixenA11yState *state, const char *text, size_
 }
 
 void wixen_a11y_state_update_cursor(WixenA11yState *state, size_t row, size_t col) {
-    AcquireSRWLockExclusive(&state->lock);
+    AcquireSRWLockExclusive(&state->lock);  /* Lock-protected write */
     state->cursor_row = row;
     state->cursor_col = col;
     ReleaseSRWLockExclusive(&state->lock);
 }
 
 void wixen_a11y_state_update_focus(WixenA11yState *state, bool has_focus) {
-    AcquireSRWLockExclusive(&state->lock);
+    AcquireSRWLockExclusive(&state->lock);  /* Lock-protected write */
     state->has_focus = has_focus;
     ReleaseSRWLockExclusive(&state->lock);
 }
@@ -718,7 +736,7 @@ void wixen_a11y_provider_init_minimal(HWND hwnd) {
      * doesn't cache the HWND as non-UIA. Full init happens later. */
     if (g_provider) return; /* Already initialized */
     wixen_a11y_state_init(&g_a11y_state);
-    g_a11y_state.hwnd = hwnd;
+    g_a11y_state.hwnd = hwnd;  /* Safe: no concurrent access yet (pre-provider creation) */
     g_provider = wixen_a11y_create_provider(hwnd, &g_a11y_state);
     SetPropW(hwnd, L"WixenUiaProvider", (HANDLE)g_provider);
 }
@@ -819,7 +837,11 @@ void wixen_a11y_raise_structure_changed_global(void) {
     }
 }
 
-/* Lock-free cursor offset for GetSelection/GetCaretRange */
+/* Lock-free cursor offset for GetSelection/GetCaretRange.
+ * This is the global counterpart to state.c's per-instance cursor_offset_utf16.
+ * Written by main thread via InterlockedExchange, read by UIA threads via
+ * InterlockedCompareExchange. No SRWLOCK needed — Interlocked* provides
+ * atomic 32-bit access on all x86/x64 Windows. */
 static volatile LONG g_cursor_offset = 0;
 
 void wixen_a11y_set_cursor_offset(int32_t utf16_offset) {

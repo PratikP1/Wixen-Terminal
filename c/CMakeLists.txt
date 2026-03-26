@@ -356,6 +356,10 @@ add_executable(test_red_bg_init tests/test_red_bg_init.c)
 target_link_libraries(test_red_bg_init wixen_render wixen_core)
 add_test(NAME test_red_bg_init COMMAND test_red_bg_init)
 
+add_executable(test_red_renderer_cleanup tests/test_red_renderer_cleanup.c)
+target_link_libraries(test_red_renderer_cleanup wixen_render wixen_core)
+add_test(NAME test_red_renderer_cleanup COMMAND test_red_renderer_cleanup)
+
 add_executable(test_red_search_modal tests/test_red_search_modal.c)
 target_link_libraries(test_red_search_modal wixen_search wixen_core wixen_vt)
 add_test(NAME test_red_search_modal COMMAND test_red_search_modal)
@@ -957,6 +961,18 @@ add_executable(test_red_a11y_state_lifecycle tests/test_red_a11y_state_lifecycle
 target_link_libraries(test_red_a11y_state_lifecycle wixen_a11y)
 add_test(NAME test_red_a11y_state_lifecycle COMMAND test_red_a11y_state_lifecycle)
 
+add_executable(test_red_a11y_perf_contract tests/test_red_a11y_perf_contract.c)
+target_link_libraries(test_red_a11y_perf_contract wixen_core wixen_a11y)
+add_test(NAME test_red_a11y_perf_contract COMMAND test_red_a11y_perf_contract)
+
 add_executable(test_red_long_line tests/test_red_long_line.c)
 target_link_libraries(test_red_long_line wixen_core)
 add_test(NAME test_red_long_line COMMAND test_red_long_line)
+
+add_executable(test_red_feature_contracts tests/test_red_feature_contracts.c)
+target_link_libraries(test_red_feature_contracts wixen_core wixen_vt wixen_search wixen_shell_integ wixen_config wixen_ui)
+add_test(NAME test_red_feature_contracts COMMAND test_red_feature_contracts)
+
+add_executable(test_red_a11y_concurrency tests/test_red_a11y_concurrency.c)
+target_link_libraries(test_red_a11y_concurrency wixen_a11y)
+add_test(NAME test_red_a11y_concurrency COMMAND test_red_a11y_concurrency)
