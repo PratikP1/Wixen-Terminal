@@ -293,6 +293,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Main event loop */
     bool running = true;
+    bool char_typed_this_frame = false;
     MSG msg;
 
     while (running) {
@@ -696,6 +697,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 }
                 break;
             case WIXEN_EVT_CHAR_INPUT:
+                char_typed_this_frame = true;
                 if (ps->pty_running) {
                     /* Convert UTF-16 codepoint to UTF-8 and send to PTY */
                     char utf8[4] = {0};
@@ -1111,23 +1113,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             /* #10: Password prompt detection — if terminal stopped echoing.
              * Only fires after 3+ consecutive frames with no cursor movement
              * AND no output, AND the user typed something (char event). */
+            /* Password prompt detection — only when user typed something.
+             * char_typed_this_frame is set by WM_CHAR handler and cleared each frame.
+             * Without this gate, every idle frame counted as "no echo". */
             {
                 static size_t echo_check_col = SIZE_MAX;
                 static int no_echo_frames = 0;
                 static bool announced_password = false;
-                if (cur_col == echo_check_col && !cursor_moved && !has_real_output) {
+                if (char_typed_this_frame && cur_col == echo_check_col
+                    && !cursor_moved && !has_real_output) {
                     no_echo_frames++;
                     if (no_echo_frames >= 3 && !announced_password) {
                         wixen_a11y_raise_notification(window.hwnd,
                             "Text not echoed", "password-prompt");
                         announced_password = true;
                     }
+                } else if (!char_typed_this_frame) {
+                    /* Idle frame — don't count, don't reset */
                 } else {
                     no_echo_frames = 0;
                     if (cursor_moved || has_real_output)
                         announced_password = false;
                 }
                 echo_check_col = cur_col;
+                char_typed_this_frame = false;
             }
 
             /* #3/#4: Boundary detection — consume nav key, check if nothing changed */

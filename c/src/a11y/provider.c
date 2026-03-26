@@ -172,9 +172,11 @@ static HRESULT STDMETHODCALLTYPE provider_GetPropertyValue(
         pRetVal->lVal = UIA_DocumentControlTypeId;
     } else if (propertyId == UIA_NamePropertyId) {
         AcquireSRWLockShared(&p->state->lock);
-        if (p->state->title) {
-            pRetVal->vt = VT_BSTR;
+        pRetVal->vt = VT_BSTR;
+        if (p->state->title && p->state->title[0]) {
             pRetVal->bstrVal = SysAllocString(p->state->title);
+        } else {
+            pRetVal->bstrVal = SysAllocString(L"Wixen Terminal");
         }
         ReleaseSRWLockShared(&p->state->lock);
     } else if (propertyId == UIA_AutomationIdPropertyId) {
