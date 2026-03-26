@@ -48,6 +48,28 @@ bool wixen_renderer_create_step(WixenRenderer *r, int step,
 /* Clear screen and present (used during init before full rendering is ready) */
 void wixen_renderer_clear_present(WixenRenderer *r, const WixenColorScheme *colors);
 
+/* --- Background init (no HWND needed) --- */
+/* These run on a background thread. Only finalize needs the UI thread. */
+
+typedef struct WixenRendererBgResult {
+    void *device;         /* ID3D11Device* */
+    void *device_context; /* ID3D11DeviceContext* */
+    void *vs_blob;        /* ID3DBlob* — compiled vertex shader */
+    void *ps_blob;        /* ID3DBlob* — compiled pixel shader */
+    void *atlas;          /* WixenGlyphAtlas* */
+    WixenFontMetrics metrics;
+} WixenRendererBgResult;
+
+/* Run on background thread: creates D3D11 device, compiles shaders, creates atlas */
+WixenRendererBgResult *wixen_renderer_init_background(
+    const char *font_family, float font_size, uint32_t dpi);
+
+/* Run on UI thread: takes background results + HWND, creates swapchain + binds */
+WixenRenderer *wixen_renderer_finalize(
+    WixenRendererBgResult *bg, HWND hwnd, uint32_t width, uint32_t height);
+
+void wixen_renderer_bg_result_free(WixenRendererBgResult *bg);
+
 /* Resize the render target */
 void wixen_renderer_resize(WixenRenderer *r, uint32_t width, uint32_t height);
 

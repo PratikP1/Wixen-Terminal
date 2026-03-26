@@ -13,6 +13,7 @@
 #define COBJMACROS
 #include <d3d11.h>
 #include <dxgi.h>
+#include <dxgi1_2.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -247,6 +248,202 @@ bool wixen_renderer_create_step(WixenRenderer *r, int step,
     }
 
     return false; /* No more steps */
+}
+
+/* --- Background init (no HWND) --- */
+
+WixenRendererBgResult *wixen_renderer_init_background(
+        const char *font_family, float font_size, uint32_t dpi) {
+    WixenRendererBgResult *bg = calloc(1, sizeof(WixenRendererBgResult));
+    if (!bg) return NULL;
+
+    /* 1. Create D3D11 device WITHOUT swapchain (no HWND needed) */
+    ID3D11Device *device = NULL;
+    ID3D11DeviceContext *ctx = NULL;
+    D3D_FEATURE_LEVEL feature_level;
+    HRESULT hr = D3D11CreateDevice(
+        NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        NULL, 0, D3D11_SDK_VERSION,
+        &device, &feature_level, &ctx);
+    if (FAILED(hr)) {
+        hr = D3D11CreateDevice(
+            NULL, D3D_DRIVER_TYPE_WARP, NULL,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            NULL, 0, D3D11_SDK_VERSION,
+            &device, &feature_level, &ctx);
+    }
+    if (FAILED(hr)) { free(bg); return NULL; }
+    bg->device = device;
+    bg->device_context = ctx;
+
+    /* 2. Compile shaders */
+    ID3DBlob *vs_blob = NULL, *ps_blob = NULL, *err_blob = NULL;
+    hr = D3DCompile(hlsl_source, strlen(hlsl_source), "terminal.hlsl", NULL, NULL,
+                     "VSMain", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL0, 0, &vs_blob, &err_blob);
+    if (err_blob) ID3D10Blob_Release(err_blob); err_blob = NULL;
+    if (SUCCEEDED(hr)) {
+        hr = D3DCompile(hlsl_source, strlen(hlsl_source), "terminal.hlsl", NULL, NULL,
+                         "PSMain", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL0, 0, &ps_blob, &err_blob);
+        if (err_blob) ID3D10Blob_Release(err_blob);
+    }
+    bg->vs_blob = vs_blob;
+    bg->ps_blob = ps_blob;
+
+    /* 3. Create DirectWrite glyph atlas */
+    bg->atlas = wixen_atlas_create(font_family, font_size, (float)dpi);
+    if (bg->atlas) {
+        WixenDWriteMetrics dm = wixen_atlas_metrics((WixenGlyphAtlas *)bg->atlas);
+        bg->metrics.cell_width = dm.cell_width;
+        bg->metrics.cell_height = dm.cell_height;
+        bg->metrics.baseline = dm.baseline;
+        bg->metrics.underline_pos = dm.underline_pos;
+        bg->metrics.underline_thickness = dm.underline_thickness;
+    } else {
+        bg->metrics.cell_width = font_size * 0.6f;
+        bg->metrics.cell_height = font_size * 1.2f;
+        bg->metrics.baseline = font_size;
+    }
+
+    return bg;
+}
+
+WixenRenderer *wixen_renderer_finalize(
+        WixenRendererBgResult *bg, HWND hwnd, uint32_t width, uint32_t height) {
+    if (!bg || !bg->device) return NULL;
+
+    WixenRenderer *r = calloc(1, sizeof(WixenRenderer));
+    if (!r) return NULL;
+    r->device = (ID3D11Device *)bg->device;
+    r->context = (ID3D11DeviceContext *)bg->device_context;
+    r->width = width;
+    r->height = height;
+    r->metrics = bg->metrics;
+
+    /* Create swapchain using DXGI factory from the device (HWND needed) */
+    IDXGIDevice *dxgi_device = NULL;
+    IDXGIAdapter *adapter = NULL;
+    IDXGIFactory2 *factory = NULL;
+    ID3D11Device_QueryInterface(r->device, &IID_IDXGIDevice, (void **)&dxgi_device);
+    if (dxgi_device) {
+        IDXGIDevice_GetAdapter(dxgi_device, &adapter);
+        IDXGIDevice_Release(dxgi_device);
+    }
+    if (adapter) {
+        IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory2, (void **)&factory);
+        IDXGIAdapter_Release(adapter);
+    }
+    if (factory) {
+        DXGI_SWAP_CHAIN_DESC1 scd = {0};
+        scd.Width = width;
+        scd.Height = height;
+        scd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        scd.SampleDesc.Count = 1;
+        scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        scd.BufferCount = 2;
+        scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        IDXGISwapChain1 *sc1 = NULL;
+        IDXGIFactory2_CreateSwapChainForHwnd(factory, (IUnknown *)r->device,
+            hwnd, &scd, NULL, NULL, &sc1);
+        if (sc1) {
+            sc1->lpVtbl->QueryInterface(sc1, &IID_IDXGISwapChain, (void **)&r->swapchain);
+            sc1->lpVtbl->Release(sc1);
+        }
+        IDXGIFactory2_Release(factory);
+    }
+
+    /* Create RTV */
+    if (r->swapchain) {
+        ID3D11Texture2D *bb = NULL;
+        IDXGISwapChain_GetBuffer(r->swapchain, 0, &IID_ID3D11Texture2D, (void **)&bb);
+        if (bb) {
+            ID3D11Device_CreateRenderTargetView(r->device, (ID3D11Resource *)bb, NULL, &r->rtv);
+            ID3D11Texture2D_Release(bb);
+        }
+    }
+
+    /* Create pipeline objects from pre-compiled shaders */
+    ID3DBlob *vs_blob = (ID3DBlob *)bg->vs_blob;
+    ID3DBlob *ps_blob = (ID3DBlob *)bg->ps_blob;
+    if (vs_blob && ps_blob) {
+        ID3D11Device_CreateVertexShader(r->device,
+            ID3D10Blob_GetBufferPointer(vs_blob), ID3D10Blob_GetBufferSize(vs_blob), NULL, &r->vs);
+        ID3D11Device_CreatePixelShader(r->device,
+            ID3D10Blob_GetBufferPointer(ps_blob), ID3D10Blob_GetBufferSize(ps_blob), NULL, &r->ps);
+
+        D3D11_INPUT_ELEMENT_DESC layout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "COLOR", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        ID3D11Device_CreateInputLayout(r->device, layout, 4,
+            ID3D10Blob_GetBufferPointer(vs_blob), ID3D10Blob_GetBufferSize(vs_blob), &r->input_layout);
+    }
+
+    /* Vertex + uniform buffers */
+    D3D11_BUFFER_DESC vbd = { .Usage = D3D11_USAGE_DYNAMIC,
+        .ByteWidth = MAX_VERTICES * sizeof(WixenVertex),
+        .BindFlags = D3D11_BIND_VERTEX_BUFFER, .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE };
+    ID3D11Device_CreateBuffer(r->device, &vbd, NULL, &r->vertex_buffer);
+
+    D3D11_BUFFER_DESC ubd = { .Usage = D3D11_USAGE_DYNAMIC,
+        .ByteWidth = sizeof(WixenUniforms),
+        .BindFlags = D3D11_BIND_CONSTANT_BUFFER, .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE };
+    ID3D11Device_CreateBuffer(r->device, &ubd, NULL, &r->uniform_buffer);
+
+    /* Sampler */
+    D3D11_SAMPLER_DESC sd = {0};
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    ID3D11Device_CreateSamplerState(r->device, &sd, &r->sampler);
+
+    /* Upload atlas texture */
+    r->atlas = (WixenGlyphAtlas *)bg->atlas;
+    bg->atlas = NULL; /* Transfer ownership */
+    if (r->atlas) {
+        uint32_t aw, ah;
+        const uint8_t *pixels = wixen_atlas_texture_data(r->atlas, &aw, &ah);
+        if (pixels && aw > 0) {
+            D3D11_TEXTURE2D_DESC td = {0};
+            td.Width = aw; td.Height = ah; td.MipLevels = 1; td.ArraySize = 1;
+            td.Format = DXGI_FORMAT_R8_UNORM; td.SampleDesc.Count = 1;
+            td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA srd = { pixels, aw, 0 };
+            ID3D11Device_CreateTexture2D(r->device, &td, &srd, &r->atlas_tex);
+            if (r->atlas_tex)
+                ID3D11Device_CreateShaderResourceView(r->device,
+                    (ID3D11Resource *)r->atlas_tex, NULL, &r->atlas_srv);
+        }
+    } else {
+        /* Placeholder 1x1 white */
+        uint8_t w = 255;
+        D3D11_TEXTURE2D_DESC td = {0};
+        td.Width = 1; td.Height = 1; td.MipLevels = 1; td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8_UNORM; td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA srd = { &w, 1, 0 };
+        ID3D11Device_CreateTexture2D(r->device, &td, &srd, &r->atlas_tex);
+        if (r->atlas_tex)
+            ID3D11Device_CreateShaderResourceView(r->device,
+                (ID3D11Resource *)r->atlas_tex, NULL, &r->atlas_srv);
+    }
+
+    /* Don't free device/context — they're owned by the renderer now */
+    bg->device = NULL;
+    bg->device_context = NULL;
+
+    return r;
+}
+
+void wixen_renderer_bg_result_free(WixenRendererBgResult *bg) {
+    if (!bg) return;
+    if (bg->vs_blob) ((ID3DBlob *)bg->vs_blob)->lpVtbl->Release((ID3DBlob *)bg->vs_blob);
+    if (bg->ps_blob) ((ID3DBlob *)bg->ps_blob)->lpVtbl->Release((ID3DBlob *)bg->ps_blob);
+    if (bg->device_context) ((ID3D11DeviceContext *)bg->device_context)->lpVtbl->Release((ID3D11DeviceContext *)bg->device_context);
+    if (bg->device) ((ID3D11Device *)bg->device)->lpVtbl->Release((ID3D11Device *)bg->device);
+    if (bg->atlas) wixen_atlas_destroy((WixenGlyphAtlas *)bg->atlas);
+    free(bg);
 }
 
 void wixen_renderer_clear_present(WixenRenderer *r, const WixenColorScheme *colors) {

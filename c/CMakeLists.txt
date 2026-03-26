@@ -349,6 +349,10 @@ add_executable(test_red_copilot_p1_focus tests/test_red_copilot_p1_focus.c)
 target_link_libraries(test_red_copilot_p1_focus wixen_a11y)
 add_test(NAME test_red_copilot_p1_focus COMMAND test_red_copilot_p1_focus)
 
+add_executable(test_red_bg_init tests/test_red_bg_init.c)
+target_link_libraries(test_red_bg_init wixen_render wixen_core)
+add_test(NAME test_red_bg_init COMMAND test_red_bg_init)
+
 add_executable(test_red_search_modal tests/test_red_search_modal.c)
 target_link_libraries(test_red_search_modal wixen_search wixen_core wixen_vt)
 add_test(NAME test_red_search_modal COMMAND test_red_search_modal)

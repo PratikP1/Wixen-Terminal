@@ -74,6 +74,21 @@ static void pump_messages(void) {
     }
 }
 
+/* Background renderer init thread — runs D3D11 device + shaders + atlas
+ * without blocking the UI thread's message pump. */
+typedef struct BgRendererInitArgs {
+    const char *font; float size; uint32_t dpi;
+    volatile WixenRendererBgResult **out; volatile LONG *flag;
+} BgRendererInitArgs;
+
+static DWORD WINAPI bg_renderer_init_thread(LPVOID param) {
+    BgRendererInitArgs *a = (BgRendererInitArgs *)param;
+    WixenRendererBgResult *r = wixen_renderer_init_background(a->font, a->size, a->dpi);
+    *a->out = r;
+    InterlockedExchange(a->flag, 1);
+    return 0;
+}
+
 static DWORD WINAPI exit_watchdog_thread(LPVOID param) {
     (void)param;
     Sleep(3000);
@@ -128,12 +143,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
     pump_messages(); /* Let NVDA see the window + dispatch UIA queries */
 
-    /* PHASED INIT: Renderer creation is split into micro-steps (<100ms each)
-     * with message pump between each step. This prevents NVDA's watchdog
-     * from detecting a freeze. */
+    /* BACKGROUND INIT: Heavy renderer work (D3D11 device + shaders + atlas)
+     * runs on a background thread. UI thread stays responsive for NVDA. */
     WixenRenderer *renderer = NULL;
+    volatile WixenRendererBgResult *bg_result = NULL;
+    volatile LONG bg_init_done = 0;
+
+    static struct { const char *font; float size; uint32_t dpi;
+        volatile WixenRendererBgResult **out; volatile LONG *flag; } s_bg_args;
+    s_bg_args.font = config.font.family ? config.font.family : "Cascadia Mono";
+    s_bg_args.size = config.font.size > 0 ? config.font.size : 14.0f;
+    s_bg_args.dpi = 96;
+    s_bg_args.out = &bg_result;
+    s_bg_args.flag = &bg_init_done;
+    CreateThread(NULL, 0, bg_renderer_init_thread, &s_bg_args, 0, NULL);
+
     bool init_phase = true;
-    int init_step = 0;
 
     /* Initialize tab and pane management */
     WixenTabManager tabs;
@@ -354,35 +379,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
         if (!running) break;
 
-        /* PHASED INIT: Each step is ONE heavy operation, then yield to pump.
-         * Step 0: D3D11 device + swapchain (~200ms)
-         * Step 1: Shader compile + buffers (~100ms)
-         * Step 2: DirectWrite atlas (~500ms)
-         * Step 3: PTY spawn (~200ms)
-         * Step 4: Done — announce ready */
+        /* BACKGROUND INIT: Poll for background thread completion.
+         * UI thread NEVER blocks. Just pumps messages and presents dark bg. */
         if (init_phase) {
-            switch (init_step) {
-            case 0:
-                renderer = wixen_renderer_create_begin(window.hwnd,
+            if (InterlockedCompareExchange((volatile LONG *)&bg_init_done, 0, 0) == 1) {
+                /* Background init done — finalize on UI thread (fast: just swapchain) */
+                renderer = wixen_renderer_finalize(
+                    (WixenRendererBgResult *)bg_result, window.hwnd,
                     config.window.width ? config.window.width : 1200,
-                    config.window.height ? config.window.height : 800,
-                    &colors);
-                init_step++;
-                break;
-            case 1:
-                if (renderer) wixen_renderer_create_step(renderer, 0,
-                    config.font.family ? config.font.family : "Cascadia Mono",
-                    config.font.size > 0 ? config.font.size : 14.0f);
-                init_step++;
-                break;
-            case 2:
-                if (renderer) wixen_renderer_create_step(renderer, 1,
-                    config.font.family ? config.font.family : "Cascadia Mono",
-                    config.font.size > 0 ? config.font.size : 14.0f);
-                init_step++;
-                break;
-            case 3: {
-                /* PTY spawn */
+                    config.window.height ? config.window.height : 800);
+                wixen_renderer_bg_result_free((WixenRendererBgResult *)bg_result);
+                bg_result = NULL;
+
+                /* Spawn PTY */
                 WixenFontMetrics fm = renderer ? wixen_renderer_font_metrics(renderer)
                     : (WixenFontMetrics){8,16,0,0,0};
                 uint16_t c = (uint16_t)((config.window.width ? config.window.width : 1200)
@@ -398,21 +407,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows,
                             shell, NULL, NULL, window.hwnd);
                 }
-                init_step++;
-                break;
-            }
-            case 4:
-                /* Done */
-                init_phase = false;
                 free(shell); shell = NULL;
+
+                init_phase = false;
                 wixen_a11y_raise_notification(window.hwnd,
                     "Wixen Terminal ready", "terminal-ready");
                 wixen_a11y_raise_focus_changed(window.hwnd);
-                break;
-            }
-            if (init_phase) {
-                if (renderer) wixen_renderer_clear_present(renderer, &colors);
-                MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
+            } else {
+                /* Still waiting — just pump and present dark bg */
+                MsgWaitForMultipleObjects(0, NULL, FALSE, 16, QS_ALLINPUT);
                 continue;
             }
         }
