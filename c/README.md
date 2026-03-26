@@ -73,7 +73,7 @@ Native Win32 controls (settings dialog, command palette, tray menu) are automati
 
 ## Test coverage
 
-1103 tests across 98 suites covering:
+1600+ tests across 181+ suites covering:
 - VT parser (CSI, ESC, OSC, DCS, split chunks, stress)
 - Terminal (cursor, erase, scroll, modes, SGR, DSR, tabs, UTF-8, alt screen)
 - Grid (resize, reflow, clone, visible text)
