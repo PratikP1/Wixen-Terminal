@@ -23,6 +23,7 @@
 #include "wixen/ui/audio.h"
 #include "wixen/a11y/provider.h"
 #include "wixen/a11y/events.h"
+#include "wixen/search/search.h"
 #include "wixen/a11y/frame_update.h"
 #include "wixen/a11y/state.h"
 #include "wixen/a11y/tree.h"
@@ -248,6 +249,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenA11yState *a11y_shared = wixen_a11y_state_create();
     (void)a11y_shared; /* Will be wired to provider in next step */
 
+    /* Search state */
+    bool search_active = false;
+    char search_query[256] = {0};
+    size_t search_query_len = 0;
+    WixenSearchEngine search_engine;
+    wixen_search_init(&search_engine);
+
     /* Main event loop */
     bool running = true;
     MSG msg;
@@ -462,11 +470,42 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                                 if (at) wixen_a11y_raise_notification(window.hwnd, at->title, "tab-switch");
                             }
                         } else if (strcmp(action, "find") == 0) {
-                            /* TODO: Open search modal */
+                            if (!search_active) {
+                                search_active = true;
+                                search_query[0] = '\0';
+                                search_query_len = 0;
+                                wixen_a11y_raise_notification(window.hwnd,
+                                    "Search: type to search, Escape to close",
+                                    "search-open");
+                            } else {
+                                search_active = false;
+                                wixen_a11y_raise_notification(window.hwnd,
+                                    "Search closed", "search-close");
+                            }
                         } else if (strcmp(action, "find_next") == 0) {
-                            /* TODO: Search next match */
+                            if (search_active && wixen_search_match_count(&search_engine) > 0) {
+                                wixen_search_next(&search_engine, WIXEN_SEARCH_FORWARD);
+                                const WixenSearchMatch *m = wixen_search_active_match(&search_engine);
+                                if (m) {
+                                    char smsg[128];
+                                    snprintf(smsg, sizeof(smsg), "Match %zu of %zu",
+                                        search_engine.active + 1,
+                                        wixen_search_match_count(&search_engine));
+                                    wixen_a11y_raise_notification(window.hwnd, smsg, "search-nav");
+                                }
+                            }
                         } else if (strcmp(action, "find_previous") == 0) {
-                            /* TODO: Search prev match */
+                            if (search_active && wixen_search_match_count(&search_engine) > 0) {
+                                wixen_search_next(&search_engine, WIXEN_SEARCH_BACKWARD);
+                                const WixenSearchMatch *m = wixen_search_active_match(&search_engine);
+                                if (m) {
+                                    char smsg[128];
+                                    snprintf(smsg, sizeof(smsg), "Match %zu of %zu",
+                                        search_engine.active + 1,
+                                        wixen_search_match_count(&search_engine));
+                                    wixen_a11y_raise_notification(window.hwnd, smsg, "search-nav");
+                                }
+                            }
                         } else if (strcmp(action, "select_all") == 0) {
                             wixen_selection_clear(&ps->terminal.selection);
                             wixen_selection_start(&ps->terminal.selection, 0, 0, WIXEN_SEL_NORMAL);
@@ -985,17 +1024,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 }
             }
 
-            /* #10: Password prompt detection — if terminal stopped echoing */
+            /* #10: Password prompt detection — if terminal stopped echoing.
+             * Only fires after 3+ consecutive frames with no cursor movement
+             * AND no output, AND the user typed something (char event). */
             {
                 static size_t echo_check_col = SIZE_MAX;
+                static int no_echo_frames = 0;
+                static bool announced_password = false;
                 if (cur_col == echo_check_col && !cursor_moved && !has_real_output) {
-                    /* Cursor didn't move after keypress — might be password prompt */
-                    /* Only announce once per position */
-                    static size_t last_password_col = SIZE_MAX;
-                    if (cur_col != last_password_col) {
-                        wixen_a11y_raise_notification(window.hwnd, "Text not echoed", "password-prompt");
-                        last_password_col = cur_col;
+                    no_echo_frames++;
+                    if (no_echo_frames >= 3 && !announced_password) {
+                        wixen_a11y_raise_notification(window.hwnd,
+                            "Text not echoed", "password-prompt");
+                        announced_password = true;
                     }
+                } else {
+                    no_echo_frames = 0;
+                    if (cursor_moved || has_real_output)
+                        announced_password = false;
                 }
                 echo_check_col = cur_col;
             }
@@ -1131,6 +1177,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         wixen_session_save(&session, save_path);
         wixen_session_free(&session);
     }
+
+    wixen_search_free(&search_engine);
 
     /* BUG #30: ExitProcess(0) hangs — a DllMain or thread cleanup blocks.
      * TerminateProcess is the only guaranteed instant kill. It skips
