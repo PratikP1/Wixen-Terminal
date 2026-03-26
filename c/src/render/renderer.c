@@ -157,6 +157,10 @@ WixenRenderer *wixen_renderer_create(HWND hwnd, uint32_t width, uint32_t height,
         ID3D11Texture2D_Release(back_buffer);
     }
 
+    /* Pump messages between heavy init stages to prevent "Not Responding".
+     * NVDA's watchdog triggers after ~1s without message pump activity. */
+    { MSG m; while (PeekMessageW(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); } }
+
     /* Compile vertex shader */
     ID3DBlob *vs_blob = NULL, *ps_blob = NULL, *err_blob = NULL;
     /* D3DCOMPILE_OPTIMIZATION_LEVEL0 for fastest compile time.
@@ -209,6 +213,9 @@ WixenRenderer *wixen_renderer_create(HWND hwnd, uint32_t width, uint32_t height,
         bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         ID3D11Device_CreateBuffer(r->device, &bd, NULL, &r->uniform_buffer);
     }
+
+    /* Pump again after shader compile, before atlas (another heavy op) */
+    { MSG m; while (PeekMessageW(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); } }
 
     /* Create DirectWrite glyph atlas */
     r->atlas = wixen_atlas_create(font_family, font_size, 96);

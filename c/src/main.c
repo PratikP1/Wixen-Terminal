@@ -217,6 +217,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     wixen_session_free(&saved_session);
     free(shell);
 
+    /* Pump after PTY spawn — prevents "Not Responding" during startup */
+    pump_messages();
+
     /* ps points to the active pane */
     WixenPaneState *ps = &pane_states[0];
 
