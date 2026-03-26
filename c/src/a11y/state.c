@@ -2,6 +2,7 @@
 #ifdef _WIN32
 
 #include "wixen/a11y/state.h"
+#include "wixen/a11y/text_boundaries.h"
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +54,7 @@ void wixen_a11y_state_update_cursor(WixenA11yState *state, size_t row, size_t co
     state->cursor_row = row;
     state->cursor_col = col;
     /* Compute UTF-16 offset for lock-free access */
-    /* Walk text to find byte offset of (row, col), then count UTF-16 units */
+    /* Walk text to find byte offset of (row, col), then convert to UTF-16 units */
     int32_t offset = 0;
     if (state->full_text) {
         const char *p = state->full_text;
@@ -68,8 +69,9 @@ void wixen_a11y_state_update_cursor(WixenA11yState *state, size_t row, size_t co
             p++;
             c++;
         }
-        /* Count UTF-16 units from start to current position */
-        offset = (int32_t)(p - state->full_text);
+        /* Convert byte offset to UTF-16 code unit count */
+        size_t byte_offset = (size_t)(p - state->full_text);
+        offset = (int32_t)wixen_utf8_to_utf16_offset(state->full_text, byte_offset);
     }
     ReleaseSRWLockExclusive(&state->lock);
     InterlockedExchange(&state->cursor_offset_utf16, offset);

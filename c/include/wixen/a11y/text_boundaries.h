@@ -24,6 +24,11 @@ void wixen_text_offset_to_rowcol(const char *text, size_t text_len, size_t offse
 size_t wixen_text_rowcol_to_offset(const char *text, size_t text_len,
                                      size_t row, size_t col);
 
+/* Convert a UTF-8 byte offset to a UTF-16 code unit count.
+ * ASCII (1 byte) → 1 unit, 2-byte → 1 unit, 3-byte → 1 unit,
+ * 4-byte (supplementary / surrogate pair) → 2 units. */
+size_t wixen_utf8_to_utf16_offset(const char *utf8_text, size_t byte_offset);
+
 /* Individual boundary queries */
 size_t wixen_text_word_start(const char *text, size_t text_len, size_t offset);
 size_t wixen_text_word_end(const char *text, size_t text_len, size_t offset);

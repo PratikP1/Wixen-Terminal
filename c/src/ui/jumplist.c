@@ -5,9 +5,18 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <propkey.h>
-/* propvarutil.h may not declare InitPropVariantFromString in C mode.
- * Declare it manually. */
-HRESULT InitPropVariantFromString(PCWSTR psz, PROPVARIANT *ppropvar);
+/* propvarutil.h does not declare InitPropVariantFromString in C mode.
+ * Implement inline — avoids unresolved symbol with propsys.lib in
+ * static-lib-to-test linking scenarios. */
+static HRESULT wixen_init_propvariant_from_string(PCWSTR psz, PROPVARIANT *ppropvar) {
+    PropVariantInit(ppropvar);
+    size_t len = wcslen(psz) + 1;
+    ppropvar->vt = VT_LPWSTR;
+    ppropvar->pwszVal = (LPWSTR)CoTaskMemAlloc(len * sizeof(WCHAR));
+    if (!ppropvar->pwszVal) return E_OUTOFMEMORY;
+    memcpy(ppropvar->pwszVal, psz, len * sizeof(WCHAR));
+    return S_OK;
+}
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "propsys.lib")
@@ -50,7 +59,7 @@ bool wixen_jumplist_update(const wchar_t *exe_path,
         hr = link->lpVtbl->QueryInterface(link, &IID_IPropertyStore, (void **)&ps);
         if (SUCCEEDED(hr) && ps) {
             PROPVARIANT pv;
-            InitPropVariantFromString(profile_names[i], &pv);
+            wixen_init_propvariant_from_string(profile_names[i], &pv);
             ps->lpVtbl->SetValue(ps, &PKEY_Title, &pv);
             PropVariantClear(&pv);
             ps->lpVtbl->Commit(ps);

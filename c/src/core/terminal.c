@@ -1,6 +1,7 @@
 /* terminal.c — Terminal emulator state machine */
 #include "wixen/core/terminal.h"
 #include "wixen/core/selection.h"
+#include "wixen/core/sixel.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -77,6 +78,7 @@ void wixen_terminal_init(WixenTerminal *t, size_t cols, size_t rows) {
     wixen_selection_init(&t->selection);
     wixen_hyperlinks_init(&t->hyperlinks);
     wixen_shell_integ_init(&t->shell_integ);
+    wixen_images_init(&t->images);
     init_tab_stops(&t->tab_stops, cols);
     t->dirty = true;
 }
@@ -102,6 +104,11 @@ void wixen_terminal_free(WixenTerminal *t) {
     t->responses = NULL;
     t->response_count = 0;
     t->response_cap = 0;
+    free(t->sixel_buf);
+    t->sixel_buf = NULL;
+    t->sixel_buf_len = 0;
+    t->sixel_buf_cap = 0;
+    wixen_images_free(&t->images);
 }
 
 void wixen_terminal_reset(WixenTerminal *t) {
@@ -1562,19 +1569,60 @@ void wixen_terminal_dispatch(WixenTerminal *t, const WixenAction *action) {
                 /* Respond with valid setting for common queries */
                 /* For now, just acknowledge */
             } else {
-                /* Sixel graphics */
+                /* Sixel graphics — start accumulating */
                 t->in_sixel = true;
+                free(t->sixel_buf);
+                t->sixel_buf = NULL;
+                t->sixel_buf_len = 0;
+                t->sixel_buf_cap = 0;
             }
         }
         break;
     case WIXEN_ACTION_DCS_PUT:
-        /* Sixel data or other DCS data — ignore for now */
+        if (t->in_sixel) {
+            /* Accumulate Sixel data bytes */
+            if (t->sixel_buf_len >= t->sixel_buf_cap) {
+                size_t new_cap = t->sixel_buf_cap ? t->sixel_buf_cap * 2 : 1024;
+                uint8_t *new_buf = realloc(t->sixel_buf, new_cap);
+                if (new_buf) {
+                    t->sixel_buf = new_buf;
+                    t->sixel_buf_cap = new_cap;
+                }
+            }
+            if (t->sixel_buf_len < t->sixel_buf_cap) {
+                t->sixel_buf[t->sixel_buf_len++] = action->dcs_byte;
+            }
+        }
         break;
     case WIXEN_ACTION_DCS_UNHOOK:
+        if (t->in_sixel && t->sixel_buf && t->sixel_buf_len > 0) {
+            /* Decode accumulated Sixel data into an image */
+            WixenSixelImage img;
+            if (wixen_sixel_decode((const char *)t->sixel_buf, t->sixel_buf_len, &img)) {
+                /* Add to image store at current cursor position */
+                size_t col = t->grid.cursor.col;
+                size_t row = t->grid.cursor.row;
+                /* Estimate cell span (assume 8px cell width, 16px cell height) */
+                size_t cell_cols = img.width > 0 ? (img.width + 7) / 8 : 1;
+                size_t cell_rows = img.height > 0 ? (img.height + 15) / 16 : 1;
+                wixen_images_add(&t->images, img.width, img.height,
+                                 img.pixels, col, row, cell_cols, cell_rows);
+                /* pixels ownership transferred to image store; don't free */
+                img.pixels = NULL;
+            }
+            free(t->sixel_buf);
+            t->sixel_buf = NULL;
+            t->sixel_buf_len = 0;
+            t->sixel_buf_cap = 0;
+        }
         t->in_sixel = false;
         break;
     case WIXEN_ACTION_APC_DISPATCH:
-        /* Kitty graphics protocol uses APC — not yet implemented */
+        /* Kitty graphics protocol — not yet implemented */
+        if (action->apc.data_len > 0 && action->apc.data[0] == '_') {
+            /* Kitty APC starts with '_G' — respond with not-implemented */
+            push_response(t, "\033_Gi=0;not implemented\033\\");
+        }
         break;
     case WIXEN_ACTION_NONE:
         break;

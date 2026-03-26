@@ -2,8 +2,11 @@
 #ifdef _WIN32
 
 #include "wixen/ui/window.h"
+#include "wixen/ui/tray.h"
+#include "wixen/ui/focus.h"
 #include "wixen/a11y/provider.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -206,9 +209,18 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
 
     case WM_COMMAND:
         if (q) {
-            WixenWindowEvent evt = { .type = WIXEN_EVT_CONTEXT_MENU };
-            evt.context_action = (WixenContextAction)LOWORD(wparam);
-            eq_push(q, &evt);
+            WORD cmd_id = LOWORD(wparam);
+            if (cmd_id >= WIXEN_TRAY_SHOW_HIDE && cmd_id <= WIXEN_TRAY_EXIT) {
+                /* Tray popup menu command */
+                WixenWindowEvent evt = { .type = WIXEN_EVT_TRAY_COMMAND };
+                evt.tray_action = (int)cmd_id;
+                eq_push(q, &evt);
+            } else {
+                /* Context menu command */
+                WixenWindowEvent evt = { .type = WIXEN_EVT_CONTEXT_MENU };
+                evt.context_action = (WixenContextAction)cmd_id;
+                eq_push(q, &evt);
+            }
         }
         return 0;
 
@@ -217,6 +229,32 @@ static LRESULT CALLBACK wixen_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARA
          * and calls UiaReturnRawElementProvider. Provider is stored as a
          * window property (set in WM_CREATE via init_minimal). */
         return wixen_a11y_handle_wm_getobject(hwnd, wparam, lparam);
+
+    case WM_TRAY_CALLBACK:
+        if (LOWORD(lparam) == WM_RBUTTONUP) {
+            /* Right-click on tray icon — show popup menu.
+             * We push the menu via wixen_tray_show_menu; the resulting
+             * WM_COMMAND is already handled above and enqueues a
+             * WIXEN_EVT_TRAY_COMMAND event. */
+            if (q) {
+                /* Post a synthetic marker so main.c can call
+                 * wixen_tray_show_menu() with the tray pointer.
+                 * We use tray_action = -1 as "show menu" sentinel. */
+                WixenWindowEvent evt = { .type = WIXEN_EVT_TRAY_COMMAND };
+                evt.tray_action = -1; /* Sentinel: show tray popup menu */
+                eq_push(q, &evt);
+            }
+            return 0;
+        }
+        if (LOWORD(lparam) == WM_LBUTTONDBLCLK) {
+            /* Double-click on tray icon — show/restore window */
+            ShowWindow(hwnd, IsWindowVisible(hwnd) ? SW_HIDE : SW_SHOW);
+            if (IsWindowVisible(hwnd)) {
+                SetForegroundWindow(hwnd);
+            }
+            return 0;
+        }
+        return 0;
 
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -289,61 +327,30 @@ bool wixen_window_create(WixenWindow *w, const wchar_t *title,
     return true;
 }
 
-/* Reliably acquire foreground focus using the AllocConsole trick.
- * See: https://github.com/amarmer/SetForegroundWindow
- *
- * The console subsystem has special foreground privileges. By briefly
- * allocating a console, we inherit those privileges. The console window
- * is hidden and freed immediately — the user never sees it. */
-static void force_foreground(HWND hwnd) {
-    /* Show the window first — it was created hidden */
-    ShowWindow(hwnd, SW_SHOWNORMAL);
-    UpdateWindow(hwnd);
-
-    /* Try direct SetForegroundWindow first */
-    if (SetForegroundWindow(hwnd)) {
-        SetFocus(hwnd);
-        return;
-    }
-
-    /* AllocConsole trick: console creation carries foreground rights.
-     * This is safe for ConPTY — pseudo consoles are separate from
-     * the process console. FreeConsole only detaches our console. */
-    FreeConsole();
-    if (AllocConsole()) {
-        HWND console = GetConsoleWindow();
-        if (console) ShowWindow(console, SW_HIDE);
-        SetForegroundWindow(hwnd);
-        SetFocus(hwnd);
-        FreeConsole();
-        return;
-    }
-
-    /* AttachThreadInput trick as last resort */
-    HWND fg = GetForegroundWindow();
-    if (fg) {
-        DWORD fg_tid = GetWindowThreadProcessId(fg, NULL);
-        DWORD our_tid = GetCurrentThreadId();
-        if (fg_tid != our_tid) {
-            AttachThreadInput(our_tid, fg_tid, TRUE);
-            SetForegroundWindow(hwnd);
-            SetFocus(hwnd);
-            AttachThreadInput(our_tid, fg_tid, FALSE);
-            return;
-        }
-    }
-
-    /* Absolute last resort: flash taskbar */
-    SetForegroundWindow(hwnd);
-    BringWindowToTop(hwnd);
-    SetFocus(hwnd);
-    FLASHWINFO fi = { sizeof(fi), hwnd, FLASHW_ALL | FLASHW_TIMERNOFG, 3, 0 };
-    FlashWindowEx(&fi);
-}
-
 void wixen_window_show(WixenWindow *w) {
     if (!w->visible && w->hwnd) {
-        force_foreground(w->hwnd);
+        /* Show the window first — it was created hidden */
+        ShowWindow(w->hwnd, SW_SHOWNORMAL);
+        UpdateWindow(w->hwnd);
+
+        /* Use the instrumented focus acquisition strategy */
+        WixenFocusResult fr = wixen_focus_acquire(w->hwnd);
+
+        /* Log to debug file so we can diagnose focus failures */
+        {
+            char path[MAX_PATH];
+            if (GetTempPathA(MAX_PATH, path)) {
+                strncat(path, "wixen_debug.log", MAX_PATH - strlen(path) - 1);
+                FILE *f = fopen(path, "a");
+                if (f) {
+                    fprintf(f, "[focus] method=%s success=%d attempts=%d\n",
+                            wixen_focus_method_name(fr.method_used),
+                            fr.success, fr.attempts);
+                    fclose(f);
+                }
+            }
+        }
+
         w->visible = true;
     }
 }

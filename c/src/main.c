@@ -37,6 +37,8 @@
 #include "wixen/core/url.h"
 #include "wixen/core/shutdown.h"
 #include "wixen/core/bg_task.h"
+#include "wixen/ui/explorer_menu.h"
+#include "wixen/ui/jumplist.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -137,6 +139,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenKeybindingMap keybindings;
     wixen_keybindings_init(&keybindings);
     wixen_keybindings_load_defaults(&keybindings);
+
+    /* --- Shell integration: Explorer context menu + Jumplist --- */
+    wchar_t exe_path[MAX_PATH];
+    GetModuleFileNameW(NULL, exe_path, MAX_PATH);
+
+    /* Register Explorer context menu if not already registered */
+    if (!wixen_explorer_menu_is_registered()) {
+        wixen_explorer_menu_register(exe_path, L"Open Wixen Terminal Here");
+    }
+
+    /* Update taskbar jumplist with profile names */
+    {
+        const wchar_t **jl_names = NULL;
+        size_t jl_count = config.profile_count;
+        if (jl_count > 0) {
+            jl_names = (const wchar_t **)malloc(jl_count * sizeof(wchar_t *));
+            if (jl_names) {
+                for (size_t i = 0; i < jl_count; i++) {
+                    /* Convert UTF-8 profile name to wide string */
+                    int wlen = MultiByteToWideChar(CP_UTF8, 0,
+                        config.profiles[i].name, -1, NULL, 0);
+                    wchar_t *wname = (wchar_t *)malloc(wlen * sizeof(wchar_t));
+                    if (wname) {
+                        MultiByteToWideChar(CP_UTF8, 0,
+                            config.profiles[i].name, -1, wname, wlen);
+                    }
+                    jl_names[i] = wname;
+                }
+                wixen_jumplist_update(exe_path, jl_names, jl_count);
+                for (size_t i = 0; i < jl_count; i++) free((void *)jl_names[i]);
+                free(jl_names);
+            }
+        }
+    }
 
     /* Create window */
     WixenWindow window;
@@ -420,7 +456,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 cols = c; rows = r;
                 for (size_t pi = 0; pi < pane_state_count; pi++) {
                     WixenPaneState *pst = &pane_states[pi];
-                    wixen_terminal_resize(&pst->terminal, cols, rows);
+                    if (pst->terminal.modes.alternate_screen)
+                        wixen_terminal_resize(&pst->terminal, cols, rows);
+                    else
+                        wixen_terminal_resize_reflow(&pst->terminal, cols, rows);
                     if (!pst->pty_running)
                         pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows,
                             shell, NULL, NULL, window.hwnd);
@@ -460,7 +499,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     uint16_t new_cols = (uint16_t)(evt.resize.width / fm.cell_width);
                     uint16_t new_rows = (uint16_t)(evt.resize.height / fm.cell_height);
                     if (new_cols > 0 && new_rows > 0) {
-                        wixen_terminal_resize(&ps->terminal, new_cols, new_rows);
+                        if (ps->terminal.modes.alternate_screen)
+                            wixen_terminal_resize(&ps->terminal, new_cols, new_rows);
+                        else
+                            wixen_terminal_resize_reflow(&ps->terminal, new_cols, new_rows);
                         if (ps->pty_running)
                             wixen_pty_resize(&ps->pty, new_cols, new_rows);
                     }
@@ -947,6 +989,52 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     break;
                 }
                 break;
+            case WIXEN_EVT_TRAY_COMMAND:
+                if (evt.tray_action == -1) {
+                    /* Sentinel: right-click on tray icon — show popup menu */
+                    wixen_tray_show_menu(&tray);
+                } else {
+                    switch (evt.tray_action) {
+                    case WIXEN_TRAY_SHOW_HIDE:
+                        if (IsWindowVisible(window.hwnd)) {
+                            ShowWindow(window.hwnd, SW_HIDE);
+                        } else {
+                            ShowWindow(window.hwnd, SW_SHOW);
+                            SetForegroundWindow(window.hwnd);
+                        }
+                        break;
+                    case WIXEN_TRAY_NEW_TAB:
+                        /* Same as new_tab keybinding — spawn new PTY in new tab */
+                        if (renderer && pane_state_count < MAX_PANES) {
+                            wchar_t *sh = wixen_pty_detect_shell();
+                            WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
+                            uint16_t nc = fm.cell_width > 0 ? (uint16_t)(wixen_renderer_width(renderer) / fm.cell_width) : 80;
+                            uint16_t nr = fm.cell_height > 0 ? (uint16_t)(wixen_renderer_height(renderer) / fm.cell_height) : 24;
+                            WixenPaneState *nps = &pane_states[pane_state_count];
+                            wixen_terminal_init(&nps->terminal, nc, nr);
+                            wixen_parser_init(&nps->parser);
+                            wixen_shell_integ_init(&nps->shell_integ);
+                            nps->pty_running = wixen_pty_spawn(&nps->pty, nc, nr, sh, NULL, NULL, window.hwnd);
+                            pane_state_count++;
+                            WixenPaneId np;
+                            wixen_panes_init(&pane_tree, &np);
+                            wixen_tabs_add(&tabs, "Shell", np);
+                            ps = nps;
+                            free(sh);
+                        }
+                        break;
+                    case WIXEN_TRAY_SETTINGS:
+                        wixen_settings_dialog_show(window.hwnd);
+                        break;
+                    case WIXEN_TRAY_EXIT:
+                        running = false;
+                        ShowWindow(window.hwnd, SW_HIDE);
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                break;
             case WIXEN_EVT_FOCUS_GAINED:
                 /* P1 FIX: Update provider state BEFORE raising events.
                  * HasKeyboardFocus and GetCaretRange.isActive read has_focus.
@@ -1267,17 +1355,75 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 WixenConfig new_cfg;
                 wixen_config_init_defaults(&new_cfg);
                 if (wixen_config_load(&new_cfg, cfg_path)) {
-                    /* Apply font changes */
-                    if (strcmp(new_cfg.font.family, config.font.family) != 0 ||
-                        new_cfg.font.size != config.font.size) {
-                        /* Font changed — would need to recreate atlas */
+                    WixenConfigDelta delta;
+                    wixen_config_diff(&config, &new_cfg, &delta);
+
+                    /* Apply font changes — recreate renderer with new atlas */
+                    if (delta.font_changed && renderer) {
+                        uint32_t rw = wixen_renderer_width(renderer);
+                        uint32_t rh = wixen_renderer_height(renderer);
+                        WixenColorScheme cs;
+                        wixen_colors_init_default(&cs);
+                        wixen_renderer_destroy(renderer);
+                        renderer = wixen_renderer_create(
+                            window.hwnd, rw, rh,
+                            new_cfg.font.family, new_cfg.font.size, &cs);
                     }
-                    /* Apply terminal changes */
-                    if (new_cfg.accessibility.output_debounce_ms != config.accessibility.output_debounce_ms) {
-                        /* Update throttler debounce */
+
+                    /* Apply theme/color changes */
+                    if (delta.colors_changed && renderer) {
+                        WixenColorScheme cs;
+                        wixen_colors_init_default(&cs);
+                        wixen_renderer_set_colors(renderer, &cs);
                     }
+
+                    /* Apply debounce change to the output throttler */
+                    if (delta.accessibility_changed) {
+                        pane_throttler.debounce_ms =
+                            new_cfg.accessibility.output_debounce_ms;
+                    }
+
+                    /* Apply keybinding changes — rebuild live map */
+                    if (delta.keybindings_changed) {
+                        wixen_keybindings_free(&keybindings);
+                        wixen_keybindings_init(&keybindings);
+                        for (size_t i = 0; i < new_cfg.keybindings.count; i++) {
+                            const WixenKeybinding *kb =
+                                wixen_keybindings_get_at(&new_cfg.keybindings, i);
+                            if (kb) {
+                                wixen_keybindings_add(&keybindings,
+                                    kb->chord, kb->action, kb->args);
+                            }
+                        }
+                    }
+
                     wixen_config_free(&config);
                     config = new_cfg;
+
+                    /* Update taskbar jumplist with new profile names */
+                    {
+                        size_t jl_count = config.profile_count;
+                        if (jl_count > 0) {
+                            const wchar_t **jl_names = (const wchar_t **)malloc(
+                                jl_count * sizeof(wchar_t *));
+                            if (jl_names) {
+                                for (size_t ji = 0; ji < jl_count; ji++) {
+                                    int wlen = MultiByteToWideChar(CP_UTF8, 0,
+                                        config.profiles[ji].name, -1, NULL, 0);
+                                    wchar_t *wname = (wchar_t *)malloc(wlen * sizeof(wchar_t));
+                                    if (wname) {
+                                        MultiByteToWideChar(CP_UTF8, 0,
+                                            config.profiles[ji].name, -1, wname, wlen);
+                                    }
+                                    jl_names[ji] = wname;
+                                }
+                                wixen_jumplist_update(exe_path, jl_names, jl_count);
+                                for (size_t ji = 0; ji < jl_count; ji++)
+                                    free((void *)jl_names[ji]);
+                                free(jl_names);
+                            }
+                        }
+                    }
                 } else {
                     wixen_config_free(&new_cfg);
                 }
@@ -1321,6 +1467,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
 
     wixen_search_free(&search_engine);
+
+    /* Clear taskbar jumplist on shutdown */
+    wixen_jumplist_clear();
 
     /* P0.3 fix: Mark shutdown complete so the watchdog thread exits cleanly.
      * Normal exit now returns from wWinMain, allowing proper DLL cleanup,

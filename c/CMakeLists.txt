@@ -172,6 +172,9 @@ add_library(wixen_ui STATIC
     $<$<PLATFORM_ID:Windows>:src/ui/default_terminal.c>
 )
 target_link_libraries(wixen_ui PUBLIC wixen_a11y)
+if(WIN32)
+    target_link_libraries(wixen_ui PUBLIC ole32 propsys)
+endif()
 
 # UIA SDK constants use __declspec(selectany) which can cause LNK2005
 # when multiple .obj files include uiautomation.h in the same link unit.
@@ -393,6 +396,10 @@ add_executable(test_red_word_delete tests/test_red_word_delete.c)
 target_link_libraries(test_red_word_delete wixen_core)
 add_test(NAME test_red_word_delete COMMAND test_red_word_delete)
 
+add_executable(test_red_image_pipeline tests/test_red_image_pipeline.c)
+target_link_libraries(test_red_image_pipeline wixen_core wixen_vt)
+add_test(NAME test_red_image_pipeline COMMAND test_red_image_pipeline)
+
 add_executable(test_red_bounding_rects tests/test_red_bounding_rects.c)
 target_link_libraries(test_red_bounding_rects wixen_a11y)
 add_test(NAME test_red_bounding_rects COMMAND test_red_bounding_rects)
@@ -460,6 +467,10 @@ add_test(NAME test_red_nvda_issues COMMAND test_red_nvda_issues)
 add_executable(test_red_ui_elements tests/test_red_ui_elements.c)
 target_link_libraries(test_red_ui_elements wixen_ui)
 add_test(NAME test_red_ui_elements COMMAND test_red_ui_elements)
+
+add_executable(test_red_tray_wiring tests/test_red_tray_wiring.c)
+target_link_libraries(test_red_tray_wiring wixen_ui)
+add_test(NAME test_red_tray_wiring COMMAND test_red_tray_wiring)
 
 add_executable(test_red_settings_visual tests/test_red_settings_visual.c)
 target_link_libraries(test_red_settings_visual wixen_ui wixen_config)
@@ -993,3 +1004,15 @@ add_test(NAME test_red_focus_strategy COMMAND test_red_focus_strategy)
 add_executable(test_red_provider_e2e tests/test_red_provider_e2e.c)
 target_link_libraries(test_red_provider_e2e wixen_a11y)
 add_test(NAME test_red_provider_e2e COMMAND test_red_provider_e2e)
+
+add_executable(test_red_resize_wiring tests/test_red_resize_wiring.c)
+target_link_libraries(test_red_resize_wiring wixen_core wixen_vt)
+add_test(NAME test_red_resize_wiring COMMAND test_red_resize_wiring)
+
+add_executable(test_red_hot_reload tests/test_red_hot_reload.c)
+target_link_libraries(test_red_hot_reload wixen_config wixen_a11y)
+add_test(NAME test_red_hot_reload COMMAND test_red_hot_reload)
+
+add_executable(test_red_product_wiring tests/test_red_product_wiring.c)
+target_link_libraries(test_red_product_wiring wixen_ui wixen_config ole32 propsys)
+add_test(NAME test_red_product_wiring COMMAND test_red_product_wiring)

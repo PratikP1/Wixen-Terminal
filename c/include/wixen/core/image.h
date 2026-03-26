@@ -29,6 +29,8 @@ uint64_t wixen_images_add(WixenImageStore *store, uint32_t width, uint32_t heigh
                            size_t cell_cols, size_t cell_rows);
 void wixen_images_clear(WixenImageStore *store);
 size_t wixen_images_count(const WixenImageStore *store);
+const WixenTerminalImage *wixen_images_get(const WixenImageStore *store, uint64_t id);
+bool wixen_images_remove(WixenImageStore *store, uint64_t id);
 
 /* Sixel decoder: decode DCS data into RGBA pixels.
  * Returns true on success. Caller must free *out_pixels. */

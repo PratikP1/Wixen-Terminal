@@ -490,7 +490,7 @@ static HRESULT STDMETHODCALLTYPE tp_GetSelection(ITextProvider *this_, SAFEARRAY
 static HRESULT STDMETHODCALLTYPE tp_GetVisibleRanges(ITextProvider *this_, SAFEARRAY **pRetVal) {
     TextProvider *tp = (TextProvider *)this_;
     AcquireSRWLockShared(&tp->state->lock);
-    int len = (int)tp->state->full_text_len;
+    int len = (int)wixen_utf8_to_utf16_offset(tp->state->full_text, tp->state->full_text_len);
     ReleaseSRWLockShared(&tp->state->lock);
 
     TextRange *range = create_range(tp->state, tp->enclosing, 0, len);
@@ -527,7 +527,8 @@ static HRESULT STDMETHODCALLTYPE tp_RangeFromPoint(
         double local_y = point.y - origin.y;
         size_t row = (local_y > 0) ? (size_t)(local_y / ch) : 0;
         size_t col = (local_x > 0) ? (size_t)(local_x / cw) : 0;
-        offset = (int)wixen_text_rowcol_to_offset(text, flen, row, col);
+        size_t byte_off = wixen_text_rowcol_to_offset(text, flen, row, col);
+        offset = (int)wixen_utf8_to_utf16_offset(text, byte_off);
     }
     ReleaseSRWLockShared(&tp->state->lock);
 
@@ -539,7 +540,7 @@ static HRESULT STDMETHODCALLTYPE tp_get_DocumentRange(
         ITextProvider *this_, ITextRangeProvider **pRetVal) {
     TextProvider *tp = (TextProvider *)this_;
     AcquireSRWLockShared(&tp->state->lock);
-    int len = (int)tp->state->full_text_len;
+    int len = (int)wixen_utf8_to_utf16_offset(tp->state->full_text, tp->state->full_text_len);
     ReleaseSRWLockShared(&tp->state->lock);
     *pRetVal = (ITextRangeProvider *)create_range(tp->state, tp->enclosing, 0, len);
     return S_OK;

@@ -55,10 +55,10 @@ void wixen_tray_show_menu(WixenTrayIcon *tray) {
 #include "wixen/ui/tray.h"
 
 static const WixenTrayMenuItem tray_items[] = {
-    { "Show/Hide Window", 1 },
-    { "New Tab",          2 },
-    { "Settings",         3 },
-    { "Quit Wixen",       100 },
+    { "Show/Hide Window", WIXEN_TRAY_SHOW_HIDE },
+    { "New Tab",          WIXEN_TRAY_NEW_TAB },
+    { "Settings",         WIXEN_TRAY_SETTINGS },
+    { "Quit Wixen",       WIXEN_TRAY_EXIT },
 };
 
 const WixenTrayMenuItem *wixen_tray_menu_items(size_t *out_count) {

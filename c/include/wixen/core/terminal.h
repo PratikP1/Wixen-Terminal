@@ -6,6 +6,7 @@
 #include "wixen/core/modes.h"
 #include "wixen/core/selection.h"
 #include "wixen/core/hyperlink.h"
+#include "wixen/core/image.h"
 #include "wixen/shell_integ/shell_integ.h"
 #include "wixen/vt/action.h"
 #include <stdbool.h>
@@ -62,6 +63,10 @@ typedef struct {
     uint32_t current_hyperlink_id;  /* 0 = no active link */
     uint8_t active_charset;          /* 0=G0, 1=G1 */
     bool in_sixel;                   /* Inside Sixel DCS sequence */
+    uint8_t *sixel_buf;              /* DCS Sixel data accumulator */
+    size_t sixel_buf_len;            /* Current length */
+    size_t sixel_buf_cap;            /* Allocated capacity */
+    WixenImageStore images;          /* Decoded terminal images */
     uint8_t charsets[4];             /* G0-G3 charset (0=ASCII, 1=DEC Special, 2=UK) */
     int32_t scroll_offset;           /* Viewport: 0=live, >0=scrolled back into history */
     uint32_t last_printed_char;      /* For REP (CSI b) */

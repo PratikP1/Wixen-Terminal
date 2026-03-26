@@ -10,10 +10,10 @@
 #define WM_TRAY_CALLBACK (WM_APP + 10)
 
 typedef enum {
-    WIXEN_TRAY_SHOW_HIDE = 1,
-    WIXEN_TRAY_NEW_TAB = 2,
-    WIXEN_TRAY_SETTINGS = 3,
-    WIXEN_TRAY_EXIT = 100,
+    WIXEN_TRAY_SHOW_HIDE = 201,
+    WIXEN_TRAY_NEW_TAB = 202,
+    WIXEN_TRAY_SETTINGS = 203,
+    WIXEN_TRAY_EXIT = 204,
 } WixenTrayAction;
 
 typedef struct {

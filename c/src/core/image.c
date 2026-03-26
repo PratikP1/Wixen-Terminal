@@ -52,6 +52,30 @@ size_t wixen_images_count(const WixenImageStore *store) {
     return store->count;
 }
 
+const WixenTerminalImage *wixen_images_get(const WixenImageStore *store, uint64_t id) {
+    for (size_t i = 0; i < store->count; i++) {
+        if (store->images[i].id == id) {
+            return &store->images[i];
+        }
+    }
+    return NULL;
+}
+
+bool wixen_images_remove(WixenImageStore *store, uint64_t id) {
+    for (size_t i = 0; i < store->count; i++) {
+        if (store->images[i].id == id) {
+            free(store->images[i].pixels);
+            /* Shift remaining images down */
+            for (size_t j = i + 1; j < store->count; j++) {
+                store->images[j - 1] = store->images[j];
+            }
+            store->count--;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* --- Sixel decoder ---
  * Sixel is a DEC graphics protocol where each character encodes a 6-pixel-high column.
  * Characters 0x3F-0x7E represent 6 vertical pixels (subtract 0x3F to get bitmask).

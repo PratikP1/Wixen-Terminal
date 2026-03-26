@@ -31,7 +31,8 @@ static const char *appearance_fields[] = {
 static const char *terminal_fields[] = {
     "Cursor style", "Cursor blink", "Bell style",
     "Scrollback lines", "Auto-wrap",
-    "Default profile", "Renderer"
+    "Default profile", "Renderer",
+    "Explorer context menu"
 };
 
 static const char *a11y_fields[] = {
@@ -88,6 +89,7 @@ const char **wixen_settings_appearance_groups(size_t *out_count) {
 #ifdef _WIN32
 
 #include "wixen/ui/settings_dialog.h"
+#include "wixen/ui/explorer_menu.h"
 #include <commctrl.h>
 #include <windowsx.h>
 
@@ -160,6 +162,9 @@ static void release_dialog_font(void) {
 /* Terminal extras */
 #define IDC_SCROLLBACK_LINES 1031
 #define IDC_BLINK_INTERVAL   1032
+/* Explorer context menu */
+#define IDC_EXPLORER_MENU    1050
+
 /* Accessibility extras */
 #define IDC_ANNOUNCE_EXIT    1040
 #define IDC_LIVE_REGION      1041
@@ -718,8 +723,32 @@ static INT_PTR CALLBACK terminal_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Both");
         SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Mute");
         SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        y += 30;
+
+        /* Explorer context menu checkbox */
+        chk = CreateWindowExW(0, L"BUTTON", L"Register Explorer &context menu",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+            10, y, 280, 20, hwnd, (HMENU)(UINT_PTR)IDC_EXPLORER_MENU, NULL, NULL);
+        SendMessageW(chk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        /* Check current registration state */
+        if (wixen_explorer_menu_is_registered())
+            SendMessageW(chk, BM_SETCHECK, BST_CHECKED, 0);
 
         return TRUE;
+    }
+    case WM_COMMAND: {
+        if (LOWORD(wp) == IDC_EXPLORER_MENU && HIWORD(wp) == BN_CLICKED) {
+            HWND chk = GetDlgItem(hwnd, IDC_EXPLORER_MENU);
+            bool checked = (SendMessageW(chk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            if (checked) {
+                wchar_t exe[MAX_PATH];
+                GetModuleFileNameW(NULL, exe, MAX_PATH);
+                wixen_explorer_menu_register(exe, L"Open Wixen Terminal Here");
+            } else {
+                wixen_explorer_menu_unregister();
+            }
+        }
+        break;
     }
     case WM_NOTIFY: {
         NMHDR *nm = (NMHDR *)lp;
@@ -731,7 +760,6 @@ static INT_PTR CALLBACK terminal_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     }
     }
     return FALSE;
-    (void)wp;
 }
 
 /* --- Accessibility Tab --- */
