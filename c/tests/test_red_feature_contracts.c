@@ -380,6 +380,6 @@ int main(int argc, char **argv) {
     RUN_SUITE(search_contract_tests);
     RUN_SUITE(shell_integ_contract_tests);
     RUN_SUITE(lua_contract_tests);
-    /* RUN_SUITE(settings_contract_tests); */ /* Modal dialog — manual test only */
+    RUN_SUITE(settings_contract_tests); /* Data-only tests, no modal dialog */
     GREATEST_MAIN_END();
 }
