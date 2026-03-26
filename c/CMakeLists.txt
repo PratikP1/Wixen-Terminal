@@ -161,6 +161,7 @@ add_library(wixen_ui STATIC
     src/ui/panes.c
     src/ui/history.c
     $<$<PLATFORM_ID:Windows>:src/ui/window.c>
+    $<$<PLATFORM_ID:Windows>:src/ui/focus.c>
     $<$<PLATFORM_ID:Windows>:src/ui/settings_dialog.c>
     $<$<PLATFORM_ID:Windows>:src/ui/palette_dialog.c>
     $<$<PLATFORM_ID:Windows>:src/ui/tray.c>
@@ -387,6 +388,10 @@ add_test(NAME test_red_ipc_wire COMMAND test_red_ipc_wire)
 add_executable(test_red_smart_focus tests/test_red_smart_focus.c)
 target_link_libraries(test_red_smart_focus wixen_a11y wixen_shell_integ)
 add_test(NAME test_red_smart_focus COMMAND test_red_smart_focus)
+
+add_executable(test_red_word_delete tests/test_red_word_delete.c)
+target_link_libraries(test_red_word_delete wixen_core)
+add_test(NAME test_red_word_delete COMMAND test_red_word_delete)
 
 add_executable(test_red_bounding_rects tests/test_red_bounding_rects.c)
 target_link_libraries(test_red_bounding_rects wixen_a11y)
@@ -635,6 +640,10 @@ add_test(NAME test_red_hyperlink_open COMMAND test_red_hyperlink_open)
 add_executable(test_red_select_all tests/test_red_select_all.c)
 target_link_libraries(test_red_select_all wixen_core wixen_vt)
 add_test(NAME test_red_select_all COMMAND test_red_select_all)
+
+add_executable(test_red_utf16_real tests/test_red_utf16_real.c)
+target_link_libraries(test_red_utf16_real wixen_a11y)
+add_test(NAME test_red_utf16_real COMMAND test_red_utf16_real)
 
 add_executable(test_red_dpi tests/test_red_dpi.c)
 target_link_libraries(test_red_dpi wixen_render wixen_core)
@@ -976,3 +985,11 @@ add_test(NAME test_red_feature_contracts COMMAND test_red_feature_contracts)
 add_executable(test_red_a11y_concurrency tests/test_red_a11y_concurrency.c)
 target_link_libraries(test_red_a11y_concurrency wixen_a11y)
 add_test(NAME test_red_a11y_concurrency COMMAND test_red_a11y_concurrency)
+
+add_executable(test_red_focus_strategy tests/test_red_focus_strategy.c)
+target_link_libraries(test_red_focus_strategy wixen_ui)
+add_test(NAME test_red_focus_strategy COMMAND test_red_focus_strategy)
+
+add_executable(test_red_provider_e2e tests/test_red_provider_e2e.c)
+target_link_libraries(test_red_provider_e2e wixen_a11y)
+add_test(NAME test_red_provider_e2e COMMAND test_red_provider_e2e)

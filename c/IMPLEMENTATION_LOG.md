@@ -9,7 +9,7 @@
 
 ## Status
 - **Source files**: 100
-- **Test files**: 181+ suites, 1600+ individual tests
+- **Test files**: 197+ suites, 1700+ individual tests
 - **Total LOC**: ~30,000+
 - **TODOs**: 0
 - **Compiler warnings**: 0
@@ -145,7 +145,7 @@
 - Hot-reload watcher (ReadDirectoryChangesW)
 
 ## Phase 15: Lua Plugin Engine
-- Lua 5.4/5.5 sandboxed engine (vcpkg-provided)
+- Lua 5.5.0 sandboxed engine (vcpkg-provided, released 2025)
 - exec_string, exec_file, call, call_str
 - get_string, get_int, get_bool
 

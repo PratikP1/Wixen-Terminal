@@ -28,6 +28,7 @@
 #include "wixen/a11y/frame_update.h"
 #include "wixen/a11y/state.h"
 #include "wixen/a11y/tree.h"
+#include "wixen/a11y/text_boundaries.h"
 #include "wixen/ui/clipboard.h"
 #include "wixen/core/mouse.h"
 #include "wixen/shell_integ/shell_integ.h"
@@ -1062,11 +1063,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 for (size_t r = 0; r < cur_row && r < ps->terminal.grid.num_rows; r++) {
                     char *rbuf = wixen_row_text_dynamic(&ps->terminal.grid.rows[r]);
                     if (rbuf) {
-                        utf16_off += (int32_t)strlen(rbuf) + 1; /* +1 for newline */
+                        size_t byte_len = strlen(rbuf);
+                        utf16_off += (int32_t)wixen_utf8_to_utf16_offset(rbuf, byte_len) + 1; /* +1 for newline */
                         free(rbuf);
                     }
                 }
-                utf16_off += (int32_t)cur_col;
+                /* cur_col is a byte offset within the current row; convert to UTF-16 */
+                utf16_off += (int32_t)wixen_utf8_to_utf16_offset(line_buf, cur_col);
                 wixen_a11y_set_cursor_offset(utf16_off);
             }
             wixen_a11y_update_cursor(&ps->terminal.grid);
@@ -1077,6 +1080,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             /* Fire TextSelectionChanged on cursor movement */
             if (cursor_moved) {
                 wixen_a11y_raise_selection_changed(window.hwnd);
+            }
+
+            /* Arrow key line reading: when cursor moves to a different row
+             * (up/down arrow, page up/down, etc.), announce the current line.
+             * This supplements NVDA's native caret tracking which may not
+             * read the line for our control type. */
+            bool row_changed = (cur_row != prev_cursor_row && prev_cursor_row != SIZE_MAX);
+            if (row_changed && cursor_moved && !has_real_output) {
+                /* Strip prompt prefix — announce only the content */
+                char *stripped = wixen_strip_prompt(line_buf);
+                if (stripped && stripped[0]) {
+                    wixen_a11y_raise_notification(window.hwnd, stripped, "cursor-line");
+                } else if (!line_buf || !line_buf[0]) {
+                    wixen_a11y_raise_notification(window.hwnd, "blank", "cursor-line");
+                }
+                free(stripped);
             }
 
             /* #5/#7: Line change detection with prompt stripping.

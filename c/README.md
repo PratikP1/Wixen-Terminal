@@ -55,7 +55,7 @@ c/
     ui/         Win32 window, tabs, panes, settings dialog, palette, tray, audio
     ipc/        Named pipe IPC for multi-window
   include/      Public headers (one per module)
-  tests/        98 test suites using greatest.h
+  tests/        197+ test suites using greatest.h
   config/       Default TOML configuration
   shaders/      HLSL vertex/pixel shaders (embedded at compile time)
 ```
@@ -73,7 +73,7 @@ Native Win32 controls (settings dialog, command palette, tray menu) are automati
 
 ## Test coverage
 
-1600+ tests across 181+ suites covering:
+1700+ individual tests across 197+ suites covering:
 - VT parser (CSI, ESC, OSC, DCS, split chunks, stress)
 - Terminal (cursor, erase, scroll, modes, SGR, DSR, tabs, UTF-8, alt screen)
 - Grid (resize, reflow, clone, visible text)

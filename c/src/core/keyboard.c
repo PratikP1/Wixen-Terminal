@@ -54,7 +54,7 @@ size_t wixen_encode_key(uint16_t vk, bool shift, bool ctrl, bool alt,
     /* Special keys */
     switch (vk) {
     case VK_BACK:
-        if (alt) { buf[0] = '\x1b'; buf[1] = '\x7f'; return 2; }
+        if (ctrl || alt) { buf[0] = '\x1b'; buf[1] = '\x7f'; return 2; } /* Word delete */
         buf[0] = '\x7f'; return 1;
     case VK_TAB:
         if (shift) { buf[0] = '\x1b'; buf[1] = '['; buf[2] = 'Z'; return 3; }
