@@ -198,6 +198,7 @@ if(WIN32)
         src/a11y/state.c
         src/a11y/text_boundaries.c
         src/a11y/frame_update.c
+        src/a11y/child_fragment.c
     )
 endif()
 
@@ -347,6 +348,18 @@ add_test(NAME test_red_keybinding_edit COMMAND test_red_keybinding_edit)
 add_executable(test_red_copilot_p1_focus tests/test_red_copilot_p1_focus.c)
 target_link_libraries(test_red_copilot_p1_focus wixen_a11y)
 add_test(NAME test_red_copilot_p1_focus COMMAND test_red_copilot_p1_focus)
+
+add_executable(test_red_smart_focus tests/test_red_smart_focus.c)
+target_link_libraries(test_red_smart_focus wixen_a11y wixen_shell_integ)
+add_test(NAME test_red_smart_focus COMMAND test_red_smart_focus)
+
+add_executable(test_red_bounding_rects tests/test_red_bounding_rects.c)
+target_link_libraries(test_red_bounding_rects wixen_a11y)
+add_test(NAME test_red_bounding_rects COMMAND test_red_bounding_rects)
+
+add_executable(test_red_child_fragment tests/test_red_child_fragment.c)
+target_link_libraries(test_red_child_fragment wixen_a11y wixen_shell_integ)
+add_test(NAME test_red_child_fragment COMMAND test_red_child_fragment)
 
 add_executable(test_red_copilot_p2_provider_nav tests/test_red_copilot_p2_provider_nav.c)
 target_link_libraries(test_red_copilot_p2_provider_nav wixen_a11y wixen_shell_integ)
