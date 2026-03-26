@@ -61,6 +61,7 @@ struct WixenA11yState {
     float cell_height;
     uint32_t window_width;
     uint32_t window_height;
+    HWND hwnd; /* For coordinate conversions (ClientToScreen) */
 };
 
 void wixen_a11y_state_init(WixenA11yState *state);

@@ -184,8 +184,65 @@ static HRESULT STDMETHODCALLTYPE range_GetAttributeValue(
 
 static HRESULT STDMETHODCALLTYPE range_GetBoundingRectangles(
         ITextRangeProvider *this_, SAFEARRAY **pRetVal) {
-    (void)this_;
-    *pRetVal = SafeArrayCreateVector(VT_R8, 0, 0);
+    TextRange *r = (TextRange *)this_;
+    AcquireSRWLockShared(&r->state->lock);
+    float cw = r->state->cell_width;
+    float ch = r->state->cell_height;
+    size_t flen = r->state->full_text_len;
+    const char *text = r->state->full_text;
+
+    if (cw <= 0 || ch <= 0 || !text || r->start >= r->end) {
+        ReleaseSRWLockShared(&r->state->lock);
+        *pRetVal = SafeArrayCreateVector(VT_R8, 0, 0);
+        return S_OK;
+    }
+
+    /* Convert start/end to row/col */
+    size_t sr, sc, er, ec;
+    wixen_text_offset_to_rowcol(text, flen, (size_t)r->start, &sr, &sc);
+    wixen_text_offset_to_rowcol(text, flen, (size_t)r->end, &er, &ec);
+
+    POINT origin = { 0, 0 };
+    ClientToScreen(r->state->hwnd, &origin);
+    RECT client;
+    GetClientRect(r->state->hwnd, &client);
+    double win_w = (double)(client.right - client.left);
+    ReleaseSRWLockShared(&r->state->lock);
+
+    /* One rect per line in the range */
+    size_t num_lines = er - sr + 1;
+    *pRetVal = SafeArrayCreateVector(VT_R8, 0, (ULONG)(num_lines * 4));
+    if (!*pRetVal) return S_OK;
+
+    for (size_t line = 0; line < num_lines; line++) {
+        size_t row = sr + line;
+        double x, w;
+        if (num_lines == 1) {
+            /* Single line: exact col range */
+            x = origin.x + sc * cw;
+            w = (ec - sc) * cw;
+        } else if (line == 0) {
+            /* First line: from start col to end of line */
+            x = origin.x + sc * cw;
+            w = win_w - sc * cw;
+        } else if (line == num_lines - 1) {
+            /* Last line: from start to end col */
+            x = origin.x;
+            w = ec * cw;
+        } else {
+            /* Middle line: full width */
+            x = origin.x;
+            w = win_w;
+        }
+        double y = origin.y + row * ch;
+        double h = ch;
+
+        LONG idx;
+        idx = (LONG)(line * 4);     SafeArrayPutElement(*pRetVal, &idx, &x);
+        idx = (LONG)(line * 4 + 1); SafeArrayPutElement(*pRetVal, &idx, &y);
+        idx = (LONG)(line * 4 + 2); SafeArrayPutElement(*pRetVal, &idx, &w);
+        idx = (LONG)(line * 4 + 3); SafeArrayPutElement(*pRetVal, &idx, &h);
+    }
     return S_OK;
 }
 
@@ -453,9 +510,27 @@ static HRESULT STDMETHODCALLTYPE tp_RangeFromChild(
 static HRESULT STDMETHODCALLTYPE tp_RangeFromPoint(
         ITextProvider *this_, struct UiaPoint point,
         ITextRangeProvider **pRetVal) {
-    (void)point;
     TextProvider *tp = (TextProvider *)this_;
-    *pRetVal = (ITextRangeProvider *)create_range(tp->state, tp->enclosing, 0, 0);
+    AcquireSRWLockShared(&tp->state->lock);
+    float cw = tp->state->cell_width;
+    float ch = tp->state->cell_height;
+    size_t flen = tp->state->full_text_len;
+    const char *text = tp->state->full_text;
+
+    int offset = 0;
+    if (cw > 0 && ch > 0 && text) {
+        /* Convert screen point to row/col */
+        POINT origin = { 0, 0 };
+        ClientToScreen(tp->state->hwnd, &origin);
+        double local_x = point.x - origin.x;
+        double local_y = point.y - origin.y;
+        size_t row = (local_y > 0) ? (size_t)(local_y / ch) : 0;
+        size_t col = (local_x > 0) ? (size_t)(local_x / cw) : 0;
+        offset = (int)wixen_text_rowcol_to_offset(text, flen, row, col);
+    }
+    ReleaseSRWLockShared(&tp->state->lock);
+
+    *pRetVal = (ITextRangeProvider *)create_range(tp->state, tp->enclosing, offset, offset);
     return S_OK;
 }
 

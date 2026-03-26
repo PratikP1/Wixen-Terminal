@@ -701,6 +701,7 @@ void wixen_a11y_provider_init_minimal(HWND hwnd) {
      * doesn't cache the HWND as non-UIA. Full init happens later. */
     if (g_provider) return; /* Already initialized */
     wixen_a11y_state_init(&g_a11y_state);
+    g_a11y_state.hwnd = hwnd;
     g_provider = wixen_a11y_create_provider(hwnd, &g_a11y_state);
     SetPropW(hwnd, L"WixenUiaProvider", (HANDLE)g_provider);
 }
