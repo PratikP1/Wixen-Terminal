@@ -558,6 +558,10 @@ char *wixen_grid_visible_text_dynamic(const WixenGrid *g) {
         if (empty) empty[0] = '\0';
         return empty;
     }
+    /* Each row is padded to exactly g->cols bytes (ASCII space padding).
+     * This ensures cursor column positions always map to valid character
+     * offsets in the text, preventing NVDA from reading "\n" (line feed)
+     * when navigating character-by-character with arrow keys. */
     size_t cap = g->num_rows * (g->cols * 4 + 2) + 1;
     char *buf = (char *)malloc(cap);
     if (!buf) return NULL;
@@ -569,6 +573,13 @@ char *wixen_grid_visible_text_dynamic(const WixenGrid *g) {
         if (i > 0) buf[written++] = '\n';
         memcpy(buf + written, row_text, rlen);
         written += rlen;
+        /* Pad row with spaces to exactly g->cols characters.
+         * row_text is trimmed, so we need to fill remaining columns. */
+        if (rlen < g->cols) {
+            size_t pad = g->cols - rlen;
+            memset(buf + written, ' ', pad);
+            written += pad;
+        }
         free(row_text);
     }
     buf[written] = '\0';

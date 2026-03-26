@@ -157,6 +157,41 @@ char *wixen_terminal_selected_text(const WixenTerminal *t, const WixenSelection 
 void wixen_terminal_on_char_sent(WixenTerminal *t, char ch);
 bool wixen_terminal_check_echo_timeout(WixenTerminal *t);
 
+/* Frame-based password prompt detection (no-echo check).
+ * Returns true only for printable characters (0x20..0x7E) that should
+ * count as "user typed something" for echo detection purposes.
+ * Control characters (Enter=0x0D, Tab=0x09, Backspace=0x08, Escape=0x1B,
+ * DEL=0x7F) do NOT count. */
+bool wixen_is_printable_for_echo(uint32_t codepoint);
+
+/* State machine for frame-based echo detection (used in main loop). */
+typedef struct {
+    size_t echo_check_col;     /* Cursor column at end of previous frame */
+    int    no_echo_frames;     /* Consecutive typed-but-not-echoed frames */
+    bool   announced_password; /* Already announced "Text not echoed" */
+} WixenEchoCheckState;
+
+/* Result of a single frame's echo check update. */
+typedef enum {
+    WIXEN_ECHO_RESULT_NONE,         /* Nothing to announce */
+    WIXEN_ECHO_RESULT_PASSWORD,     /* "Text not echoed" should fire */
+} WixenEchoResult;
+
+/* Initialize echo check state. */
+void wixen_echo_check_init(WixenEchoCheckState *s);
+
+/* Reset echo check state (e.g. when Enter is pressed / new command). */
+void wixen_echo_check_reset(WixenEchoCheckState *s);
+
+/* Update echo check for one frame.
+ *   char_typed  - was a printable char typed this frame?
+ *   cur_col     - current cursor column
+ *   cursor_moved - did cursor move this frame (beyond echo)?
+ *   has_output  - did terminal produce real output this frame?
+ * Returns whether "Text not echoed" should be announced. */
+WixenEchoResult wixen_echo_check_update(WixenEchoCheckState *s,
+    bool char_typed, size_t cur_col, bool cursor_moved, bool has_output);
+
 /* Prompt jumping (requires shell integration) */
 bool wixen_terminal_jump_to_next_prompt(WixenTerminal *t);
 bool wixen_terminal_jump_to_previous_prompt(WixenTerminal *t);

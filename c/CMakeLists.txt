@@ -711,6 +711,10 @@ add_executable(test_red_echo_timeout tests/test_red_echo_timeout.c)
 target_link_libraries(test_red_echo_timeout wixen_core wixen_vt)
 add_test(NAME test_red_echo_timeout COMMAND test_red_echo_timeout)
 
+add_executable(test_red_password_detect tests/test_red_password_detect.c)
+target_link_libraries(test_red_password_detect wixen_core wixen_vt)
+add_test(NAME test_red_password_detect COMMAND test_red_password_detect)
+
 add_executable(test_red_prompt_jump tests/test_red_prompt_jump.c)
 target_link_libraries(test_red_prompt_jump wixen_core wixen_vt)
 add_test(NAME test_red_prompt_jump COMMAND test_red_prompt_jump)
@@ -1066,3 +1070,15 @@ add_test(NAME test_red_uia_title_sync COMMAND test_red_uia_title_sync)
 add_executable(test_red_text_changed tests/test_red_text_changed.c)
 target_link_libraries(test_red_text_changed wixen_a11y)
 add_test(NAME test_red_text_changed COMMAND test_red_text_changed)
+
+add_executable(test_red_com_latency tests/test_red_com_latency.c)
+target_link_libraries(test_red_com_latency wixen_a11y)
+add_test(NAME test_red_com_latency COMMAND test_red_com_latency)
+
+add_executable(test_red_cursor_char tests/test_red_cursor_char.c)
+target_link_libraries(test_red_cursor_char wixen_core wixen_a11y)
+add_test(NAME test_red_cursor_char COMMAND test_red_cursor_char)
+
+add_executable(test_red_text_change_registration tests/test_red_text_change_registration.c)
+target_link_libraries(test_red_text_change_registration wixen_a11y)
+add_test(NAME test_red_text_change_registration COMMAND test_red_text_change_registration)

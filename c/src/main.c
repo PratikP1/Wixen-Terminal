@@ -384,6 +384,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Main event loop */
     bool running = true;
     bool char_typed_this_frame = false;
+    WixenEchoCheckState echo_state;
+    wixen_echo_check_init(&echo_state);
     MSG msg;
 
     while (running) {
@@ -526,6 +528,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 continue;
             }
         }
+
+        /* COM pump: before window events — dispatch COM calls queued during
+         * PTY processing. UseComThreading delivers all UIA provider calls as
+         * Win32 messages; they can ONLY run during PeekMessage/pump_messages.
+         * Without this, NVDA's GetSelection/GetCaretRange wait until the next
+         * full message pump, adding ~1 second latency. */
+        pump_messages();
 
         /* Process window events */
         static DWORD last_dblclick_tick = 0;
@@ -798,7 +807,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 }
                 break;
             case WIXEN_EVT_CHAR_INPUT:
-                char_typed_this_frame = true;
+                /* Only printable characters count as "typed" for echo
+                 * detection.  Control chars (Enter=0x0D, Tab=0x09,
+                 * Backspace=0x08, Escape=0x1B) must NOT set the flag,
+                 * otherwise pressing Enter triggers a false-positive
+                 * "Text not echoed" when the shell redraws the prompt. */
+                if (wixen_is_printable_for_echo(evt.char_input))
+                    char_typed_this_frame = true;
+                /* Enter = new command: reset echo tracking state so
+                 * subsequent shell output doesn't count against us. */
+                if (evt.char_input == 0x0D)
+                    wixen_echo_check_reset(&echo_state);
                 if (ps->pty_running) {
                     /* Convert UTF-16 codepoint to UTF-8 and send to PTY */
                     char utf8[4] = {0};
@@ -1105,6 +1124,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
         }
 
+        /* COM pump: before render — dispatch COM calls that arrived during
+         * window event processing. Without this, COM calls wait for the full
+         * render pass (~8-16ms) before getting dispatched. */
+        pump_messages();
+
         /* Render frame */
         WixenPaneRenderInfo pane_info = {
             .grid = &ps->terminal.grid,
@@ -1116,6 +1140,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             .scroll_offset = 0,
         };
         wixen_renderer_render_frame(renderer, &pane_info, 1);
+
+        /* COM pump: after render — dispatch COM calls that queued during
+         * the render pass. NVDA's GetText/ExpandToEnclosingUnit arrive as
+         * Win32 messages; pumping here ensures they don't wait for the
+         * full a11y update section before being serviced. */
+        pump_messages();
 
         /* --- Accessibility state updates --- */
         {
@@ -1202,19 +1232,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 line_buf = _strdup("");
             }
 
-            /* #8: Compute UTF-16 offset atomically for lock-free GetSelection */
+            /* #8: Compute UTF-16 offset atomically for lock-free GetSelection.
+             * visible_text pads each row to exactly grid.cols characters,
+             * so each preceding row contributes cols + 1 (for \n) UTF-16 units
+             * (for ASCII content; multi-byte chars handled below). */
+            /* Cursor offset for UIA: each row in visible_text is exactly
+             * grid_cols characters (content + space padding) + 1 newline.
+             * For ASCII, that's grid_cols + 1 UTF-16 units per row.
+             * The cursor column indexes INTO the padded row, never hitting \n.
+             * BUG FIX: previous code used wixen_row_text_dynamic per row which
+             * is trimmed, causing offset mismatch with padded visible_text. */
             {
                 int32_t utf16_off = 0;
-                for (size_t r = 0; r < cur_row && r < ps->terminal.grid.num_rows; r++) {
-                    char *rbuf = wixen_row_text_dynamic(&ps->terminal.grid.rows[r]);
-                    if (rbuf) {
-                        size_t byte_len = strlen(rbuf);
-                        utf16_off += (int32_t)wixen_utf8_to_utf16_offset(rbuf, byte_len) + 1; /* +1 for newline */
-                        free(rbuf);
-                    }
-                }
-                /* cur_col is a byte offset within the current row; convert to UTF-16 */
-                utf16_off += (int32_t)wixen_utf8_to_utf16_offset(line_buf, cur_col);
+                size_t grid_cols = ps->terminal.grid.cols;
+                /* Each preceding row = grid_cols (padded) + 1 (newline) */
+                utf16_off = (int32_t)(cur_row * (grid_cols + 1));
+                /* Column within current row — clamped to grid width */
+                size_t clamped_col = cur_col < grid_cols ? cur_col : grid_cols - 1;
+                utf16_off += (int32_t)clamped_col;
                 wixen_a11y_set_cursor_offset(utf16_off);
             }
             wixen_a11y_update_cursor(&ps->terminal.grid);
@@ -1302,30 +1337,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
             /* #10: Password prompt detection — if terminal stopped echoing.
              * Only fires after 3+ consecutive frames with no cursor movement
-             * AND no output, AND the user typed something (char event). */
-            /* Password prompt detection — only when user typed something.
-             * char_typed_this_frame is set by WM_CHAR handler and cleared each frame.
-             * Without this gate, every idle frame counted as "no echo". */
+             * AND no output, AND the user typed a printable character.
+             * char_typed_this_frame is only set for printable chars (0x20..0x7E).
+             * Enter/Tab/Backspace do NOT set the flag, preventing false
+             * positives when the shell redraws after command submission. */
             {
-                static size_t echo_check_col = SIZE_MAX;
-                static int no_echo_frames = 0;
-                static bool announced_password = false;
-                if (char_typed_this_frame && cur_col == echo_check_col
-                    && !cursor_moved && !has_real_output) {
-                    no_echo_frames++;
-                    if (no_echo_frames >= 3 && !announced_password) {
-                        wixen_a11y_raise_notification(window.hwnd,
-                            "Text not echoed", "password-prompt");
-                        announced_password = true;
-                    }
-                } else if (!char_typed_this_frame) {
-                    /* Idle frame — don't count, don't reset */
-                } else {
-                    no_echo_frames = 0;
-                    if (cursor_moved || has_real_output)
-                        announced_password = false;
+                WixenEchoResult echo_result = wixen_echo_check_update(
+                    &echo_state, char_typed_this_frame, cur_col,
+                    cursor_moved, has_real_output);
+                if (echo_result == WIXEN_ECHO_RESULT_PASSWORD) {
+                    wixen_a11y_raise_notification(window.hwnd,
+                        "Text not echoed", "password-prompt");
                 }
-                echo_check_col = cur_col;
                 char_typed_this_frame = false;
             }
 

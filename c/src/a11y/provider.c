@@ -199,6 +199,13 @@ static HRESULT STDMETHODCALLTYPE provider_GetPropertyValue(
     } else if (propertyId == UIA_LocalizedControlTypePropertyId) {
         pRetVal->vt = VT_BSTR;
         pRetVal->bstrVal = SysAllocString(L"terminal");
+    } else if (propertyId == UIA_IsTextPatternAvailablePropertyId
+               || propertyId == UIA_IsTextPattern2AvailablePropertyId) {
+        /* Explicitly report text pattern availability so NVDA registers
+         * for textChange events. NVDA's winConsoleUIA module checks this
+         * alongside LocalizedControlType == "terminal". */
+        pRetVal->vt = VT_BOOL;
+        pRetVal->boolVal = VARIANT_TRUE;
     } else if (propertyId == UIA_NativeWindowHandlePropertyId) {
         pRetVal->vt = VT_I4;
         pRetVal->lVal = (LONG)(LONG_PTR)p->hwnd;

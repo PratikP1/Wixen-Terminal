@@ -842,6 +842,47 @@ bool wixen_terminal_check_echo_timeout(WixenTerminal *t) {
     return false;
 }
 
+/* --- Frame-based echo detection helpers --- */
+
+bool wixen_is_printable_for_echo(uint32_t codepoint) {
+    return codepoint >= 0x20 && codepoint <= 0x7E;
+}
+
+void wixen_echo_check_init(WixenEchoCheckState *s) {
+    s->echo_check_col = SIZE_MAX;
+    s->no_echo_frames = 0;
+    s->announced_password = false;
+}
+
+void wixen_echo_check_reset(WixenEchoCheckState *s) {
+    s->no_echo_frames = 0;
+    s->announced_password = false;
+    s->echo_check_col = SIZE_MAX;
+}
+
+WixenEchoResult wixen_echo_check_update(WixenEchoCheckState *s,
+    bool char_typed, size_t cur_col, bool cursor_moved, bool has_output)
+{
+    WixenEchoResult result = WIXEN_ECHO_RESULT_NONE;
+
+    if (char_typed && cur_col == s->echo_check_col
+        && !cursor_moved && !has_output) {
+        s->no_echo_frames++;
+        if (s->no_echo_frames >= 3 && !s->announced_password) {
+            result = WIXEN_ECHO_RESULT_PASSWORD;
+            s->announced_password = true;
+        }
+    } else if (!char_typed) {
+        /* Idle frame — don't count, don't reset */
+    } else {
+        s->no_echo_frames = 0;
+        if (cursor_moved || has_output)
+            s->announced_password = false;
+    }
+    s->echo_check_col = cur_col;
+    return result;
+}
+
 /* --- Prompt jumping --- */
 
 bool wixen_terminal_jump_to_previous_prompt(WixenTerminal *t) {
