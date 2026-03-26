@@ -57,8 +57,11 @@ add_library(wixen_core STATIC
     src/core/xmalloc.c
     src/core/mouse.c
     src/core/hyperlink.c
+    src/core/path_util.c
     src/core/table_detect.c
     src/core/image.c
+    src/core/shutdown.c
+    src/core/bg_task.c
 )
 target_link_libraries(wixen_core PUBLIC zstd::libzstd wixen_shell_integ)
 
@@ -365,6 +368,18 @@ add_executable(test_red_com_child tests/test_red_com_child.c)
 target_link_libraries(test_red_com_child wixen_a11y wixen_shell_integ)
 add_test(NAME test_red_com_child COMMAND test_red_com_child)
 
+add_executable(test_red_path_safety tests/test_red_path_safety.c)
+target_link_libraries(test_red_path_safety wixen_core)
+add_test(NAME test_red_path_safety COMMAND test_red_path_safety)
+
+add_executable(test_red_findtext_large tests/test_red_findtext_large.c)
+target_link_libraries(test_red_findtext_large wixen_a11y)
+add_test(NAME test_red_findtext_large COMMAND test_red_findtext_large)
+
+add_executable(test_red_ipc_wire tests/test_red_ipc_wire.c)
+target_link_libraries(test_red_ipc_wire wixen_ipc)
+add_test(NAME test_red_ipc_wire COMMAND test_red_ipc_wire)
+
 add_executable(test_red_smart_focus tests/test_red_smart_focus.c)
 target_link_libraries(test_red_smart_focus wixen_a11y wixen_shell_integ)
 add_test(NAME test_red_smart_focus COMMAND test_red_smart_focus)
@@ -540,6 +555,10 @@ add_test(NAME test_red_e2e_advanced COMMAND test_red_e2e_advanced)
 add_executable(test_red_config_watcher tests/test_red_config_watcher.c)
 target_link_libraries(test_red_config_watcher wixen_config)
 add_test(NAME test_red_config_watcher COMMAND test_red_config_watcher)
+
+add_executable(test_red_watcher_stop tests/test_red_watcher_stop.c)
+target_link_libraries(test_red_watcher_stop wixen_config)
+add_test(NAME test_red_watcher_stop COMMAND test_red_watcher_stop)
 
 add_executable(test_red_audio tests/test_red_audio.c)
 target_link_libraries(test_red_audio wixen_ui)
@@ -917,3 +936,27 @@ add_test(NAME test_terminal_extended COMMAND test_terminal_extended)
 add_executable(test_stress tests/test_stress.c)
 target_link_libraries(test_stress wixen_core wixen_vt)
 add_test(NAME test_stress COMMAND test_stress)
+
+add_executable(test_red_shutdown tests/test_red_shutdown.c)
+target_link_libraries(test_red_shutdown wixen_core)
+add_test(NAME test_red_shutdown COMMAND test_red_shutdown)
+
+add_executable(test_red_url_safety tests/test_red_url_safety.c)
+target_link_libraries(test_red_url_safety wixen_core)
+add_test(NAME test_red_url_safety COMMAND test_red_url_safety)
+
+add_executable(test_red_pty_post tests/test_red_pty_post.c)
+target_link_libraries(test_red_pty_post wixen_pty)
+add_test(NAME test_red_pty_post COMMAND test_red_pty_post)
+
+add_executable(test_red_bg_task tests/test_red_bg_task.c)
+target_link_libraries(test_red_bg_task wixen_core)
+add_test(NAME test_red_bg_task COMMAND test_red_bg_task)
+
+add_executable(test_red_a11y_state_lifecycle tests/test_red_a11y_state_lifecycle.c)
+target_link_libraries(test_red_a11y_state_lifecycle wixen_a11y)
+add_test(NAME test_red_a11y_state_lifecycle COMMAND test_red_a11y_state_lifecycle)
+
+add_executable(test_red_long_line tests/test_red_long_line.c)
+target_link_libraries(test_red_long_line wixen_core)
+add_test(NAME test_red_long_line COMMAND test_red_long_line)

@@ -7,6 +7,35 @@
 #include <stdio.h>
 #include <process.h>
 
+/* --- Post output helper --- */
+
+bool wixen_pty_post_output(HWND hwnd, const uint8_t *data, size_t len,
+                           WixenPostFn post_fn) {
+    if (!hwnd || len == 0) return false;
+
+    WixenPtyOutputEvent *evt = malloc(sizeof(WixenPtyOutputEvent));
+    if (!evt) return false;
+
+    evt->data = malloc(len);
+    if (!evt->data) {
+        free(evt);
+        return false;
+    }
+
+    memcpy(evt->data, data, len);
+    evt->len = len;
+
+    if (!post_fn(hwnd, WM_PTY_OUTPUT, 0, (LPARAM)evt)) {
+        /* Post failed — window likely destroyed; free to avoid leak */
+        free(evt->data);
+        free(evt);
+        return false;
+    }
+
+    /* Ownership transferred to the message receiver */
+    return true;
+}
+
 /* Reader thread — reads from pipe_out_read and posts WM_PTY_OUTPUT */
 static unsigned __stdcall reader_thread_proc(void *arg) {
     WixenPty *pty = (WixenPty *)arg;
@@ -19,18 +48,9 @@ static unsigned __stdcall reader_thread_proc(void *arg) {
             break;
         }
 
-        /* Allocate output event and post to window */
-        WixenPtyOutputEvent *evt = malloc(sizeof(WixenPtyOutputEvent));
-        if (evt) {
-            evt->data = malloc(bytes_read);
-            if (evt->data) {
-                memcpy(evt->data, buf, bytes_read);
-                evt->len = bytes_read;
-                PostMessageW(pty->notify_hwnd, WM_PTY_OUTPUT, 0, (LPARAM)evt);
-            } else {
-                free(evt);
-            }
-        }
+        /* Post output via helper — frees on failure (P0.4 fix) */
+        wixen_pty_post_output(pty->notify_hwnd, buf, bytes_read,
+                              (WixenPostFn)PostMessageW);
     }
 
     /* Notify window that process exited */

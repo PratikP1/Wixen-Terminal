@@ -33,6 +33,15 @@ typedef struct {
     size_t len;
 } WixenPtyOutputEvent;
 
+/* Post function typedef — allows injecting a mock for testing */
+typedef BOOL (*WixenPostFn)(HWND, UINT, WPARAM, LPARAM);
+
+/* Post PTY output to a window.  Allocates a WixenPtyOutputEvent and a copy of
+ * `data`.  On success (post_fn returns TRUE) ownership transfers to the message
+ * receiver.  On failure both allocations are freed and false is returned. */
+bool wixen_pty_post_output(HWND hwnd, const uint8_t *data, size_t len,
+                           WixenPostFn post_fn);
+
 /* Lifecycle */
 bool wixen_pty_spawn(WixenPty *pty, uint16_t cols, uint16_t rows,
                      const wchar_t *program, const wchar_t *args,

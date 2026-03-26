@@ -13,6 +13,7 @@
 #ifdef _WIN32
 
 #include "wixen/a11y/provider.h"
+#include "wixen/a11y/state.h"
 #include "wixen/a11y/tree.h"
 #include "wixen/a11y/child_fragment.h"
 #include <stdlib.h>
@@ -290,7 +291,7 @@ static HRESULT STDMETHODCALLTYPE frag_SetFocus(IRawElementProviderFragment *this
     /* P7 FIX: Update provider state before setting Win32 focus.
      * This ensures HasKeyboardFocus returns true when UIA queries
      * immediately after SetFocus completes. */
-    if (p->state) p->state->has_focus = true;
+    if (p->state) wixen_a11y_state_update_focus(p->state, true);
     SetFocus(p->hwnd);
     return S_OK;
 }
@@ -338,7 +339,7 @@ static HRESULT STDMETHODCALLTYPE root_GetFocus(
         IRawElementProviderFragmentRoot *this_,
         IRawElementProviderFragment **pRetVal) {
     TerminalProvider *p = PROVIDER_FROM_ROOT(this_);
-    if (p->state && p->state->has_focus) {
+    if (p->state && wixen_a11y_state_has_focus(p->state)) {
         /* P4: Return focused command block if cursor is in one */
         if (g_a11y_tree && g_a11y_tree->root.child_count > 0) {
             AcquireSRWLockShared(&p->state->lock);
@@ -809,7 +810,7 @@ void wixen_a11y_state_update_text_global(const char *text, size_t len) {
 }
 
 void wixen_a11y_state_update_focus_global(bool has_focus) {
-    g_a11y_state.has_focus = has_focus;
+    wixen_a11y_state_update_focus(&g_a11y_state, has_focus);
 }
 
 void wixen_a11y_raise_structure_changed_global(void) {

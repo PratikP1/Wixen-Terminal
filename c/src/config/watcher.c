@@ -16,6 +16,8 @@ static unsigned __stdcall watcher_thread(void *arg) {
                 w->dir_handle, buf, sizeof(buf), FALSE,
                 FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE,
                 &bytes, NULL, NULL)) {
+            /* Re-check running after the blocking call returns */
+            if (!w->running) break;
             /* Check if our config file was modified */
             FILE_NOTIFY_INFORMATION *info = (FILE_NOTIFY_INFORMATION *)buf;
             while (info) {
@@ -27,6 +29,10 @@ static unsigned __stdcall watcher_thread(void *arg) {
                 if (info->NextEntryOffset == 0) break;
                 info = (FILE_NOTIFY_INFORMATION *)((uint8_t *)info + info->NextEntryOffset);
             }
+        } else {
+            /* ReadDirectoryChangesW failed — either cancelled via
+             * CancelIoEx or the handle was closed. Exit the loop. */
+            break;
         }
     }
 
@@ -64,8 +70,12 @@ bool wixen_watcher_start(WixenConfigWatcher *w, const char *config_path, HWND no
 
 void wixen_watcher_stop(WixenConfigWatcher *w) {
     w->running = false;
-    if (w->dir_handle != INVALID_HANDLE_VALUE) {
-        CancelIo(w->dir_handle);
+    if (w->dir_handle != NULL && w->dir_handle != INVALID_HANDLE_VALUE) {
+        /* CancelIoEx cancels I/O issued by ANY thread on this handle,
+         * unlike CancelIo which only cancels I/O from the calling thread.
+         * The watcher thread's ReadDirectoryChangesW blocks on a different
+         * thread, so CancelIoEx is required for correct cancellation. */
+        CancelIoEx(w->dir_handle, NULL);
         CloseHandle(w->dir_handle);
         w->dir_handle = INVALID_HANDLE_VALUE;
     }

@@ -23,6 +23,7 @@
 #include "wixen/ui/audio.h"
 #include "wixen/a11y/provider.h"
 #include "wixen/a11y/events.h"
+#include "wixen/core/path_util.h"
 #include "wixen/search/search.h"
 #include "wixen/a11y/frame_update.h"
 #include "wixen/a11y/state.h"
@@ -32,6 +33,9 @@
 #include "wixen/shell_integ/shell_integ.h"
 #include "wixen/config/session.h"
 #include "wixen/core/error_detect.h"
+#include "wixen/core/url.h"
+#include "wixen/core/shutdown.h"
+#include "wixen/core/bg_task.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,6 +65,7 @@ typedef struct {
 
 static WixenPaneState pane_states[MAX_PANES];
 static size_t pane_state_count = 0;
+static WixenShutdownState g_shutdown;
 
 /* Watchdog: if cleanup takes >3s, force-kill. Prevents zombie processes. */
 /* Pump all pending Win32 messages. Must be called periodically during
@@ -78,27 +83,39 @@ static void pump_messages(void) {
  * without blocking the UI thread's message pump. */
 typedef struct BgRendererInitArgs {
     const char *font; float size; uint32_t dpi;
-    volatile WixenRendererBgResult **out; volatile LONG *flag;
+    volatile WixenRendererBgResult **out; WixenBgTask *task;
 } BgRendererInitArgs;
 
 static DWORD WINAPI bg_renderer_init_thread(LPVOID param) {
     BgRendererInitArgs *a = (BgRendererInitArgs *)param;
     WixenRendererBgResult *r = wixen_renderer_init_background(a->font, a->size, a->dpi);
     *a->out = r;
-    InterlockedExchange(a->flag, 1);
+    wixen_bg_task_mark_done(a->task);
     return 0;
 }
 
 static DWORD WINAPI exit_watchdog_thread(LPVOID param) {
     (void)param;
-    Sleep(3000);
-    TerminateProcess(GetCurrentProcess(), 0);
-    return 0; /* Never reached */
+    /* Poll every 100ms. Force-kill only if shutdown is stuck (not complete
+     * after 3 seconds). If cleanup finishes normally, the watchdog exits
+     * without killing — allowing proper DLL cleanup and profiler/sanitizer
+     * teardown. */
+    for (;;) {
+        Sleep(100);
+        if (wixen_shutdown_is_complete(&g_shutdown))
+            return 0; /* Clean exit — no force-kill needed */
+        if (wixen_shutdown_should_force_kill(&g_shutdown, 3000)) {
+            TerminateProcess(GetCurrentProcess(), 0);
+            __assume(0);
+        }
+    }
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                      LPWSTR lpCmdLine, int nCmdShow) {
     (void)hInstance; (void)hPrevInstance; (void)lpCmdLine; (void)nCmdShow;
+
+    wixen_shutdown_init(&g_shutdown);
 
     /* COM apartment for UIA UseComThreading — without this, NVDA's
      * marshaled UIA calls hang and focus never completes. */
@@ -147,16 +164,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * runs on a background thread. UI thread stays responsive for NVDA. */
     WixenRenderer *renderer = NULL;
     volatile WixenRendererBgResult *bg_result = NULL;
-    volatile LONG bg_init_done = 0;
+    WixenBgTask bg_task;
+    wixen_bg_task_init(&bg_task);
 
-    static struct { const char *font; float size; uint32_t dpi;
-        volatile WixenRendererBgResult **out; volatile LONG *flag; } s_bg_args;
+    static BgRendererInitArgs s_bg_args;
     s_bg_args.font = config.font.family ? config.font.family : "Cascadia Mono";
     s_bg_args.size = config.font.size > 0 ? config.font.size : 14.0f;
     s_bg_args.dpi = 96;
     s_bg_args.out = &bg_result;
-    s_bg_args.flag = &bg_init_done;
-    CreateThread(NULL, 0, bg_renderer_init_thread, &s_bg_args, 0, NULL);
+    s_bg_args.task = &bg_task;
+    wixen_bg_task_start(&bg_task, bg_renderer_init_thread, &s_bg_args);
 
     bool init_phase = true;
 
@@ -188,10 +205,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Try to restore session */
     char session_path[MAX_PATH];
-    wixen_config_default_path(session_path, sizeof(session_path));
-    {
-        char *dot = strrchr(session_path, '.');
-        if (dot) strcpy(dot, ".session.json");
+    if (!wixen_session_path_from_config(cfg_path, session_path, sizeof(session_path))) {
+        session_path[0] = '\0';
     }
     WixenSessionState saved_session;
     wixen_session_init(&saved_session);
@@ -279,10 +294,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WixenA11yTree a11y_tree;
     wixen_a11y_tree_init(&a11y_tree);
     wixen_a11y_set_tree(&a11y_tree); /* P2: Wire tree into provider for Navigate() */
-
-    /* Thread-safe a11y state for UIA threads (used by provider) */
-    WixenA11yState *a11y_shared = wixen_a11y_state_create();
-    (void)a11y_shared; /* Will be wired to provider in next step */
 
     /* Search state */
     bool search_active = false;
@@ -383,7 +394,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         /* BACKGROUND INIT: Poll for background thread completion.
          * UI thread NEVER blocks. Just pumps messages and presents dark bg. */
         if (init_phase) {
-            if (InterlockedCompareExchange((volatile LONG *)&bg_init_done, 0, 0) == 1) {
+            if (wixen_bg_task_is_done(&bg_task)) {
                 {
                     FILE *f = fopen("wixen-a11y-debug.log", "a");
                     if (f) { fprintf(f, "=== BG INIT DONE: finalizing ===\n"); fflush(f); fclose(f); }
@@ -395,6 +406,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     config.window.height ? config.window.height : 800);
                 wixen_renderer_bg_result_free((WixenRendererBgResult *)bg_result);
                 bg_result = NULL;
+                wixen_bg_task_finalize(&bg_task);
 
                 /* Spawn PTY */
                 WixenFontMetrics fm = renderer ? wixen_renderer_font_metrics(renderer)
@@ -731,7 +743,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 WixenFontMetrics fm = wixen_renderer_font_metrics(renderer);
                 size_t mcol = fm.cell_width > 0 ? (size_t)(evt.mouse.x / fm.cell_width) : 0;
                 size_t mrow = fm.cell_height > 0 ? (size_t)(evt.mouse.y / fm.cell_height) : 0;
-                if (evt.mouse.button == WIXEN_MB_LEFT) {
+                if (evt.mouse.button == WIXEN_MB_LEFT && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                    /* Ctrl+click — open hyperlink if cell has one */
+                    bool opened = false;
+                    if (mrow < ps->terminal.grid.num_rows && mcol < ps->terminal.grid.cols) {
+                        WixenCell *hc = &ps->terminal.grid.rows[mrow].cells[mcol];
+                        if (hc->attrs.hyperlink_id > 0) {
+                            const WixenHyperlink *hl = wixen_hyperlinks_get(
+                                &ps->terminal.hyperlinks, hc->attrs.hyperlink_id);
+                            if (hl && hl->uri && wixen_is_safe_url_scheme(hl->uri)) {
+                                wchar_t wurl[1024];
+                                MultiByteToWideChar(CP_UTF8, 0, hl->uri, -1, wurl, 1024);
+                                ShellExecuteW(NULL, L"open", wurl, NULL, NULL, SW_SHOWNORMAL);
+                                opened = true;
+                            }
+                        }
+                    }
+                    if (!opened) {
+                        /* No hyperlink or unsafe scheme — fall through to normal selection */
+                        wixen_selection_clear(&ps->terminal.selection);
+                        wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_NORMAL);
+                        ps->terminal.dirty = true;
+                    }
+                } else if (evt.mouse.button == WIXEN_MB_LEFT) {
                     /* Check for triple-click (line select) */
                     DWORD now = GetTickCount();
                     if (last_dblclick_tick > 0 && (now - last_dblclick_tick) < GetDoubleClickTime()) {
@@ -751,20 +785,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                         wixen_selection_start(&ps->terminal.selection, mcol, mrow, WIXEN_SEL_NORMAL);
                     }
                     ps->terminal.dirty = true;
-                } else if (evt.mouse.button == WIXEN_MB_LEFT && (GetKeyState(VK_CONTROL) & 0x8000)) {
-                    /* Ctrl+click — open hyperlink if cell has one */
-                    if (mrow < ps->terminal.grid.num_rows && mcol < ps->terminal.grid.cols) {
-                        WixenCell *hc = &ps->terminal.grid.rows[mrow].cells[mcol];
-                        if (hc->attrs.hyperlink_id > 0) {
-                            const WixenHyperlink *hl = wixen_hyperlinks_get(
-                                &ps->terminal.hyperlinks, hc->attrs.hyperlink_id);
-                            if (hl && hl->uri) {
-                                wchar_t wurl[1024];
-                                MultiByteToWideChar(CP_UTF8, 0, hl->uri, -1, wurl, 1024);
-                                ShellExecuteW(NULL, L"open", wurl, NULL, NULL, SW_SHOWNORMAL);
-                            }
-                        }
-                    }
                 } else if (evt.mouse.button == WIXEN_MB_RIGHT) {
                     wixen_window_show_context_menu(&window, evt.mouse.x, evt.mouse.y);
                 } else if (evt.mouse.button == WIXEN_MB_MIDDLE) {
@@ -1021,25 +1041,30 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             /* Track cursor and line state */
             static size_t prev_cursor_row = SIZE_MAX;
             static size_t prev_cursor_col = SIZE_MAX;
-            static char prev_line[512] = {0};
+            static char *prev_line = NULL;
 
             size_t cur_row = ps->terminal.grid.cursor.row;
             size_t cur_col = ps->terminal.grid.cursor.col;
             bool cursor_moved = (cur_row != prev_cursor_row || cur_col != prev_cursor_col);
 
-            /* Compute current line text */
-            char line_buf[512] = {0};
+            /* Compute current line text (dynamic — no truncation on long lines) */
+            char *line_buf = NULL;
             if (cur_row < ps->terminal.grid.num_rows) {
-                wixen_row_text(&ps->terminal.grid.rows[cur_row], line_buf, sizeof(line_buf));
+                line_buf = wixen_row_text_dynamic(&ps->terminal.grid.rows[cur_row]);
+            }
+            if (!line_buf) {
+                line_buf = _strdup("");
             }
 
             /* #8: Compute UTF-16 offset atomically for lock-free GetSelection */
             {
                 int32_t utf16_off = 0;
                 for (size_t r = 0; r < cur_row && r < ps->terminal.grid.num_rows; r++) {
-                    char rbuf[512];
-                    size_t rlen = wixen_row_text(&ps->terminal.grid.rows[r], rbuf, sizeof(rbuf));
-                    utf16_off += (int32_t)rlen + 1; /* +1 for newline */
+                    char *rbuf = wixen_row_text_dynamic(&ps->terminal.grid.rows[r]);
+                    if (rbuf) {
+                        utf16_off += (int32_t)strlen(rbuf) + 1; /* +1 for newline */
+                        free(rbuf);
+                    }
                 }
                 utf16_off += (int32_t)cur_col;
                 wixen_a11y_set_cursor_offset(utf16_off);
@@ -1057,15 +1082,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             /* #5/#7: Line change detection with prompt stripping.
              * Detects history recall (up/down changes command).
              * Only fires for replacement — not append or deletion. */
-            bool line_changed = (strcmp(line_buf, prev_line) != 0);
-            if (line_changed && !has_real_output && prev_line[0]) {
+            const char *prev_line_safe = prev_line ? prev_line : "";
+            bool line_changed = (strcmp(line_buf, prev_line_safe) != 0);
+            if (line_changed && !has_real_output && prev_line_safe[0]) {
                 size_t cur_len = strlen(line_buf);
-                size_t prv_len = strlen(prev_line);
+                size_t prv_len = strlen(prev_line_safe);
                 while (cur_len > 0 && line_buf[cur_len - 1] == ' ') cur_len--;
-                while (prv_len > 0 && prev_line[prv_len - 1] == ' ') prv_len--;
+                while (prv_len > 0 && prev_line_safe[prv_len - 1] == ' ') prv_len--;
 
-                bool is_append = (cur_len > prv_len && memcmp(line_buf, prev_line, prv_len) == 0);
-                bool is_delete = (cur_len < prv_len && memcmp(prev_line, line_buf, cur_len) == 0);
+                bool is_append = (cur_len > prv_len && memcmp(line_buf, prev_line_safe, prv_len) == 0);
+                bool is_delete = (cur_len < prv_len && memcmp(prev_line_safe, line_buf, cur_len) == 0);
 
                 if (!is_append && !is_delete) {
                     /* Line replaced (history recall) — strip prompt */
@@ -1158,7 +1184,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     }
                     break;
                 case NAV_UP:
-                    if (strcmp(line_buf, prev_line) == 0) {
+                    if (strcmp(line_buf, prev_line_safe) == 0) {
                         ps->at_history_start = true;
                         wixen_audio_play(&ac, WIXEN_AUDIO_HISTORY_BOUNDARY); /* History start */
                     }
@@ -1176,7 +1202,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
             prev_cursor_row = cur_row;
             prev_cursor_col = cur_col;
-            strncpy(prev_line, line_buf, sizeof(prev_line) - 1);
+            free(prev_line);
+            prev_line = _strdup(line_buf);
+            free(line_buf);
         }
 
         /* Handle terminal state changes */
@@ -1244,8 +1272,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         MsgWaitForMultipleObjects(0, NULL, FALSE, 16, QS_ALLINPUT);
     }
 
+    /* Ensure bg renderer thread handle is closed (no-op if already finalized). */
+    wixen_bg_task_cleanup(&bg_task);
+
     /* BUG #36: Start a watchdog thread that force-kills after 3 seconds.
      * If PTY close or session save blocks, the watchdog ensures no zombie. */
+    wixen_shutdown_begin(&g_shutdown);
     CreateThread(NULL, 0, exit_watchdog_thread, NULL, 0, NULL);
 
     /* Save session before exit */
@@ -1264,20 +1296,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             wixen_session_add_tab(&session, all_tabs[i].title, uuid, cwd);
         }
         char save_path[MAX_PATH];
-        wixen_config_default_path(save_path, sizeof(save_path));
-        char *sdot = strrchr(save_path, '.');
-        if (sdot) strcpy(sdot, ".session.json");
+        wixen_session_path_from_config(cfg_path, save_path, sizeof(save_path));
         wixen_session_save(&session, save_path);
         wixen_session_free(&session);
     }
 
     wixen_search_free(&search_engine);
 
-    /* BUG #30: ExitProcess(0) hangs — a DllMain or thread cleanup blocks.
-     * TerminateProcess is the only guaranteed instant kill. It skips
-     * DLL detach notifications entirely. Windows reclaims all resources. */
-    TerminateProcess(GetCurrentProcess(), 0);
-    __assume(0); /* TerminateProcess never returns */
+    /* P0.3 fix: Mark shutdown complete so the watchdog thread exits cleanly.
+     * Normal exit now returns from wWinMain, allowing proper DLL cleanup,
+     * sanitizer teardown, and profiler flushing. TerminateProcess is kept
+     * only as the watchdog fallback for genuinely stuck shutdowns. */
+    wixen_shutdown_mark_complete(&g_shutdown);
+
+    /* BUG #30 fallback: If somehow we're not complete (should not happen),
+     * force-kill to avoid the ExitProcess hang described in BUG #30. */
+    if (!wixen_shutdown_is_complete(&g_shutdown)) {
+        TerminateProcess(GetCurrentProcess(), 0);
+        __assume(0);
+    }
+
+    return 0;
 }
 
 #else

@@ -148,26 +148,27 @@ static HRESULT STDMETHODCALLTYPE range_FindText(
     *pRetVal = NULL;
     if (!text || !r->state) return S_OK;
 
-    /* Get text snapshot */
-    char full[8192];
+    /* Dynamic buffer — no truncation (P0.5 fix) */
     AcquireSRWLockShared(&r->state->lock);
     size_t flen = r->state->full_text_len;
-    if (flen >= sizeof(full)) flen = sizeof(full) - 1;
+    char *full = (char *)malloc(flen + 1);
+    if (!full) { ReleaseSRWLockShared(&r->state->lock); return S_OK; }
     if (r->state->full_text) memcpy(full, r->state->full_text, flen);
     full[flen] = '\0';
     ReleaseSRWLockShared(&r->state->lock);
 
     /* Convert BSTR query to UTF-8 */
     int qlen = WideCharToMultiByte(CP_UTF8, 0, text, -1, NULL, 0, NULL, NULL);
-    if (qlen <= 0) return S_OK;
+    if (qlen <= 0) { free(full); return S_OK; }
     char *query = (char *)malloc(qlen);
-    if (!query) return S_OK;
+    if (!query) { free(full); return S_OK; }
     WideCharToMultiByte(CP_UTF8, 0, text, -1, query, qlen, NULL, NULL);
 
     size_t start, end;
     size_t from = (backward || r->start < 0) ? 0 : (size_t)r->start;
     bool found = wixen_text_find(full, flen, query, from, backward != 0, ignoreCase != 0, &start, &end);
     free(query);
+    free(full);
 
     if (found) {
         *pRetVal = (ITextRangeProvider *)create_range(r->state, r->enclosing, (int)start, (int)end);

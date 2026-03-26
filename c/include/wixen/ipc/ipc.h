@@ -11,6 +11,7 @@
 
 #define WIXEN_PIPE_NAME L"\\\\.\\pipe\\wixen-terminal-ipc"
 #define WIXEN_IPC_BUFFER_SIZE 4096
+#define WIXEN_IPC_MAX_MESSAGE_SIZE 65536  /* 64 KB max serialized message */
 
 typedef enum {
     WIXEN_IPC_NEW_WINDOW = 1,
