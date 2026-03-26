@@ -128,16 +128,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
     pump_messages(); /* Let NVDA see the window + dispatch UIA queries */
 
-    /* Create renderer (heavy: D3D11 + shader compile + DirectWrite atlas) */
-    WixenRenderer *renderer = wixen_renderer_create(
-        window.hwnd, 1200, 800, "Cascadia Mono", 14.0f, &colors);
-    if (!renderer) {
-        MessageBoxW(NULL, L"Failed to create renderer", L"Wixen Terminal", MB_ICONERROR);
-        wixen_window_destroy(&window);
-        return 1;
-    }
-
-    pump_messages(); /* Let COM calls through after renderer init */
+    /* DEFERRED INIT: Renderer and PTY are created after the main loop
+     * starts pumping messages. This prevents the "Not Responding" ghost
+     * window that NVDA's watchdog detects (BUG #41 real fix).
+     * The first few frames just show a dark background. */
+    WixenRenderer *renderer = NULL;
+    bool init_phase = true; /* True until renderer + PTY are ready */
+    int init_frame = 0;     /* Frame counter during init */
 
     /* Initialize tab and pane management */
     WixenTabManager tabs;
@@ -198,8 +195,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     spawn_shell = resolved_shell;
                 }
             }
-            pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows, spawn_shell, NULL,
-                wcwd[0] ? wcwd : NULL, window.hwnd);
+            /* PTY spawn deferred to frame 4 — just init terminal/parser here */
+            pst->pty_running = false;
             pane_state_count++;
             WixenPaneId np = (WixenPaneId)(i + 1);
             wixen_tabs_add(&tabs, saved_session.tabs[i].title, np);
@@ -210,15 +207,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         wixen_terminal_init(&ps->terminal, cols, rows);
         wixen_shell_integ_init(&ps->shell_integ);
         wixen_parser_init(&ps->parser);
-        ps->pty_running = wixen_pty_spawn(&ps->pty, cols, rows, shell, NULL, NULL, window.hwnd);
+        /* PTY spawn is DEFERRED to frame 4 of the main loop.
+         * This keeps the message pump active during heavy init. */
+        ps->pty_running = false;
         pane_state_count = 1;
         wixen_tabs_add(&tabs, tab_title, root_pane);
     }
     wixen_session_free(&saved_session);
-    free(shell);
-
-    /* Pump after PTY spawn — prevents "Not Responding" during startup */
-    pump_messages();
+    /* Don't free shell yet — needed for deferred PTY spawn */
 
     /* ps points to the active pane */
     WixenPaneState *ps = &pane_states[0];
@@ -358,6 +354,62 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
 
         if (!running) break;
+
+        /* DEFERRED INIT: Create renderer and PTY across multiple frames
+         * so the message pump stays active. Each init_frame does ONE heavy
+         * operation, then yields back to the message pump. */
+        if (init_phase) {
+            init_frame++;
+            if (init_frame == 2) {
+                /* Frame 2: Create renderer (D3D11 + shaders + atlas) */
+                renderer = wixen_renderer_create(
+                    window.hwnd,
+                    config.window.width ? config.window.width : 1200,
+                    config.window.height ? config.window.height : 800,
+                    config.font.family ? config.font.family : "Cascadia Mono",
+                    config.font.size > 0 ? config.font.size : 14.0f,
+                    &colors);
+            } else if (init_frame == 4) {
+                /* Frame 4: Spawn PTY for all panes */
+                WixenFontMetrics fm = renderer ? wixen_renderer_font_metrics(renderer) : (WixenFontMetrics){8,16,0,0,0};
+                uint16_t c = (uint16_t)(config.window.width / (fm.cell_width > 0 ? fm.cell_width : 8));
+                uint16_t r = (uint16_t)(config.window.height / (fm.cell_height > 0 ? fm.cell_height : 16));
+                if (c == 0) c = 80; if (r == 0) r = 24;
+                cols = c; rows = r;
+                for (size_t pi = 0; pi < pane_state_count; pi++) {
+                    WixenPaneState *pst = &pane_states[pi];
+                    wixen_terminal_resize(&pst->terminal, cols, rows);
+                    if (!pst->pty_running) {
+                        pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows,
+                            shell, NULL, NULL, window.hwnd);
+                    }
+                }
+            } else if (init_frame == 6) {
+                /* Frame 6: Init complete — switch to normal mode */
+                init_phase = false;
+                free(shell); shell = NULL;
+                wixen_a11y_raise_notification(window.hwnd,
+                    "Wixen Terminal ready", "terminal-ready");
+                /* Fire focus so NVDA announces the window */
+                wixen_a11y_raise_focus_changed(window.hwnd);
+            }
+            /* During init, just sleep briefly and continue pumping */
+            if (init_phase) {
+                /* Clear to dark background if renderer exists */
+                if (renderer) {
+                    WixenPaneRenderInfo pi = {
+                        .grid = &ps->terminal.grid,
+                        .x = 0, .y = 0,
+                        .width = (float)(config.window.width ? config.window.width : 1200),
+                        .height = (float)(config.window.height ? config.window.height : 800),
+                        .has_focus = true, .scroll_offset = 0,
+                    };
+                    wixen_renderer_render_frame(renderer, &pi, 1);
+                }
+                MsgWaitForMultipleObjects(0, NULL, FALSE, 16, QS_ALLINPUT);
+                continue; /* Skip normal frame processing during init */
+            }
+        }
 
         /* Process window events */
         static DWORD last_dblclick_tick = 0;
