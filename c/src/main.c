@@ -383,6 +383,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
          * UI thread NEVER blocks. Just pumps messages and presents dark bg. */
         if (init_phase) {
             if (InterlockedCompareExchange((volatile LONG *)&bg_init_done, 0, 0) == 1) {
+                {
+                    FILE *f = fopen("wixen-a11y-debug.log", "a");
+                    if (f) { fprintf(f, "=== BG INIT DONE: finalizing ===\n"); fflush(f); fclose(f); }
+                }
                 /* Background init done — finalize on UI thread (fast: just swapchain) */
                 renderer = wixen_renderer_finalize(
                     (WixenRendererBgResult *)bg_result, window.hwnd,
@@ -410,6 +414,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 free(shell); shell = NULL;
 
                 init_phase = false;
+                {
+                    FILE *f = fopen("wixen-a11y-debug.log", "a");
+                    if (f) { fprintf(f, "=== INIT COMPLETE: firing events ===\n"); fflush(f); fclose(f); }
+                }
                 wixen_a11y_raise_notification(window.hwnd,
                     "Wixen Terminal ready", "terminal-ready");
                 wixen_a11y_raise_focus_changed(window.hwnd);

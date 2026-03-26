@@ -17,6 +17,7 @@
 #include "wixen/a11y/child_fragment.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #pragma comment(lib, "uiautomationcore.lib")
 
@@ -627,6 +628,19 @@ LRESULT wixen_a11y_handle_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam,
 LRESULT wixen_a11y_handle_wm_getobject(HWND hwnd, WPARAM wparam, LPARAM lparam) {
     IRawElementProviderSimple *provider =
         (IRawElementProviderSimple *)GetPropW(hwnd, L"WixenUiaProvider");
+
+    /* Debug: log every WM_GETOBJECT to diagnose NVDA detection */
+    {
+        static FILE *dbgf = NULL;
+        if (!dbgf) dbgf = fopen("wixen-a11y-debug.log", "a");
+        if (dbgf) {
+            fprintf(dbgf, "WM_GETOBJECT: lparam=0x%lX provider=%p matches=%d\n",
+                (unsigned long)lparam, (void *)provider,
+                provider ? wixen_wm_getobject_matches(lparam) : 0);
+            fflush(dbgf);
+        }
+    }
+
     if (provider && wixen_wm_getobject_matches(lparam)) {
         return UiaReturnRawElementProvider(hwnd, wparam, lparam, provider);
     }
@@ -735,7 +749,16 @@ void wixen_a11y_update_cursor(const void *grid_ptr) {
 void wixen_a11y_raise_focus_changed(HWND hwnd) {
     (void)hwnd;
     if (g_provider) {
-        UiaRaiseAutomationEvent(g_provider, UIA_AutomationFocusChangedEventId);
+        HRESULT hr = UiaRaiseAutomationEvent(g_provider, UIA_AutomationFocusChangedEventId);
+        /* Log to same file as WM_GETOBJECT */
+        {
+            FILE *f = fopen("wixen-a11y-debug.log", "a");
+            if (f) {
+                fprintf(f, "raise_focus_changed: g_provider=%p hr=0x%lX\n",
+                    (void *)g_provider, (unsigned long)hr);
+                fflush(f); fclose(f);
+            }
+        }
     }
 }
 
@@ -761,10 +784,19 @@ void wixen_a11y_raise_notification(HWND hwnd, const char *text, const char *acti
     if (!waid) { free(wtext); return; }
     MultiByteToWideChar(CP_UTF8, 0, activity_id, -1, waid, alen);
 
-    UiaRaiseNotificationEvent(g_provider,
+    HRESULT hr = UiaRaiseNotificationEvent(g_provider,
         NotificationKind_ItemAdded,
         NotificationProcessing_All,
         wtext, waid);
+
+    {
+        FILE *f = fopen("wixen-a11y-debug.log", "a");
+        if (f) {
+            fprintf(f, "raise_notification: hr=0x%lX text=%.40ls\n",
+                (unsigned long)hr, wtext);
+            fflush(f); fclose(f);
+        }
+    }
 
     free(wtext);
     free(waid);
