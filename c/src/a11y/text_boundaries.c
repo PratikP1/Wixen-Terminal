@@ -165,8 +165,12 @@ int wixen_text_move_by_line(const char *text, size_t text_len, size_t *pos, int 
         }
     } else {
         while (moved > count && *pos > 0) {
-            /* Move to start of current line */
-            if (*pos > 0) (*pos)--;
+            /* First, move to start of current line */
+            while (*pos > 0 && text[*pos - 1] != '\n') (*pos)--;
+            if (*pos == 0) { moved--; break; } /* Already at first line */
+            /* Now move past the newline to end of previous line */
+            (*pos)--; /* Skip back over '\n' */
+            /* Move to start of that line */
             while (*pos > 0 && text[*pos - 1] != '\n') (*pos)--;
             moved--;
         }
@@ -174,30 +178,98 @@ int wixen_text_move_by_line(const char *text, size_t text_len, size_t *pos, int 
     return moved;
 }
 
+/* --- Generic move by unit --- */
+
+int wixen_text_move_by_unit(const char *text, size_t text_len,
+                             size_t *pos, WixenTextUnit unit, int count) {
+    switch (unit) {
+    case WIXEN_TEXT_UNIT_CHAR:
+        return wixen_text_move_by_char(text, text_len, pos, count);
+    case WIXEN_TEXT_UNIT_WORD:
+    case WIXEN_TEXT_UNIT_FORMAT:
+        return wixen_text_move_by_word(text, text_len, pos, count);
+    case WIXEN_TEXT_UNIT_LINE:
+    case WIXEN_TEXT_UNIT_PARAGRAPH:
+        return wixen_text_move_by_line(text, text_len, pos, count);
+    case WIXEN_TEXT_UNIT_PAGE:
+    case WIXEN_TEXT_UNIT_DOCUMENT:
+        if (count > 0) { *pos = text_len; return 1; }
+        if (count < 0) { *pos = 0; return -1; }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+int wixen_text_move_endpoint(const char *text, size_t text_len,
+                              size_t *endpoint, WixenTextUnit unit, int count) {
+    /* For endpoint expansion, word/line move to the END of the unit,
+     * not the start of the next unit. */
+    if (unit == WIXEN_TEXT_UNIT_WORD && count > 0) {
+        int moved = 0;
+        while (moved < count && *endpoint < text_len) {
+            /* Skip current whitespace */
+            while (*endpoint < text_len && isspace((unsigned char)text[*endpoint])) (*endpoint)++;
+            /* Skip to end of word */
+            while (*endpoint < text_len && !isspace((unsigned char)text[*endpoint])) (*endpoint)++;
+            moved++;
+        }
+        return moved;
+    }
+    if (unit == WIXEN_TEXT_UNIT_LINE && count > 0) {
+        int moved = 0;
+        while (moved < count && *endpoint < text_len) {
+            while (*endpoint < text_len && text[*endpoint] != '\n') (*endpoint)++;
+            if (*endpoint < text_len) (*endpoint)++; /* Include newline */
+            moved++;
+        }
+        return moved;
+    }
+    /* For other cases, delegate to move_by_unit */
+    return wixen_text_move_by_unit(text, text_len, endpoint, unit, count);
+}
+
 /* --- Find text --- */
 
+static bool match_at(const char *text, size_t text_len, size_t pos,
+                      const char *query, size_t qlen, bool ignore_case) {
+    if (pos + qlen > text_len) return false;
+    for (size_t j = 0; j < qlen; j++) {
+        char a = text[pos + j];
+        char b = query[j];
+        if (ignore_case) {
+            a = (char)tolower((unsigned char)a);
+            b = (char)tolower((unsigned char)b);
+        }
+        if (a != b) return false;
+    }
+    return true;
+}
+
 bool wixen_text_find(const char *text, size_t text_len, const char *query,
-                      size_t from_offset, bool ignore_case,
+                      size_t from_offset, bool backward, bool ignore_case,
                       size_t *out_start, size_t *out_end) {
     if (!text || !query || !query[0]) return false;
     size_t qlen = strlen(query);
     if (qlen > text_len) return false;
 
-    for (size_t i = from_offset; i + qlen <= text_len; i++) {
-        bool match = true;
-        for (size_t j = 0; j < qlen; j++) {
-            char a = text[i + j];
-            char b = query[j];
-            if (ignore_case) {
-                a = (char)tolower((unsigned char)a);
-                b = (char)tolower((unsigned char)b);
+    if (!backward) {
+        for (size_t i = from_offset; i + qlen <= text_len; i++) {
+            if (match_at(text, text_len, i, query, qlen, ignore_case)) {
+                if (out_start) *out_start = i;
+                if (out_end) *out_end = i + qlen;
+                return true;
             }
-            if (a != b) { match = false; break; }
         }
-        if (match) {
-            if (out_start) *out_start = i;
-            if (out_end) *out_end = i + qlen;
-            return true;
+    } else {
+        /* Search backward from from_offset */
+        size_t start = (from_offset >= qlen) ? from_offset - qlen : 0;
+        for (size_t i = start + 1; i > 0; i--) {
+            if (match_at(text, text_len, i - 1, query, qlen, ignore_case)) {
+                if (out_start) *out_start = i - 1;
+                if (out_end) *out_end = i - 1 + qlen;
+                return true;
+            }
         }
     }
     return false;

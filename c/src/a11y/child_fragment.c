@@ -35,6 +35,11 @@ bool wixen_child_fragment_is_error(const WixenChildFragment *cf) {
     return node ? node->is_error : false;
 }
 
+int32_t wixen_child_fragment_control_type(const WixenChildFragment *cf) {
+    (void)cf;
+    return 50026; /* UIA_GroupControlTypeId */
+}
+
 void wixen_child_fragment_row_range(const WixenChildFragment *cf,
                                      size_t *out_start, size_t *out_end) {
     if (!cf || !cf->tree) { *out_start = 0; *out_end = 0; return; }

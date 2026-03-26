@@ -119,7 +119,7 @@ TEST red_p5_move_by_char_at_end(void) {
 TEST red_p5_find_text_forward(void) {
     const char *text = "hello beautiful world";
     size_t start, end;
-    bool found = wixen_text_find(text, strlen(text), "beautiful", 0, false, &start, &end);
+    bool found = wixen_text_find(text, strlen(text), "beautiful", 0, false, false, &start, &end);
     ASSERT(found);
     ASSERT_EQ(6, (int)start);
     ASSERT_EQ(15, (int)end);
@@ -129,7 +129,7 @@ TEST red_p5_find_text_forward(void) {
 TEST red_p5_find_text_case_insensitive(void) {
     const char *text = "Hello Beautiful World";
     size_t start, end;
-    bool found = wixen_text_find(text, strlen(text), "beautiful", 0, true, &start, &end);
+    bool found = wixen_text_find(text, strlen(text), "beautiful", 0, false, true, &start, &end);
     ASSERT(found);
     ASSERT_EQ(6, (int)start);
     ASSERT_EQ(15, (int)end);
@@ -139,7 +139,7 @@ TEST red_p5_find_text_case_insensitive(void) {
 TEST red_p5_find_text_not_found(void) {
     const char *text = "hello world";
     size_t start, end;
-    bool found = wixen_text_find(text, strlen(text), "xyz", 0, false, &start, &end);
+    bool found = wixen_text_find(text, strlen(text), "xyz", 0, false, false, &start, &end);
     ASSERT_FALSE(found);
     PASS();
 }

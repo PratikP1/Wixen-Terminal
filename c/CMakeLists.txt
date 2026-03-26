@@ -349,6 +349,14 @@ add_executable(test_red_copilot_p1_focus tests/test_red_copilot_p1_focus.c)
 target_link_libraries(test_red_copilot_p1_focus wixen_a11y)
 add_test(NAME test_red_copilot_p1_focus COMMAND test_red_copilot_p1_focus)
 
+add_executable(test_red_text_nav tests/test_red_text_nav.c)
+target_link_libraries(test_red_text_nav wixen_a11y)
+add_test(NAME test_red_text_nav COMMAND test_red_text_nav)
+
+add_executable(test_red_com_child tests/test_red_com_child.c)
+target_link_libraries(test_red_com_child wixen_a11y wixen_shell_integ)
+add_test(NAME test_red_com_child COMMAND test_red_com_child)
+
 add_executable(test_red_smart_focus tests/test_red_smart_focus.c)
 target_link_libraries(test_red_smart_focus wixen_a11y wixen_shell_integ)
 add_test(NAME test_red_smart_focus COMMAND test_red_smart_focus)

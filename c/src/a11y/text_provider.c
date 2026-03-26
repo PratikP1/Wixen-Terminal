@@ -166,7 +166,7 @@ static HRESULT STDMETHODCALLTYPE range_FindText(
 
     size_t start, end;
     size_t from = (backward || r->start < 0) ? 0 : (size_t)r->start;
-    bool found = wixen_text_find(full, flen, query, from, ignoreCase != 0, &start, &end);
+    bool found = wixen_text_find(full, flen, query, from, backward != 0, ignoreCase != 0, &start, &end);
     free(query);
 
     if (found) {
@@ -239,34 +239,22 @@ static HRESULT STDMETHODCALLTYPE range_Move(
     *pRetVal = 0;
     if (count == 0 || !r->state) return S_OK;
 
-    char full[8192];
+    /* Dynamic buffer — no truncation (Copilot P6 fix) */
     AcquireSRWLockShared(&r->state->lock);
     size_t flen = r->state->full_text_len;
-    if (flen >= sizeof(full)) flen = sizeof(full) - 1;
+    char *full = (char *)malloc(flen + 1);
+    if (!full) { ReleaseSRWLockShared(&r->state->lock); return S_OK; }
     if (r->state->full_text) memcpy(full, r->state->full_text, flen);
     full[flen] = '\0';
     ReleaseSRWLockShared(&r->state->lock);
 
     size_t pos = (r->start >= 0) ? (size_t)r->start : 0;
-    int moved = 0;
-    switch (unit) {
-    case TextUnit_Character:
-        moved = wixen_text_move_by_char(full, flen, &pos, count);
-        break;
-    case TextUnit_Word:
-        moved = wixen_text_move_by_word(full, flen, &pos, count);
-        break;
-    case TextUnit_Line:
-        moved = wixen_text_move_by_line(full, flen, &pos, count);
-        break;
-    default: /* Page, Document — move to start/end */
-        if (count > 0) { pos = flen; moved = 1; }
-        else { pos = 0; moved = -1; }
-        break;
-    }
+    WixenTextUnit tu = (WixenTextUnit)unit;
+    int moved = wixen_text_move_by_unit(full, flen, &pos, tu, count);
     r->start = (int)pos;
     r->end = (int)pos; /* Degenerate range after move */
     *pRetVal = moved;
+    free(full);
     return S_OK;
 }
 
@@ -277,34 +265,28 @@ static HRESULT STDMETHODCALLTYPE range_MoveEndpointByUnit(
     *pRetVal = 0;
     if (count == 0 || !r->state) return S_OK;
 
-    char full[8192];
+    /* Dynamic buffer (Copilot P6 fix) */
     AcquireSRWLockShared(&r->state->lock);
     size_t flen = r->state->full_text_len;
-    if (flen >= sizeof(full)) flen = sizeof(full) - 1;
+    char *full = (char *)malloc(flen + 1);
+    if (!full) { ReleaseSRWLockShared(&r->state->lock); return S_OK; }
     if (r->state->full_text) memcpy(full, r->state->full_text, flen);
     full[flen] = '\0';
     ReleaseSRWLockShared(&r->state->lock);
 
     int *target = (endpoint == TextPatternRangeEndpoint_Start) ? &r->start : &r->end;
     size_t pos = (*target >= 0) ? (size_t)*target : 0;
-    int moved = 0;
-    switch (unit) {
-    case TextUnit_Character:
-        moved = wixen_text_move_by_char(full, flen, &pos, count);
-        break;
-    case TextUnit_Word:
-        moved = wixen_text_move_by_word(full, flen, &pos, count);
-        break;
-    case TextUnit_Line:
-        moved = wixen_text_move_by_line(full, flen, &pos, count);
-        break;
-    default:
-        if (count > 0) { pos = flen; moved = 1; }
-        else { pos = 0; moved = -1; }
-        break;
-    }
+    /* Use wixen_text_move_endpoint which handles word/line end correctly */
+    WixenTextUnit tu = (WixenTextUnit)unit;
+    int moved = wixen_text_move_endpoint(full, flen, &pos, tu, count);
     *target = (int)pos;
+    /* Ensure start <= end */
+    if (r->start > r->end) {
+        if (endpoint == TextPatternRangeEndpoint_Start) r->end = r->start;
+        else r->start = r->end;
+    }
     *pRetVal = moved;
+    free(full);
     return S_OK;
 }
 

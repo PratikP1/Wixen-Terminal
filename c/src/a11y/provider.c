@@ -14,6 +14,7 @@
 
 #include "wixen/a11y/provider.h"
 #include "wixen/a11y/tree.h"
+#include "wixen/a11y/child_fragment.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,6 +37,44 @@ typedef struct TerminalProvider {
 #define ROOT_OFFSET offsetof(TerminalProvider, lpRootVtbl)
 #define PROVIDER_FROM_FRAG(ptr) ((TerminalProvider *)((char *)(ptr) - FRAG_OFFSET))
 #define PROVIDER_FROM_ROOT(ptr) ((TerminalProvider *)((char *)(ptr) - ROOT_OFFSET))
+
+/* Global tree pointer (set by wixen_a11y_set_tree) */
+static WixenA11yTree *g_a11y_tree = NULL;
+
+/* --- Child fragment COM object (command block) --- */
+
+typedef struct ChildFragmentCom {
+    IRawElementProviderSimpleVtbl *lpVtbl;
+    IRawElementProviderFragmentVtbl *lpFragVtbl;
+    LONG ref_count;
+    HWND hwnd;
+    WixenChildFragment *data; /* Owns the child fragment data */
+    TerminalProvider *parent; /* Back-pointer to root (AddRef'd) */
+} ChildFragmentCom;
+
+#define CHILD_FRAG_OFFSET offsetof(ChildFragmentCom, lpFragVtbl)
+#define CHILD_FROM_SIMPLE(ptr) ((ChildFragmentCom *)(ptr))
+#define CHILD_FROM_FRAG(ptr) ((ChildFragmentCom *)((char *)(ptr) - CHILD_FRAG_OFFSET))
+
+/* Forward declarations for child vtable */
+static IRawElementProviderSimpleVtbl child_simple_vtbl;
+static IRawElementProviderFragmentVtbl child_frag_vtbl;
+
+static ChildFragmentCom *create_child_com(TerminalProvider *parent, size_t block_index) {
+    if (!g_a11y_tree) return NULL;
+    WixenChildFragment *cf = wixen_child_fragment_create(g_a11y_tree, block_index);
+    if (!cf) return NULL;
+    ChildFragmentCom *c = calloc(1, sizeof(ChildFragmentCom));
+    if (!c) { wixen_child_fragment_destroy(cf); return NULL; }
+    c->lpVtbl = &child_simple_vtbl;
+    c->lpFragVtbl = &child_frag_vtbl;
+    c->ref_count = 1;
+    c->hwnd = parent->hwnd;
+    c->data = cf;
+    c->parent = parent;
+    InterlockedIncrement(&parent->ref_count); /* Parent ref */
+    return c;
+}
 
 /* --- IUnknown --- */
 
@@ -179,9 +218,6 @@ static HRESULT STDMETHODCALLTYPE provider_get_HostRawElementProvider(
 
 /* --- IRawElementProviderFragment --- */
 
-/* Global tree pointer — set from main.c after tree init */
-static WixenA11yTree *g_a11y_tree = NULL;
-
 void wixen_a11y_set_tree(void *tree) {
     g_a11y_tree = (WixenA11yTree *)tree;
 }
@@ -194,16 +230,18 @@ static HRESULT STDMETHODCALLTYPE frag_Navigate(
 
     if (!g_a11y_tree) return S_OK;
 
+    TerminalProvider *p = PROVIDER_FROM_FRAG(this_);
     switch (direction) {
     case NavigateDirection_FirstChild:
-        if (g_a11y_tree->root.child_count > 0) {
-            /* TODO: Create a child fragment provider for children[0] */
-            /* For now, return NULL but the tree IS navigable */
+        if (g_a11y_tree && g_a11y_tree->root.child_count > 0) {
+            ChildFragmentCom *child = create_child_com(p, 0);
+            if (child) *pRetVal = (IRawElementProviderFragment *)&child->lpFragVtbl;
         }
         break;
     case NavigateDirection_LastChild:
-        if (g_a11y_tree->root.child_count > 0) {
-            /* TODO: Create a child fragment provider for children[last] */
+        if (g_a11y_tree && g_a11y_tree->root.child_count > 0) {
+            ChildFragmentCom *child = create_child_com(p, g_a11y_tree->root.child_count - 1);
+            if (child) *pRetVal = (IRawElementProviderFragment *)&child->lpFragVtbl;
         }
         break;
     case NavigateDirection_Parent:
@@ -268,8 +306,26 @@ static HRESULT STDMETHODCALLTYPE frag_get_FragmentRoot(
 static HRESULT STDMETHODCALLTYPE root_ElementProviderFromPoint(
         IRawElementProviderFragmentRoot *this_, double x, double y,
         IRawElementProviderFragment **pRetVal) {
-    (void)x; (void)y;
+    (void)x; /* Only y is used for row-based hit testing */
     TerminalProvider *p = PROVIDER_FROM_ROOT(this_);
+    /* Hit test: y coordinate → row → command block */
+    if (g_a11y_tree && g_a11y_tree->root.child_count > 0) {
+        AcquireSRWLockShared(&p->state->lock);
+        float cell_height = p->state->cell_height;
+        ReleaseSRWLockShared(&p->state->lock);
+        if (cell_height > 0) {
+            size_t row = (size_t)(y / cell_height);
+            int idx = wixen_a11y_tree_find_block_at_row(g_a11y_tree, row);
+            if (idx >= 0) {
+                ChildFragmentCom *child = create_child_com(p, (size_t)idx);
+                if (child) {
+                    *pRetVal = (IRawElementProviderFragment *)&child->lpFragVtbl;
+                    return S_OK;
+                }
+            }
+        }
+    }
+    /* Fallback: return root */
     *pRetVal = (IRawElementProviderFragment *)&p->lpFragVtbl;
     InterlockedIncrement(&p->ref_count);
     return S_OK;
@@ -279,11 +335,22 @@ static HRESULT STDMETHODCALLTYPE root_GetFocus(
         IRawElementProviderFragmentRoot *this_,
         IRawElementProviderFragment **pRetVal) {
     TerminalProvider *p = PROVIDER_FROM_ROOT(this_);
-    /* P4 FIX: Only return focused element if we actually have focus.
-     * TODO: When child fragment providers exist, return the focused
-     * command block based on cursor position using
-     * wixen_a11y_tree_find_block_at_row(g_a11y_tree, cursor_row). */
     if (p->state && p->state->has_focus) {
+        /* P4: Return focused command block if cursor is in one */
+        if (g_a11y_tree && g_a11y_tree->root.child_count > 0) {
+            AcquireSRWLockShared(&p->state->lock);
+            size_t cur_row = p->state->cursor_row;
+            ReleaseSRWLockShared(&p->state->lock);
+            int idx = wixen_a11y_tree_find_block_at_row(g_a11y_tree, cur_row);
+            if (idx >= 0) {
+                ChildFragmentCom *child = create_child_com(p, (size_t)idx);
+                if (child) {
+                    *pRetVal = (IRawElementProviderFragment *)&child->lpFragVtbl;
+                    return S_OK;
+                }
+            }
+        }
+        /* Fallback: return root */
         *pRetVal = (IRawElementProviderFragment *)&p->lpFragVtbl;
         InterlockedIncrement(&p->ref_count);
     } else {
@@ -291,6 +358,213 @@ static HRESULT STDMETHODCALLTYPE root_GetFocus(
     }
     return S_OK;
 }
+
+/* --- Child fragment COM methods --- */
+
+static HRESULT STDMETHODCALLTYPE child_QueryInterface(
+        IRawElementProviderSimple *this_, REFIID riid, void **ppv) {
+    ChildFragmentCom *c = CHILD_FROM_SIMPLE(this_);
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IRawElementProviderSimple)) {
+        *ppv = &c->lpVtbl;
+    } else if (IsEqualIID(riid, &IID_IRawElementProviderFragment)) {
+        *ppv = &c->lpFragVtbl;
+    } else {
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+    InterlockedIncrement(&c->ref_count);
+    return S_OK;
+}
+
+static ULONG STDMETHODCALLTYPE child_AddRef(IRawElementProviderSimple *this_) {
+    return InterlockedIncrement(&CHILD_FROM_SIMPLE(this_)->ref_count);
+}
+
+static ULONG STDMETHODCALLTYPE child_Release(IRawElementProviderSimple *this_) {
+    ChildFragmentCom *c = CHILD_FROM_SIMPLE(this_);
+    LONG n = InterlockedDecrement(&c->ref_count);
+    if (n == 0) {
+        if (c->parent) {
+            IRawElementProviderSimple *ps = (IRawElementProviderSimple *)&c->parent->lpVtbl;
+            ps->lpVtbl->Release(ps);
+        }
+        wixen_child_fragment_destroy(c->data);
+        free(c);
+    }
+    return n;
+}
+
+static HRESULT STDMETHODCALLTYPE child_get_ProviderOptions(
+        IRawElementProviderSimple *this_, enum ProviderOptions *pRetVal) {
+    (void)this_;
+    *pRetVal = ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_GetPatternProvider(
+        IRawElementProviderSimple *this_, PATTERNID patternId, IUnknown **pRetVal) {
+    (void)this_; (void)patternId;
+    *pRetVal = NULL;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_GetPropertyValue(
+        IRawElementProviderSimple *this_, PROPERTYID propertyId, VARIANT *pRetVal) {
+    ChildFragmentCom *c = CHILD_FROM_SIMPLE(this_);
+    VariantInit(pRetVal);
+    if (!c->data) return S_OK;
+
+    if (propertyId == UIA_ControlTypePropertyId) {
+        pRetVal->vt = VT_I4;
+        pRetVal->lVal = wixen_child_fragment_control_type(c->data);
+    } else if (propertyId == UIA_NamePropertyId) {
+        const char *name = wixen_child_fragment_name(c->data);
+        if (name) {
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
+            BSTR bstr = SysAllocStringLen(NULL, wlen);
+            if (bstr) {
+                MultiByteToWideChar(CP_UTF8, 0, name, -1, bstr, wlen);
+                pRetVal->vt = VT_BSTR;
+                pRetVal->bstrVal = bstr;
+            }
+        }
+    } else if (propertyId == UIA_IsContentElementPropertyId
+            || propertyId == UIA_IsControlElementPropertyId
+            || propertyId == UIA_IsKeyboardFocusablePropertyId) {
+        pRetVal->vt = VT_BOOL;
+        pRetVal->boolVal = VARIANT_TRUE;
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_get_HostRawElementProvider(
+        IRawElementProviderSimple *this_, IRawElementProviderSimple **pRetVal) {
+    (void)this_;
+    *pRetVal = NULL; /* Child fragments don't have host providers */
+    return S_OK;
+}
+
+/* Child fragment navigation */
+static HRESULT STDMETHODCALLTYPE child_frag_QI(
+        IRawElementProviderFragment *this_, REFIID riid, void **ppv) {
+    return child_QueryInterface((IRawElementProviderSimple *)CHILD_FROM_FRAG(this_), riid, ppv);
+}
+static ULONG STDMETHODCALLTYPE child_frag_AddRef(IRawElementProviderFragment *this_) {
+    return InterlockedIncrement(&CHILD_FROM_FRAG(this_)->ref_count);
+}
+static ULONG STDMETHODCALLTYPE child_frag_Release(IRawElementProviderFragment *this_) {
+    return child_Release((IRawElementProviderSimple *)&CHILD_FROM_FRAG(this_)->lpVtbl);
+}
+
+static HRESULT STDMETHODCALLTYPE child_Navigate(
+        IRawElementProviderFragment *this_,
+        enum NavigateDirection direction, IRawElementProviderFragment **pRetVal) {
+    ChildFragmentCom *c = CHILD_FROM_FRAG(this_);
+    *pRetVal = NULL;
+    if (!c->data || !g_a11y_tree) return S_OK;
+
+    switch (direction) {
+    case NavigateDirection_Parent:
+        *pRetVal = (IRawElementProviderFragment *)&c->parent->lpFragVtbl;
+        InterlockedIncrement(&c->parent->ref_count);
+        break;
+    case NavigateDirection_NextSibling: {
+        int next = wixen_child_fragment_next_sibling_index(g_a11y_tree, c->data->block_index);
+        if (next >= 0) {
+            ChildFragmentCom *sib = create_child_com(c->parent, (size_t)next);
+            if (sib) *pRetVal = (IRawElementProviderFragment *)&sib->lpFragVtbl;
+        }
+        break;
+    }
+    case NavigateDirection_PreviousSibling: {
+        int prev = wixen_child_fragment_prev_sibling_index(g_a11y_tree, c->data->block_index);
+        if (prev >= 0) {
+            ChildFragmentCom *sib = create_child_com(c->parent, (size_t)prev);
+            if (sib) *pRetVal = (IRawElementProviderFragment *)&sib->lpFragVtbl;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_GetRuntimeId(
+        IRawElementProviderFragment *this_, SAFEARRAY **pRetVal) {
+    ChildFragmentCom *c = CHILD_FROM_FRAG(this_);
+    SAFEARRAYBOUND bound = { 2, 0 };
+    SAFEARRAY *sa = SafeArrayCreate(VT_I4, 1, &bound);
+    if (sa) {
+        LONG idx0 = 0, idx1 = 1;
+        int val0 = 3; /* UiaAppendRuntimeId */
+        int val1 = c->data ? wixen_child_fragment_runtime_id(c->data) : 0;
+        SafeArrayPutElement(sa, &idx0, &val0);
+        SafeArrayPutElement(sa, &idx1, &val1);
+    }
+    *pRetVal = sa;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_GetBoundingRect(
+        IRawElementProviderFragment *this_, struct UiaRect *pRetVal) {
+    ChildFragmentCom *c = CHILD_FROM_FRAG(this_);
+    memset(pRetVal, 0, sizeof(*pRetVal));
+    if (c->data && c->parent && c->parent->state) {
+        RECT client_rect;
+        GetClientRect(c->hwnd, &client_rect);
+        POINT origin = { 0, 0 };
+        ClientToScreen(c->hwnd, &origin);
+        size_t start_row, end_row;
+        wixen_child_fragment_row_range(c->data, &start_row, &end_row);
+        AcquireSRWLockShared(&c->parent->state->lock);
+        float ch = c->parent->state->cell_height;
+        ReleaseSRWLockShared(&c->parent->state->lock);
+        if (ch > 0) {
+            pRetVal->left = origin.x;
+            pRetVal->top = origin.y + start_row * ch;
+            pRetVal->width = client_rect.right - client_rect.left;
+            pRetVal->height = (end_row - start_row + 1) * ch;
+        }
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_GetEmbeddedFragmentRoots(
+        IRawElementProviderFragment *this_, SAFEARRAY **pRetVal) {
+    (void)this_;
+    *pRetVal = NULL;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_SetFocus(
+        IRawElementProviderFragment *this_) {
+    ChildFragmentCom *c = CHILD_FROM_FRAG(this_);
+    SetFocus(c->hwnd);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE child_get_FragmentRoot(
+        IRawElementProviderFragment *this_,
+        IRawElementProviderFragmentRoot **pRetVal) {
+    ChildFragmentCom *c = CHILD_FROM_FRAG(this_);
+    *pRetVal = (IRawElementProviderFragmentRoot *)&c->parent->lpRootVtbl;
+    InterlockedIncrement(&c->parent->ref_count);
+    return S_OK;
+}
+
+/* Child vtables */
+static IRawElementProviderSimpleVtbl child_simple_vtbl = {
+    child_QueryInterface, child_AddRef, child_Release,
+    child_get_ProviderOptions, child_GetPatternProvider,
+    child_GetPropertyValue, child_get_HostRawElementProvider,
+};
+
+static IRawElementProviderFragmentVtbl child_frag_vtbl = {
+    child_frag_QI, child_frag_AddRef, child_frag_Release,
+    child_Navigate, child_GetRuntimeId, child_GetBoundingRect,
+    child_GetEmbeddedFragmentRoots, child_SetFocus, child_get_FragmentRoot,
+};
 
 /* --- Vtables --- */
 

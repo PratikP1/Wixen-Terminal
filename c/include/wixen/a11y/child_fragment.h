@@ -27,6 +27,7 @@ void wixen_child_fragment_destroy(WixenChildFragment *cf);
 const char *wixen_child_fragment_name(const WixenChildFragment *cf);
 int32_t wixen_child_fragment_runtime_id(const WixenChildFragment *cf);
 bool wixen_child_fragment_is_error(const WixenChildFragment *cf);
+int32_t wixen_child_fragment_control_type(const WixenChildFragment *cf);
 void wixen_child_fragment_row_range(const WixenChildFragment *cf,
                                      size_t *out_start, size_t *out_end);
 
