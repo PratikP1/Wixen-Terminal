@@ -90,7 +90,9 @@ const char **wixen_settings_appearance_groups(size_t *out_count) {
 
 #include "wixen/ui/settings_dialog.h"
 #include "wixen/ui/explorer_menu.h"
+#include "wixen/ui/color_picker.h"
 #include <commctrl.h>
+#include <commdlg.h>
 #include <windowsx.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -157,6 +159,11 @@ static void release_dialog_font(void) {
 #define IDC_COLOR_BG       1022
 #define IDC_COLOR_CURSOR   1023
 #define IDC_COLOR_SELECTION 1024
+/* Color picker "..." buttons */
+#define IDC_COLOR_FG_BTN       1025
+#define IDC_COLOR_BG_BTN       1026
+#define IDC_COLOR_CURSOR_BTN   1027
+#define IDC_COLOR_SELECTION_BTN 1028
 /* Font extras */
 #define IDC_FONT_LINE_HEIGHT 1030
 /* Terminal extras */
@@ -323,13 +330,38 @@ static INT_PTR CALLBACK window_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     (void)wp;
 }
 
+/* --- Color picker button helper --- */
+
+/* Read hex from an edit control, open ChooseColor, write result back. */
+static void handle_color_button(HWND hwnd, int edit_id) {
+    HWND edit = GetDlgItem(hwnd, edit_id);
+    if (!edit) return;
+
+    /* Read current hex from edit box */
+    wchar_t wbuf[32] = {0};
+    GetWindowTextW(edit, wbuf, 32);
+    char abuf[32] = {0};
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, abuf, 32, NULL, NULL);
+
+    uint32_t initial = wixen_parse_hex_color(abuf);
+    uint32_t result = 0;
+
+    if (wixen_show_color_picker(hwnd, initial, &result)) {
+        char hex[16];
+        wixen_format_hex_color(result, hex, sizeof(hex));
+        wchar_t whex[16];
+        MultiByteToWideChar(CP_UTF8, 0, hex, -1, whex, 16);
+        SetWindowTextW(edit, whex);
+    }
+}
+
 /* --- Colors Tab --- */
 
 static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
         HFONT hFont = create_dialog_font();
+        HWND btn;
         int y = 10;
 
         HWND lbl = CreateWindowExW(0, L"STATIC", L"Color &theme:",
@@ -355,6 +387,11 @@ static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
             120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_FG, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose foreground color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            225, y, 30, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_FG_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
         y += 30;
 
         lbl = CreateWindowExW(0, L"STATIC", L"&Background:",
@@ -364,6 +401,11 @@ static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
             120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_BG, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose background color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            225, y, 30, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_BG_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
         y += 30;
 
         lbl = CreateWindowExW(0, L"STATIC", L"&Cursor color:",
@@ -373,6 +415,11 @@ static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
             120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_CURSOR, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose cursor color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            225, y, 30, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_CURSOR_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
         y += 30;
 
         lbl = CreateWindowExW(0, L"STATIC", L"&Selection:",
@@ -382,8 +429,21 @@ static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
             120, y, 100, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_SELECTION, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose selection color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            225, y, 30, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_SELECTION_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
 
         return TRUE;
+    }
+    case WM_COMMAND: {
+        WORD id = LOWORD(wp);
+        if (id == IDC_COLOR_FG_BTN)        handle_color_button(hwnd, IDC_COLOR_FG);
+        else if (id == IDC_COLOR_BG_BTN)   handle_color_button(hwnd, IDC_COLOR_BG);
+        else if (id == IDC_COLOR_CURSOR_BTN)    handle_color_button(hwnd, IDC_COLOR_CURSOR);
+        else if (id == IDC_COLOR_SELECTION_BTN) handle_color_button(hwnd, IDC_COLOR_SELECTION);
+        break;
     }
     case WM_NOTIFY: {
         NMHDR *nm = (NMHDR *)lp;
@@ -395,7 +455,6 @@ static INT_PTR CALLBACK colors_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     }
     }
     return FALSE;
-    (void)wp;
 }
 
 /* --- Profiles Tab --- */
@@ -872,15 +931,15 @@ static INT_PTR CALLBACK a11y_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 /* --- Merged Appearance Tab (Font + Colors + Window) --- */
 
 static INT_PTR CALLBACK appearance_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    (void)wp;
     switch (msg) {
     case WM_INITDIALOG: {
         HFONT hFont = create_dialog_font();
+        HWND btn;
         int y = 5;
 
         /* -- Font section -- */
         CreateWindowExW(0, L"BUTTON", L"Font",
-            WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 5, y, 370, 80, hwnd, NULL, NULL, NULL);
+            WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 5, y, 410, 80, hwnd, NULL, NULL, NULL);
         y += 18;
         HWND lbl = CreateWindowExW(0, L"STATIC", L"Font &family:",
             WS_CHILD | WS_VISIBLE, 15, y, 80, 20, hwnd, NULL, NULL, NULL);
@@ -908,7 +967,7 @@ static INT_PTR CALLBACK appearance_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
 
         /* -- Colors section -- */
         CreateWindowExW(0, L"BUTTON", L"Colors",
-            WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 5, y, 370, 75, hwnd, NULL, NULL, NULL);
+            WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 5, y, 410, 75, hwnd, NULL, NULL, NULL);
         y += 18;
         lbl = CreateWindowExW(0, L"STATIC", L"&Theme:",
             WS_CHILD | WS_VISIBLE, 15, y, 50, 20, hwnd, NULL, NULL, NULL);
@@ -928,14 +987,19 @@ static INT_PTR CALLBACK appearance_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
         edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#cccccc",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-            240, y, 70, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_FG, NULL, NULL);
+            238, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_FG, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose foreground color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            300, y, 22, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_FG_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
         lbl = CreateWindowExW(0, L"STATIC", L"&BG:",
-            WS_CHILD | WS_VISIBLE, 315, y, 25, 20, hwnd, NULL, NULL, NULL);
+            WS_CHILD | WS_VISIBLE, 326, y, 25, 20, hwnd, NULL, NULL, NULL);
         SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
         edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#1e1e1e",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-            345, y, 70, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_BG, NULL, NULL);
+            354, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_BG, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
         y += 28;
         lbl = CreateWindowExW(0, L"STATIC", L"C&ursor:",
@@ -943,15 +1007,34 @@ static INT_PTR CALLBACK appearance_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
         edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#ffffff",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-            70, y, 70, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_CURSOR, NULL, NULL);
+            70, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_CURSOR, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose cursor color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            132, y, 22, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_CURSOR_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
         lbl = CreateWindowExW(0, L"STATIC", L"Se&lection:",
-            WS_CHILD | WS_VISIBLE, 150, y, 60, 20, hwnd, NULL, NULL, NULL);
+            WS_CHILD | WS_VISIBLE, 162, y, 60, 20, hwnd, NULL, NULL, NULL);
         SendMessageW(lbl, WM_SETFONT, (WPARAM)hFont, TRUE);
         edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"#264f78",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-            215, y, 70, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_SELECTION, NULL, NULL);
+            225, y, 60, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_SELECTION, NULL, NULL);
         SendMessageW(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose selection color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            287, y, 22, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_SELECTION_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
+        /* BG picker button on same row as BG edit (row above) — placed after
+         * all same-row controls to keep tab order sane. We use SetWindowPos
+         * to move it visually next to the BG edit. */
+        btn = CreateWindowExW(0, L"BUTTON", L"Choose background color",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 22, 22, hwnd, (HMENU)(UINT_PTR)IDC_COLOR_BG_BTN, NULL, NULL);
+        SendMessageW(btn, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SetWindowTextW(btn, L"...");
+        SetWindowPos(btn, NULL, 416, y - 28, 22, 22, SWP_NOZORDER);
         y += 35;
 
         /* -- Window section -- */
@@ -993,6 +1076,14 @@ static INT_PTR CALLBACK appearance_dlg_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
         SendMessageW(combo, CB_SETCURSEL, 1, 0);
 
         return TRUE;
+    }
+    case WM_COMMAND: {
+        WORD id = LOWORD(wp);
+        if (id == IDC_COLOR_FG_BTN)             handle_color_button(hwnd, IDC_COLOR_FG);
+        else if (id == IDC_COLOR_BG_BTN)        handle_color_button(hwnd, IDC_COLOR_BG);
+        else if (id == IDC_COLOR_CURSOR_BTN)    handle_color_button(hwnd, IDC_COLOR_CURSOR);
+        else if (id == IDC_COLOR_SELECTION_BTN) handle_color_button(hwnd, IDC_COLOR_SELECTION);
+        break;
     }
     case WM_NOTIFY: {
         NMHDR *nm = (NMHDR *)lp;

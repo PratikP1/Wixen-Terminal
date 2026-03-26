@@ -89,6 +89,7 @@ size_t wixen_encode_key(uint16_t vk, bool shift, bool ctrl, bool alt,
         if (has_mod) return (size_t)snprintf(buf, buf_size, "\x1b[2;%d~", mod);
         return (size_t)snprintf(buf, buf_size, "\x1b[2~");
     case VK_DELETE:
+        if (ctrl && !alt && !shift) { buf[0] = '\x1b'; buf[1] = 'd'; return 2; } /* Forward word delete */
         if (has_mod) return (size_t)snprintf(buf, buf_size, "\x1b[3;%d~", mod);
         return (size_t)snprintf(buf, buf_size, "\x1b[3~");
     case VK_PRIOR:

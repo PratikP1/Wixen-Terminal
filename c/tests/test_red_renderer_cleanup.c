@@ -53,8 +53,14 @@ TEST red_create_invalid_hwnd_returns_null(void) {
         (HWND)(uintptr_t)0xDEAD, 800, 600,
         "Cascadia Mono", 14.0f, &colors);
 
-    /* Should fail to create device+swapchain and return NULL */
-    ASSERT_EQ(NULL, r);
+    /* D3D11 fails with invalid HWND, but GDI fallback may succeed.
+     * Either NULL (total failure) or non-NULL (GDI fallback) is acceptable.
+     * What matters is no crash. */
+    if (r) {
+        /* GDI fallback kicked in — verify it's marked as software */
+        ASSERT(wixen_renderer_is_software(r));
+        wixen_renderer_destroy(r);
+    }
     PASS();
 }
 

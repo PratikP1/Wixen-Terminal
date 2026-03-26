@@ -62,6 +62,7 @@ add_library(wixen_core STATIC
     src/core/image.c
     src/core/shutdown.c
     src/core/bg_task.c
+    src/core/startup_timer.c
 )
 target_link_libraries(wixen_core PUBLIC zstd::libzstd wixen_shell_integ)
 
@@ -170,6 +171,7 @@ add_library(wixen_ui STATIC
     $<$<PLATFORM_ID:Windows>:src/ui/explorer_menu.c>
     $<$<PLATFORM_ID:Windows>:src/ui/jumplist.c>
     $<$<PLATFORM_ID:Windows>:src/ui/default_terminal.c>
+    src/ui/color_picker.c
 )
 target_link_libraries(wixen_ui PUBLIC wixen_a11y)
 if(WIN32)
@@ -278,6 +280,10 @@ add_test(NAME test_events COMMAND test_events)
 add_executable(test_audio tests/test_audio.c)
 target_link_libraries(test_audio wixen_ui)
 add_test(NAME test_audio COMMAND test_audio)
+
+add_executable(test_red_color_picker tests/test_red_color_picker.c)
+target_link_libraries(test_red_color_picker wixen_ui)
+add_test(NAME test_red_color_picker COMMAND test_red_color_picker)
 
 add_executable(test_lua tests/test_lua.c)
 target_link_libraries(test_lua wixen_config)
@@ -1016,3 +1022,31 @@ add_test(NAME test_red_hot_reload COMMAND test_red_hot_reload)
 add_executable(test_red_product_wiring tests/test_red_product_wiring.c)
 target_link_libraries(test_red_product_wiring wixen_ui wixen_config ole32 propsys)
 add_test(NAME test_red_product_wiring COMMAND test_red_product_wiring)
+
+add_executable(test_red_ctrl_delete tests/test_red_ctrl_delete.c)
+target_link_libraries(test_red_ctrl_delete wixen_core)
+add_test(NAME test_red_ctrl_delete COMMAND test_red_ctrl_delete)
+
+add_executable(test_red_gdi_fallback tests/test_red_gdi_fallback.c)
+target_link_libraries(test_red_gdi_fallback wixen_render wixen_core)
+add_test(NAME test_red_gdi_fallback COMMAND test_red_gdi_fallback)
+
+add_executable(test_red_explorer_robust tests/test_red_explorer_robust.c)
+target_link_libraries(test_red_explorer_robust wixen_ui ole32)
+add_test(NAME test_red_explorer_robust COMMAND test_red_explorer_robust)
+
+add_executable(test_red_jumplist_robust tests/test_red_jumplist_robust.c)
+target_link_libraries(test_red_jumplist_robust wixen_ui ole32 propsys)
+add_test(NAME test_red_jumplist_robust COMMAND test_red_jumplist_robust)
+
+add_executable(test_red_font_reload tests/test_red_font_reload.c)
+target_link_libraries(test_red_font_reload wixen_render wixen_core)
+add_test(NAME test_red_font_reload COMMAND test_red_font_reload)
+
+add_executable(test_red_startup_timing tests/test_red_startup_timing.c)
+target_link_libraries(test_red_startup_timing wixen_core)
+add_test(NAME test_red_startup_timing COMMAND test_red_startup_timing)
+
+add_executable(test_red_sixel_render tests/test_red_sixel_render.c)
+target_link_libraries(test_red_sixel_render wixen_render wixen_core)
+add_test(NAME test_red_sixel_render COMMAND test_red_sixel_render)

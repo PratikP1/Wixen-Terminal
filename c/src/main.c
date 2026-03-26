@@ -37,6 +37,7 @@
 #include "wixen/core/url.h"
 #include "wixen/core/shutdown.h"
 #include "wixen/core/bg_task.h"
+#include "wixen/core/startup_timer.h"
 #include "wixen/ui/explorer_menu.h"
 #include "wixen/ui/jumplist.h"
 
@@ -120,6 +121,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     wixen_shutdown_init(&g_shutdown);
 
+    WixenStartupTimer startup_timer;
+    wixen_timer_init(&startup_timer);
+
     /* COM apartment for UIA UseComThreading — without this, NVDA's
      * marshaled UIA calls hang and focus never completes. */
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -181,6 +185,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
 
+    wixen_timer_mark(&startup_timer, "window");
+
     /* Show window immediately with a solid background — gives instant visual
      * feedback while the heavy renderer/PTY init runs. Fixes slow perceived
      * startup time. */
@@ -211,6 +217,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     s_bg_args.out = &bg_result;
     s_bg_args.task = &bg_task;
     wixen_bg_task_start(&bg_task, bg_renderer_init_thread, &s_bg_args);
+    wixen_timer_mark(&startup_timer, "renderer_bg");
 
     bool init_phase = true;
 
@@ -444,6 +451,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 wixen_renderer_bg_result_free((WixenRendererBgResult *)bg_result);
                 bg_result = NULL;
                 wixen_bg_task_finalize(&bg_task);
+                wixen_timer_mark(&startup_timer, "renderer_done");
 
                 /* Spawn PTY */
                 WixenFontMetrics fm = renderer ? wixen_renderer_font_metrics(renderer)
@@ -465,12 +473,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                             shell, NULL, NULL, window.hwnd);
                 }
                 free(shell); shell = NULL;
+                wixen_timer_mark(&startup_timer, "pty");
 
                 init_phase = false;
                 {
                     FILE *f = fopen("wixen-a11y-debug.log", "a");
                     if (f) { fprintf(f, "=== INIT COMPLETE: firing events ===\n"); fflush(f); fclose(f); }
                 }
+                wixen_timer_mark(&startup_timer, "ready");
+                wixen_timer_log(&startup_timer, "wixen-startup.log");
                 wixen_a11y_raise_notification(window.hwnd,
                     "Wixen Terminal ready", "terminal-ready");
                 wixen_a11y_raise_focus_changed(window.hwnd);
@@ -1062,6 +1073,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         /* Render frame */
         WixenPaneRenderInfo pane_info = {
             .grid = &ps->terminal.grid,
+            .image_store = &ps->terminal.images,
             .x = 0, .y = 0,
             .width = (float)wixen_renderer_width(renderer),
             .height = (float)wixen_renderer_height(renderer),
@@ -1358,16 +1370,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     WixenConfigDelta delta;
                     wixen_config_diff(&config, &new_cfg, &delta);
 
-                    /* Apply font changes — recreate renderer with new atlas */
+                    /* Apply font changes — rebuild atlas only, keep device/swapchain */
                     if (delta.font_changed && renderer) {
-                        uint32_t rw = wixen_renderer_width(renderer);
-                        uint32_t rh = wixen_renderer_height(renderer);
-                        WixenColorScheme cs;
-                        wixen_colors_init_default(&cs);
-                        wixen_renderer_destroy(renderer);
-                        renderer = wixen_renderer_create(
-                            window.hwnd, rw, rh,
-                            new_cfg.font.family, new_cfg.font.size, &cs);
+                        wixen_renderer_update_font(renderer,
+                            new_cfg.font.family, new_cfg.font.size);
                     }
 
                     /* Apply theme/color changes */
