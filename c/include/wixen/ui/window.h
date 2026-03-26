@@ -118,4 +118,9 @@ const WixenSystemMenuItem *wixen_system_menu_items(size_t *out_count);
 const char *wixen_window_default_title(void);
 char *wixen_window_format_title(const char *tab_name, const char *cwd);
 
+/* Format initial window title from shell/profile name.
+ * Returns "{shell_name} — Wixen Terminal" or just "Wixen Terminal" if
+ * shell_name is NULL. Caller must free(). The extra parameter is reserved. */
+char *wixen_format_window_title(const char *shell_name, const char *extra);
+
 #endif /* WIXEN_UI_WINDOW_H */

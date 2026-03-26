@@ -114,6 +114,33 @@ size_t wixen_utf8_to_utf16_offset(const char *utf8_text, size_t byte_offset) {
     return utf16_count;
 }
 
+/* --- UTF-16 to UTF-8 reverse offset conversion --- */
+
+size_t wixen_utf16_to_utf8_offset(const char *utf8_text, size_t utf8_len, size_t utf16_offset) {
+    if (!utf8_text) return 0;
+    const unsigned char *p = (const unsigned char *)utf8_text;
+    size_t utf16_count = 0;
+    size_t pos = 0;
+    while (pos < utf8_len && utf16_count < utf16_offset && p[pos]) {
+        unsigned char b = p[pos];
+        size_t char_bytes;
+        int supplementary = 0;
+        if (b < 0x80) {
+            char_bytes = 1;
+        } else if (b < 0xE0) {
+            char_bytes = 2;
+        } else if (b < 0xF0) {
+            char_bytes = 3;
+        } else {
+            char_bytes = 4;
+            supplementary = 1;
+        }
+        pos += char_bytes;
+        utf16_count += supplementary ? 2 : 1;
+    }
+    return pos;
+}
+
 /* --- Individual boundary queries --- */
 
 size_t wixen_text_word_start(const char *text, size_t text_len, size_t offset) {

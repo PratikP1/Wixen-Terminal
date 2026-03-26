@@ -353,6 +353,10 @@ add_executable(test_red_profile_launch tests/test_red_profile_launch.c)
 target_link_libraries(test_red_profile_launch wixen_config)
 add_test(NAME test_red_profile_launch COMMAND test_red_profile_launch)
 
+add_executable(test_red_initial_title tests/test_red_initial_title.c)
+target_link_libraries(test_red_initial_title wixen_ui)
+add_test(NAME test_red_initial_title COMMAND test_red_initial_title)
+
 add_executable(test_red_keybinding_edit tests/test_red_keybinding_edit.c)
 target_link_libraries(test_red_keybinding_edit wixen_config)
 add_test(NAME test_red_keybinding_edit COMMAND test_red_keybinding_edit)
@@ -1050,3 +1054,15 @@ add_test(NAME test_red_startup_timing COMMAND test_red_startup_timing)
 add_executable(test_red_sixel_render tests/test_red_sixel_render.c)
 target_link_libraries(test_red_sixel_render wixen_render wixen_core)
 add_test(NAME test_red_sixel_render COMMAND test_red_sixel_render)
+
+add_executable(test_red_utf16_deep_audit tests/test_red_utf16_deep_audit.c)
+target_link_libraries(test_red_utf16_deep_audit wixen_a11y)
+add_test(NAME test_red_utf16_deep_audit COMMAND test_red_utf16_deep_audit)
+
+add_executable(test_red_uia_title_sync tests/test_red_uia_title_sync.c)
+target_link_libraries(test_red_uia_title_sync wixen_a11y)
+add_test(NAME test_red_uia_title_sync COMMAND test_red_uia_title_sync)
+
+add_executable(test_red_text_changed tests/test_red_text_changed.c)
+target_link_libraries(test_red_text_changed wixen_a11y)
+add_test(NAME test_red_text_changed COMMAND test_red_text_changed)

@@ -220,3 +220,12 @@ char *wixen_a11y_format_image_placed(int width, int height, const char *name) {
     }
     return buf;
 }
+
+/* --- TextChanged event logic --- */
+
+bool wixen_a11y_should_raise_text_changed(const char *old_text, const char *new_text) {
+    /* Normalize NULL to empty string for comparison */
+    const char *a = old_text ? old_text : "";
+    const char *b = new_text ? new_text : "";
+    return strcmp(a, b) != 0;
+}

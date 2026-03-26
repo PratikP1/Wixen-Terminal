@@ -52,4 +52,10 @@ char *wixen_a11y_format_mode_change(const char *mode, bool enabled);
 /* Format an image placed announcement. Caller frees. */
 char *wixen_a11y_format_image_placed(int width, int height, const char *name);
 
+/* Determine whether a TextChanged UIA event should be raised.
+ * Compares old and new visible text snapshots. Returns true when
+ * the text content actually changed (including empty<->non-empty).
+ * Pure logic — no COM dependency, safe to call from any thread. */
+bool wixen_a11y_should_raise_text_changed(const char *old_text, const char *new_text);
+
 #endif /* WIXEN_A11Y_EVENTS_H */

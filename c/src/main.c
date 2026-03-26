@@ -244,6 +244,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
         if (!shell) shell = wixen_pty_detect_shell();
     }
+
+    /* Set initial window title from profile name or shell basename.
+     * Fallback chain: profile->name → basename of shell exe → NULL (bare title).
+     * This gives the user immediate feedback about which shell is loading,
+     * before any PTY output or OSC title sequence arrives. */
+    {
+        const char *initial_name = NULL;
+        char shell_base[260] = {0};
+        if (tab_title && strcmp(tab_title, "Shell") != 0) {
+            /* Profile name is available */
+            initial_name = tab_title;
+        } else if (shell) {
+            /* Extract basename from the wide shell path */
+            char narrow[260];
+            WideCharToMultiByte(CP_UTF8, 0, shell, -1, narrow, sizeof(narrow), NULL, NULL);
+            const char *base = strrchr(narrow, '\\');
+            if (!base) base = strrchr(narrow, '/');
+            base = base ? base + 1 : narrow;
+            /* Copy and strip .exe extension if present */
+            strncpy(shell_base, base, sizeof(shell_base) - 1);
+            size_t blen = strlen(shell_base);
+            if (blen > 4 && _stricmp(shell_base + blen - 4, ".exe") == 0)
+                shell_base[blen - 4] = '\0';
+            if (shell_base[0]) initial_name = shell_base;
+        }
+        char *init_title = wixen_format_window_title(initial_name, NULL);
+        if (init_title) {
+            wchar_t wtitle[512];
+            MultiByteToWideChar(CP_UTF8, 0, init_title, -1, wtitle, 512);
+            wixen_window_set_title(&window, wtitle);
+            free(init_title);
+        }
+    }
+
     uint16_t cols = (uint16_t)(config.window.width / 8);
     uint16_t rows = (uint16_t)(config.window.height / 16);
 
@@ -315,6 +349,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * before the provider is registered and permanently caches the
      * window as non-UIA. */
     wixen_a11y_provider_init(window.hwnd, &ps->terminal);
+    wixen_a11y_state_update_title_global(L"Wixen Terminal");
     pump_messages(); /* Dispatch any queued UIA queries */
 
     /* NOW show the window — provider is ready for WM_GETOBJECT */
@@ -1090,6 +1125,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 char *a11y_text = wixen_grid_visible_text_dynamic(&ps->terminal.grid);
                 if (a11y_text) {
                     wixen_a11y_state_update_text_global(a11y_text, strlen(a11y_text));
+
+                    /* Raise UIA TextChanged if visible text actually changed.
+                     * Without this, NVDA never learns that text was updated. */
+                    static char *prev_a11y_text = NULL;
+                    if (wixen_a11y_should_raise_text_changed(prev_a11y_text, a11y_text)) {
+                        wixen_a11y_raise_text_changed_global();
+                    }
+                    free(prev_a11y_text);
+                    prev_a11y_text = _strdup(a11y_text);
+
                     free(a11y_text);
                 }
                 ps->terminal.dirty = false;
@@ -1339,6 +1384,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 wchar_t wtitle[512];
                 MultiByteToWideChar(CP_UTF8, 0, formatted, -1, wtitle, 512);
                 wixen_window_set_title(&window, wtitle);
+                wixen_a11y_state_update_title_global(wtitle);
                 free(formatted);
             }
             ps->terminal.title_dirty = false;

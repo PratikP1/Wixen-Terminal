@@ -503,3 +503,14 @@ char *wixen_window_format_title(const char *tab_name, const char *cwd) {
     }
     return strdup(buf);
 }
+
+char *wixen_format_window_title(const char *shell_name, const char *extra) {
+    char buf[512];
+    (void)extra; /* reserved for future use */
+    if (shell_name && shell_name[0]) {
+        snprintf(buf, sizeof(buf), "%s \xe2\x80\x94 Wixen Terminal", shell_name);
+    } else {
+        snprintf(buf, sizeof(buf), "Wixen Terminal");
+    }
+    return strdup(buf);
+}

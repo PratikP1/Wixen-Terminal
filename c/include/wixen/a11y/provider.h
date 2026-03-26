@@ -27,7 +27,9 @@ void wixen_a11y_raise_focus_changed(HWND hwnd);
 void wixen_a11y_raise_notification(HWND hwnd, const char *text, const char *activity_id);
 void wixen_a11y_state_update_text_global(const char *text, size_t len);
 void wixen_a11y_state_update_focus_global(bool has_focus);
+void wixen_a11y_state_update_title_global(const wchar_t *title);
 void wixen_a11y_raise_structure_changed_global(void);
+void wixen_a11y_raise_text_changed_global(void);
 void wixen_a11y_set_tree(void *tree); /* Pass WixenA11yTree* */
 void wixen_a11y_set_cursor_offset(int32_t utf16_offset);
 int32_t wixen_a11y_get_cursor_offset(void);

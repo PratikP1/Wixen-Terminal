@@ -104,28 +104,28 @@ static HRESULT STDMETHODCALLTYPE range_ExpandToEnclosingUnit(
         ITextRangeProvider *this_, enum TextUnit unit) {
     TextRange *r = (TextRange *)this_;
     AcquireSRWLockShared(&r->state->lock);
+    const char *text = r->state->full_text;
     size_t text_len = r->state->full_text_len;
 
     if (unit == TextUnit_Character) {
-        if (r->end <= r->start && r->start < (int)text_len)
+        int doc_utf16 = (int)wixen_utf8_to_utf16_offset(text, text_len);
+        if (r->end <= r->start && r->start < doc_utf16)
             r->end = r->start + 1;
     } else if (unit == TextUnit_Line) {
-        /* Find line boundaries (newlines) */
-        const char *text = r->state->full_text;
         if (text) {
-            /* Find start of line */
-            int s = r->start;
-            while (s > 0 && text[s - 1] != '\n') s--;
-            r->start = s;
-            /* Find end of line */
-            int e = r->start;
-            while (e < (int)text_len && text[e] != '\n') e++;
-            if (e < (int)text_len) e++; /* Include newline */
-            r->end = e;
+            /* Convert UTF-16 start to byte offset, find line boundaries in byte space */
+            size_t byte_start = wixen_utf16_to_utf8_offset(text, text_len, (size_t)(r->start >= 0 ? r->start : 0));
+            size_t line_start, line_end;
+            wixen_text_line_at(text, text_len, byte_start, &line_start, &line_end);
+            /* Include trailing newline if present */
+            if (line_end < text_len && text[line_end] == '\n') line_end++;
+            /* Convert byte boundaries back to UTF-16 */
+            r->start = (int)wixen_utf8_to_utf16_offset(text, line_start);
+            r->end = (int)wixen_utf8_to_utf16_offset(text, line_end);
         }
     } else if (unit == TextUnit_Document) {
         r->start = 0;
-        r->end = (int)text_len;
+        r->end = (int)wixen_utf8_to_utf16_offset(text, text_len);
     }
     /* Word and other units: approximate with character for now */
 
@@ -164,15 +164,19 @@ static HRESULT STDMETHODCALLTYPE range_FindText(
     if (!query) { free(full); return S_OK; }
     WideCharToMultiByte(CP_UTF8, 0, text, -1, query, qlen, NULL, NULL);
 
-    size_t start, end;
-    size_t from = (backward || r->start < 0) ? 0 : (size_t)r->start;
-    bool found = wixen_text_find(full, flen, query, from, backward != 0, ignoreCase != 0, &start, &end);
+    /* Convert UTF-16 range start to byte offset for search */
+    size_t byte_from = (backward || r->start < 0) ? 0 : wixen_utf16_to_utf8_offset(full, flen, (size_t)r->start);
+    size_t byte_start, byte_end;
+    bool found = wixen_text_find(full, flen, query, byte_from, backward != 0, ignoreCase != 0, &byte_start, &byte_end);
     free(query);
-    free(full);
 
     if (found) {
-        *pRetVal = (ITextRangeProvider *)create_range(r->state, r->enclosing, (int)start, (int)end);
+        /* Convert byte offsets to UTF-16 for the range */
+        int utf16_start = (int)wixen_utf8_to_utf16_offset(full, byte_start);
+        int utf16_end = (int)wixen_utf8_to_utf16_offset(full, byte_end);
+        *pRetVal = (ITextRangeProvider *)create_range(r->state, r->enclosing, utf16_start, utf16_end);
     }
+    free(full);
     return S_OK;
 }
 
@@ -198,10 +202,12 @@ static HRESULT STDMETHODCALLTYPE range_GetBoundingRectangles(
         return S_OK;
     }
 
-    /* Convert start/end to row/col */
+    /* Convert UTF-16 start/end to byte offsets, then to row/col */
+    size_t byte_start = wixen_utf16_to_utf8_offset(text, flen, (size_t)(r->start >= 0 ? r->start : 0));
+    size_t byte_end = wixen_utf16_to_utf8_offset(text, flen, (size_t)(r->end >= 0 ? r->end : 0));
     size_t sr, sc, er, ec;
-    wixen_text_offset_to_rowcol(text, flen, (size_t)r->start, &sr, &sc);
-    wixen_text_offset_to_rowcol(text, flen, (size_t)r->end, &er, &ec);
+    wixen_text_offset_to_rowcol(text, flen, byte_start, &sr, &sc);
+    wixen_text_offset_to_rowcol(text, flen, byte_end, &er, &ec);
 
     POINT origin = { 0, 0 };
     ClientToScreen(r->state->hwnd, &origin);
@@ -263,23 +269,34 @@ static HRESULT STDMETHODCALLTYPE range_GetText(
     const char *text = r->state->full_text;
     size_t text_len = r->state->full_text_len;
 
-    int s = r->start < 0 ? 0 : r->start;
-    int e = r->end;
-    if (e > (int)text_len) e = (int)text_len;
-    if (s >= e || !text) {
+    int s16 = r->start < 0 ? 0 : r->start;
+    int e16 = r->end;
+    int doc_utf16 = (int)wixen_utf8_to_utf16_offset(text, text_len);
+    if (e16 > doc_utf16) e16 = doc_utf16;
+    if (s16 >= e16 || !text) {
         *pRetVal = SysAllocString(L"");
         ReleaseSRWLockShared(&r->state->lock);
         return S_OK;
     }
 
-    int len = e - s;
-    if (maxLength >= 0 && len > maxLength) len = maxLength;
+    /* Convert UTF-16 range to byte range */
+    size_t byte_s = wixen_utf16_to_utf8_offset(text, text_len, (size_t)s16);
+    size_t byte_e = wixen_utf16_to_utf8_offset(text, text_len, (size_t)e16);
+    int byte_len = (int)(byte_e - byte_s);
+
+    /* maxLength is in UTF-16 units per UIA spec */
+    int utf16_len = e16 - s16;
+    if (maxLength >= 0 && utf16_len > maxLength) {
+        /* Recompute byte_e to only cover maxLength UTF-16 units */
+        byte_e = wixen_utf16_to_utf8_offset(text, text_len, (size_t)(s16 + maxLength));
+        byte_len = (int)(byte_e - byte_s);
+    }
 
     /* Convert UTF-8 substring to UTF-16 */
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, text + s, len, NULL, 0);
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, text + byte_s, byte_len, NULL, 0);
     wchar_t *wtext = (wchar_t *)malloc((wlen + 1) * sizeof(wchar_t));
     if (wtext) {
-        MultiByteToWideChar(CP_UTF8, 0, text + s, len, wtext, wlen);
+        MultiByteToWideChar(CP_UTF8, 0, text + byte_s, byte_len, wtext, wlen);
         wtext[wlen] = L'\0';
         *pRetVal = SysAllocString(wtext);
         free(wtext);
@@ -306,11 +323,13 @@ static HRESULT STDMETHODCALLTYPE range_Move(
     full[flen] = '\0';
     ReleaseSRWLockShared(&r->state->lock);
 
-    size_t pos = (r->start >= 0) ? (size_t)r->start : 0;
+    /* Convert UTF-16 offset to byte offset for boundary logic */
+    size_t byte_pos = wixen_utf16_to_utf8_offset(full, flen, (size_t)(r->start >= 0 ? r->start : 0));
     WixenTextUnit tu = (WixenTextUnit)unit;
-    int moved = wixen_text_move_by_unit(full, flen, &pos, tu, count);
-    r->start = (int)pos;
-    r->end = (int)pos; /* Degenerate range after move */
+    int moved = wixen_text_move_by_unit(full, flen, &byte_pos, tu, count);
+    /* Convert byte result back to UTF-16 */
+    r->start = (int)wixen_utf8_to_utf16_offset(full, byte_pos);
+    r->end = r->start; /* Degenerate range after move */
     *pRetVal = moved;
     free(full);
     return S_OK;
@@ -333,11 +352,12 @@ static HRESULT STDMETHODCALLTYPE range_MoveEndpointByUnit(
     ReleaseSRWLockShared(&r->state->lock);
 
     int *target = (endpoint == TextPatternRangeEndpoint_Start) ? &r->start : &r->end;
-    size_t pos = (*target >= 0) ? (size_t)*target : 0;
-    /* Use wixen_text_move_endpoint which handles word/line end correctly */
+    /* Convert UTF-16 offset to byte offset */
+    size_t byte_pos = wixen_utf16_to_utf8_offset(full, flen, (size_t)(*target >= 0 ? *target : 0));
     WixenTextUnit tu = (WixenTextUnit)unit;
-    int moved = wixen_text_move_endpoint(full, flen, &pos, tu, count);
-    *target = (int)pos;
+    int moved = wixen_text_move_endpoint(full, flen, &byte_pos, tu, count);
+    /* Convert byte result back to UTF-16 */
+    *target = (int)wixen_utf8_to_utf16_offset(full, byte_pos);
     /* Ensure start <= end */
     if (r->start > r->end) {
         if (endpoint == TextPatternRangeEndpoint_Start) r->end = r->start;

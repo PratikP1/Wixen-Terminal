@@ -831,9 +831,37 @@ void wixen_a11y_state_update_focus_global(bool has_focus) {
     wixen_a11y_state_update_focus(&g_a11y_state, has_focus);
 }
 
+void wixen_a11y_state_update_title_global(const wchar_t *title) {
+    static const wchar_t *fallback = L"Wixen Terminal";
+    const wchar_t *effective = (title && title[0]) ? title : fallback;
+
+    AcquireSRWLockExclusive(&g_a11y_state.lock);
+    free(g_a11y_state.title);
+    g_a11y_state.title = _wcsdup(effective);
+    ReleaseSRWLockExclusive(&g_a11y_state.lock);
+
+    /* Raise UIA notification so screen readers learn of the title change */
+    if (g_provider) {
+        /* Convert wide title to UTF-8 for the notification API */
+        int utf8_len = WideCharToMultiByte(CP_UTF8, 0, effective, -1, NULL, 0, NULL, NULL);
+        char *utf8 = malloc((size_t)utf8_len);
+        if (utf8) {
+            WideCharToMultiByte(CP_UTF8, 0, effective, -1, utf8, utf8_len, NULL, NULL);
+            wixen_a11y_raise_notification(g_a11y_state.hwnd, utf8, "title-changed");
+            free(utf8);
+        }
+    }
+}
+
 void wixen_a11y_raise_structure_changed_global(void) {
     if (g_provider) {
         wixen_a11y_raise_structure_changed(g_provider);
+    }
+}
+
+void wixen_a11y_raise_text_changed_global(void) {
+    if (g_provider) {
+        wixen_a11y_raise_text_changed(g_provider);
     }
 }
 
