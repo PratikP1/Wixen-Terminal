@@ -159,12 +159,14 @@ WixenRenderer *wixen_renderer_create(HWND hwnd, uint32_t width, uint32_t height,
 
     /* Compile vertex shader */
     ID3DBlob *vs_blob = NULL, *ps_blob = NULL, *err_blob = NULL;
+    /* D3DCOMPILE_OPTIMIZATION_LEVEL0 for fastest compile time.
+     * The shader is trivial — no benefit from optimization. */
     hr = D3DCompile(hlsl_source, strlen(hlsl_source), "terminal.hlsl", NULL, NULL,
-                     "VSMain", "vs_5_0", 0, 0, &vs_blob, &err_blob);
+                     "VSMain", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL0, 0, &vs_blob, &err_blob);
     if (FAILED(hr)) { if (err_blob) ID3D10Blob_Release(err_blob); goto shader_fail; }
 
     hr = D3DCompile(hlsl_source, strlen(hlsl_source), "terminal.hlsl", NULL, NULL,
-                     "PSMain", "ps_5_0", 0, 0, &ps_blob, &err_blob);
+                     "PSMain", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL0, 0, &ps_blob, &err_blob);
     if (FAILED(hr)) { if (err_blob) ID3D10Blob_Release(err_blob); goto shader_fail; }
 
     ID3D11Device_CreateVertexShader(r->device,

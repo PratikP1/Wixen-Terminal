@@ -112,11 +112,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
 
-    /* Pump messages so NVDA's initial UIA queries can be dispatched.
-     * With UseComThreading, these are marshaled to our UI thread. */
-    pump_messages();
+    /* Show window immediately with a solid background — gives instant visual
+     * feedback while the heavy renderer/PTY init runs. Fixes slow perceived
+     * startup time. */
+    {
+        HDC hdc = GetDC(window.hwnd);
+        if (hdc) {
+            RECT rc;
+            GetClientRect(window.hwnd, &rc);
+            HBRUSH bg = CreateSolidBrush(RGB(30, 30, 30)); /* Dark background */
+            FillRect(hdc, &rc, bg);
+            DeleteObject(bg);
+            ReleaseDC(window.hwnd, hdc);
+        }
+    }
+    pump_messages(); /* Let NVDA see the window + dispatch UIA queries */
 
-    /* Create renderer */
+    /* Create renderer (heavy: D3D11 + shader compile + DirectWrite atlas) */
     WixenRenderer *renderer = wixen_renderer_create(
         window.hwnd, 1200, 800, "Cascadia Mono", 14.0f, &colors);
     if (!renderer) {
