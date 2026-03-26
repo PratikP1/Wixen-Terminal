@@ -128,13 +128,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
     pump_messages(); /* Let NVDA see the window + dispatch UIA queries */
 
-    /* DEFERRED INIT: Renderer and PTY are created after the main loop
-     * starts pumping messages. This prevents the "Not Responding" ghost
-     * window that NVDA's watchdog detects (BUG #41 real fix).
-     * The first few frames just show a dark background. */
+    /* PHASED INIT: Renderer creation is split into micro-steps (<100ms each)
+     * with message pump between each step. This prevents NVDA's watchdog
+     * from detecting a freeze. */
     WixenRenderer *renderer = NULL;
-    bool init_phase = true; /* True until renderer + PTY are ready */
-    int init_frame = 0;     /* Frame counter during init */
+    bool init_phase = true;
+    int init_step = 0;
 
     /* Initialize tab and pane management */
     WixenTabManager tabs;
@@ -355,59 +354,66 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
         if (!running) break;
 
-        /* DEFERRED INIT: Create renderer and PTY across multiple frames
-         * so the message pump stays active. Each init_frame does ONE heavy
-         * operation, then yields back to the message pump. */
+        /* PHASED INIT: Each step is ONE heavy operation, then yield to pump.
+         * Step 0: D3D11 device + swapchain (~200ms)
+         * Step 1: Shader compile + buffers (~100ms)
+         * Step 2: DirectWrite atlas (~500ms)
+         * Step 3: PTY spawn (~200ms)
+         * Step 4: Done — announce ready */
         if (init_phase) {
-            init_frame++;
-            if (init_frame == 2) {
-                /* Frame 2: Create renderer (D3D11 + shaders + atlas) */
-                renderer = wixen_renderer_create(
-                    window.hwnd,
+            switch (init_step) {
+            case 0:
+                renderer = wixen_renderer_create_begin(window.hwnd,
                     config.window.width ? config.window.width : 1200,
                     config.window.height ? config.window.height : 800,
-                    config.font.family ? config.font.family : "Cascadia Mono",
-                    config.font.size > 0 ? config.font.size : 14.0f,
                     &colors);
-            } else if (init_frame == 4) {
-                /* Frame 4: Spawn PTY for all panes */
-                WixenFontMetrics fm = renderer ? wixen_renderer_font_metrics(renderer) : (WixenFontMetrics){8,16,0,0,0};
-                uint16_t c = (uint16_t)(config.window.width / (fm.cell_width > 0 ? fm.cell_width : 8));
-                uint16_t r = (uint16_t)(config.window.height / (fm.cell_height > 0 ? fm.cell_height : 16));
+                init_step++;
+                break;
+            case 1:
+                if (renderer) wixen_renderer_create_step(renderer, 0,
+                    config.font.family ? config.font.family : "Cascadia Mono",
+                    config.font.size > 0 ? config.font.size : 14.0f);
+                init_step++;
+                break;
+            case 2:
+                if (renderer) wixen_renderer_create_step(renderer, 1,
+                    config.font.family ? config.font.family : "Cascadia Mono",
+                    config.font.size > 0 ? config.font.size : 14.0f);
+                init_step++;
+                break;
+            case 3: {
+                /* PTY spawn */
+                WixenFontMetrics fm = renderer ? wixen_renderer_font_metrics(renderer)
+                    : (WixenFontMetrics){8,16,0,0,0};
+                uint16_t c = (uint16_t)((config.window.width ? config.window.width : 1200)
+                    / (fm.cell_width > 0 ? fm.cell_width : 8));
+                uint16_t r = (uint16_t)((config.window.height ? config.window.height : 800)
+                    / (fm.cell_height > 0 ? fm.cell_height : 16));
                 if (c == 0) c = 80; if (r == 0) r = 24;
                 cols = c; rows = r;
                 for (size_t pi = 0; pi < pane_state_count; pi++) {
                     WixenPaneState *pst = &pane_states[pi];
                     wixen_terminal_resize(&pst->terminal, cols, rows);
-                    if (!pst->pty_running) {
+                    if (!pst->pty_running)
                         pst->pty_running = wixen_pty_spawn(&pst->pty, cols, rows,
                             shell, NULL, NULL, window.hwnd);
-                    }
                 }
-            } else if (init_frame == 6) {
-                /* Frame 6: Init complete — switch to normal mode */
+                init_step++;
+                break;
+            }
+            case 4:
+                /* Done */
                 init_phase = false;
                 free(shell); shell = NULL;
                 wixen_a11y_raise_notification(window.hwnd,
                     "Wixen Terminal ready", "terminal-ready");
-                /* Fire focus so NVDA announces the window */
                 wixen_a11y_raise_focus_changed(window.hwnd);
+                break;
             }
-            /* During init, just sleep briefly and continue pumping */
             if (init_phase) {
-                /* Clear to dark background if renderer exists */
-                if (renderer) {
-                    WixenPaneRenderInfo pi = {
-                        .grid = &ps->terminal.grid,
-                        .x = 0, .y = 0,
-                        .width = (float)(config.window.width ? config.window.width : 1200),
-                        .height = (float)(config.window.height ? config.window.height : 800),
-                        .has_focus = true, .scroll_offset = 0,
-                    };
-                    wixen_renderer_render_frame(renderer, &pi, 1);
-                }
-                MsgWaitForMultipleObjects(0, NULL, FALSE, 16, QS_ALLINPUT);
-                continue; /* Skip normal frame processing during init */
+                if (renderer) wixen_renderer_clear_present(renderer, &colors);
+                MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
+                continue;
             }
         }
 

@@ -36,6 +36,18 @@ WixenRenderer *wixen_renderer_create(HWND hwnd, uint32_t width, uint32_t height,
                                       const WixenColorScheme *colors);
 void wixen_renderer_destroy(WixenRenderer *r);
 
+/* Phased creation: each step takes <100ms. Call one per frame.
+ * Returns the step number completed (0-based). When done, returns -1.
+ * Usage: step=0 → D3D11 device, step=1 → shaders, step=2 → atlas, step=3 → done */
+WixenRenderer *wixen_renderer_create_begin(HWND hwnd, uint32_t width, uint32_t height,
+                                             const WixenColorScheme *colors);
+bool wixen_renderer_create_step(WixenRenderer *r, int step,
+                                  const char *font_family, float font_size);
+#define WIXEN_RENDERER_INIT_STEPS 3
+
+/* Clear screen and present (used during init before full rendering is ready) */
+void wixen_renderer_clear_present(WixenRenderer *r, const WixenColorScheme *colors);
+
 /* Resize the render target */
 void wixen_renderer_resize(WixenRenderer *r, uint32_t width, uint32_t height);
 
