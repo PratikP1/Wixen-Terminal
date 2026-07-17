@@ -11,7 +11,7 @@ Screen reader users navigate between commands, read output by region, detect err
 | Method | Command |
 |--------|---------|
 | WinGet | `winget install PratikP1.WixenTerminal` |
-| Installer | Download the `.exe` installer from [Releases](https://github.com/PratikP1/Wixen-Terminal/releases) |
+| Installer | Download the `.msi` installer from [Releases](https://github.com/PratikP1/Wixen-Terminal/releases) |
 | Portable | Download the `.zip`, extract anywhere, run `wixen.exe` |
 
 **Launch.** Wixen Terminal opens PowerShell by default. If PowerShell is not installed, it falls back to `cmd.exe`.
@@ -24,10 +24,10 @@ PowerShell (add to your `$PROFILE`):
 . "$env:APPDATA\wixen\wixen.ps1"
 ```
 
-cmd.exe (place in your clink scripts directory):
+cmd.exe (requires [Clink](https://chrisant996.github.io/clink/); copy the script into your Clink scripts directory):
 
 ```
-Copy wixen.lua to %LocalAppData%\clink\
+copy "C:\Program Files\Wixen Terminal\scripts\wixen.lua" "%LocalAppData%\clink\"
 ```
 
 **Press F1** at any time to open the full user guide.
@@ -38,7 +38,7 @@ Copy wixen.lua to %LocalAppData%\clink\
 
 **Tabs and panes.** Split the terminal horizontally or vertically. Navigate between panes with Alt+Arrow keys. Zoom a pane to fill the window with Ctrl+Shift+Z. Broadcast input to all panes simultaneously.
 
-**Shell integration.** With OSC 133 markers from your shell, you can jump between commands (Ctrl+Shift+Up/Down), see exit codes, and get summaries of command output. Without shell integration, heuristic prompt detection provides basic command boundaries.
+**Shell integration.** With OSC 133 markers (invisible codes your shell prints to mark where each command starts and ends), you can jump between commands (Ctrl+Shift+Up/Down), see exit codes, and get summaries of command output. Without shell integration, heuristic prompt detection provides basic command boundaries.
 
 **GPU rendering.** The wgpu renderer uses Direct3D 12 (with D3D11 and software fallbacks). Text shaping goes through DirectWrite for ClearType and ligature support.
 
@@ -62,7 +62,7 @@ Copy wixen.lua to %LocalAppData%\clink\
 | F1 | Open user guide |
 | F11 | Toggle fullscreen |
 
-See the [full keyboard reference](docs/user-guide.md#keyboard-shortcuts-reference) for all 48 default shortcuts.
+See the [full keyboard reference](docs/user-guide.md#keyboard-shortcuts-reference) for all 49 default shortcuts.
 
 ## Accessibility
 

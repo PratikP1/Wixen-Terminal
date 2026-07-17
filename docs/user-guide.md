@@ -2,7 +2,9 @@
 
 ## Getting Started
 
-Wixen Terminal is a terminal emulator for Windows built with accessibility as a core design goal. Screen reader users get structured navigation of command blocks, output regions, and live announcements out of the box. Sighted users get GPU-accelerated rendering, font ligatures, tabs, and split panes.
+Wixen Terminal is a terminal emulator for Windows built for screen reader users first. It gives screen readers structured navigation of commands and output, spoken announcements, and audio cues. Sighted users get GPU-accelerated rendering, font ligatures, tabs, and split panes.
+
+New to terminals? A terminal runs a shell, which is a program that reads the commands you type and runs them. Wixen adds structure on top: it knows where each command starts and ends, so your screen reader can move through your session command by command instead of reading a wall of text.
 
 ### System Requirements
 
@@ -14,15 +16,15 @@ Wixen Terminal is a terminal emulator for Windows built with accessibility as a 
 
 There are three ways to install Wixen Terminal:
 
-1. **Installer** (recommended): Run the `.msi` installer. It adds Wixen to your Start menu and PATH.
-2. **Portable**: Extract the `.zip` archive anywhere. Place a file named `portable` (no extension) next to `wixen.exe` to activate portable mode. Configuration is stored next to the executable instead of in `%APPDATA%`.
-3. **winget**: Run `winget install wixen` from any terminal.
+1. **Installer** (recommended): Run the `.msi` installer from the Releases page. It adds Wixen Terminal to your Start menu.
+2. **Portable**: Extract the `.zip` archive anywhere and run `wixen.exe`. The archive includes a marker file named `wixen.portable` next to the program. This marker keeps your settings next to `wixen.exe` instead of in `%APPDATA%`, so you can carry the whole folder on a USB drive. You can also start portable mode with the `--portable` command line flag.
+3. **winget**: Run `winget install PratikP1.WixenTerminal` from any terminal.
 
 ### First Launch
 
 When you start Wixen Terminal, it opens a single tab running your default shell. On most systems this is PowerShell. If PowerShell is not found, Wixen falls back to `cmd.exe`.
 
-The window title shows the current working directory when shell integration is active. The tab bar is hidden until you open a second tab.
+The window title shows the current working directory when shell integration is active. The tab bar stays hidden until you open a second tab.
 
 ## Terminal Basics
 
@@ -30,13 +32,13 @@ The window title shows the current working directory when shell integration is a
 
 The window has three areas:
 
-- **Title bar**: Shows the window title. Supports dark mode by default.
+- **Title bar**: Shows the window title. Uses dark mode by default.
 - **Tab bar**: Appears when you have two or more tabs (configurable). Each tab shows the shell name or running command.
 - **Terminal area**: The main area where your shell runs. This is where you type commands and see output.
 
 ### Typing Commands
 
-Type commands as you would in any terminal. Press Enter to run them. The terminal supports full VT/ANSI escape sequences, so programs like `vim`, `htop`, and `git log` work correctly.
+Type commands as you would in any terminal. Press Enter to run them. The terminal supports the full set of VT/ANSI escape sequences (the control codes that full-screen programs use), so programs like `vim`, `htop`, and `git log` work correctly.
 
 ### Copying and Pasting Text
 
@@ -46,9 +48,13 @@ Type commands as you would in any terminal. Press Enter to run them. The termina
 | Paste from clipboard | Ctrl+Shift+V |
 | Select all text | Ctrl+Shift+A |
 
-Select text by clicking and dragging with the mouse. The selection is highlighted with a blue background. Programs running in the terminal can also write to the clipboard via OSC 52 escape sequences (read access is disabled by default for security).
+Select text by clicking and dragging with the mouse. The selection shows a blue background.
+
+Programs can also put text on the clipboard through an escape code called OSC 52. For safety, programs can write to your clipboard but cannot read it. The `osc52` setting controls this.
 
 ### Scrolling Through Output
+
+Output that scrolls off screen is kept in a history called scrollback. You can scroll back through it at any time:
 
 | Action | Shortcut |
 |--------|----------|
@@ -57,7 +63,7 @@ Select text by clicking and dragging with the mouse. The selection is highlighte
 | Scroll to top of history | Ctrl+Home |
 | Scroll to bottom | Ctrl+End |
 
-Scrollback is infinite by default. Old output is compressed automatically to save memory.
+Scrollback is unlimited by default. Wixen compresses old output automatically to save memory.
 
 ### Clearing the Terminal
 
@@ -75,6 +81,8 @@ Scrollback is infinite by default. Old output is compressed automatically to sav
 | Reset font size to default | Ctrl+0 |
 
 ## Tabs
+
+Tabs let you run several shell sessions in one window, like tabs in a web browser. Use them to keep a long build running in one tab while you work in another.
 
 ### Working with Tabs
 
@@ -95,11 +103,13 @@ Scrollback is infinite by default. Old output is compressed automatically to sav
 | Switch to tab 8 | Ctrl+8 |
 | Switch to tab 9 | Ctrl+9 |
 
+For example: press Ctrl+Shift+T to open a second tab, start a build there, then press Ctrl+Tab to return to your first tab. When you switch tabs, Wixen announces the tab title, shell type, and status (see [Tab Detail Announcements](#accessibility)).
+
 ### Tab Indicators
 
 Tabs show visual indicators for events:
 
-- **Bell indicator**: Appears when a background tab triggers a bell (BEL character).
+- **Bell indicator**: Appears when a background tab triggers a bell (the BEL character some programs send to get your attention).
 - **Exit status**: Tabs show the exit status of the last command when shell integration is active. A non-zero exit code is flagged.
 
 ### Tab Bar Display
@@ -114,7 +124,7 @@ The tab bar has three modes, controlled by the `tab_bar` setting:
 
 ## Split Panes
 
-Split panes let you run multiple terminals side by side within a single tab.
+Split panes let you run multiple terminals side by side within a single tab. Use a split when you want two things on screen at once, such as a server log in one pane and a shell prompt in the other.
 
 ### Creating Splits
 
@@ -122,6 +132,8 @@ Split panes let you run multiple terminals side by side within a single tab.
 |--------|----------|
 | Split horizontally (left/right) | Alt+Shift+Plus |
 | Split vertically (top/bottom) | Alt+Shift+Minus |
+
+For example: press Alt+Shift+Plus to place a second pane to the right of the current one. Each pane runs its own shell.
 
 ### Navigating Between Panes
 
@@ -132,7 +144,7 @@ Split panes let you run multiple terminals side by side within a single tab.
 | Focus pane above | Alt+Up |
 | Focus pane below | Alt+Down |
 
-Navigation finds the nearest pane in the given direction based on layout position.
+When you press Alt plus an arrow key, focus moves to the nearest pane in that direction. By default, Wixen announces the new position, such as "Left pane, 1 of 3".
 
 ### Resizing Panes
 
@@ -141,7 +153,7 @@ Navigation finds the nearest pane in the given direction based on layout positio
 | Shrink current pane | Alt+Shift+Left |
 | Grow current pane | Alt+Shift+Right |
 
-The split ratio is clamped between 10% and 90% to prevent panes from becoming too small.
+The split ratio stays between 10% and 90%, so a pane can never shrink to nothing.
 
 ### Closing Panes
 
@@ -149,15 +161,17 @@ Press Ctrl+Shift+W to close the active pane. If the pane is the last one in the 
 
 ### Zooming a Pane
 
-Press Ctrl+Shift+Z to toggle zoom on the active pane. When zoomed, the pane fills the entire tab area. Other panes remain in the tree but are hidden. Press Ctrl+Shift+Z again to restore the original layout.
+Press Ctrl+Shift+Z to toggle zoom on the active pane. When zoomed, the pane fills the entire tab area. Other panes stay open but are hidden. Press Ctrl+Shift+Z again to restore the original layout.
+
+Use zoom when you need to focus on one pane temporarily, such as reading long output, without tearing down your split layout.
 
 ### Read-Only Mode
 
-Press Ctrl+Shift+R to toggle read-only mode on the active pane. In read-only mode, all keyboard input to the pane is blocked. This prevents accidental input to a pane you are monitoring.
+Press Ctrl+Shift+R to toggle read-only mode on the active pane. In read-only mode, the pane ignores all keyboard input. This protects a pane you are only monitoring, such as a log viewer, from stray keystrokes.
 
 ### Broadcast Input
 
-Press Ctrl+Shift+B to toggle broadcast mode on the active pane. When broadcast is enabled, anything you type in the active pane is also sent to all other panes that have broadcast mode turned on. This is useful for running the same command on multiple servers at once.
+Press Ctrl+Shift+B to toggle broadcast mode on the active pane. When broadcast is on, anything you type in the active pane is also sent to every other pane that has broadcast on. Use this to run the same command on several servers at once: open one pane per server, turn on broadcast in each, then type the command once.
 
 ### Pane Shortcuts Reference
 
@@ -178,13 +192,15 @@ Press Ctrl+Shift+B to toggle broadcast mode on the active pane. When broadcast i
 
 ## Search
 
+Search finds text anywhere in the terminal, including scrollback. Use it to jump straight to an error message instead of scrolling through pages of output.
+
 ### Opening Search
 
 Press Ctrl+Shift+F to open the search bar. A text field appears at the top of the terminal.
 
 ### Searching Text
 
-Type your search term. Matches are highlighted in the terminal output as you type. The match count is displayed in the search bar.
+Type your search term. Matches highlight in the terminal output as you type, and the search bar shows the match count.
 
 ### Navigating Matches
 
@@ -195,53 +211,84 @@ Type your search term. Matches are highlighted in the terminal output as you typ
 
 ### Search Options
 
-- **Case sensitivity**: Search is case-insensitive by default. Toggle case sensitivity from the search bar.
-- **Regex mode**: Enable regex to search with regular expression patterns. For example, `error|warning` matches lines containing either word.
+- **Case sensitivity**: Search ignores case by default, so `Error` and `error` both match. Toggle case sensitivity from the search bar.
+- **Regex mode**: Regex mode matches patterns instead of exact text. Regex (regular expressions) is a pattern language: for example, `error|warning` matches lines that contain either word.
 
 Press Escape to close the search bar.
 
+### Example: Finding a Failed Test
+
+1. Press Ctrl+Shift+F to open search.
+2. Type `FAILED`. The search bar shows how many matches exist.
+3. Press F3 to jump to the next match, or Shift+F3 for the previous one.
+4. Press Escape to close search and return to the prompt.
+
+To find errors and warnings in one pass, turn on regex mode and search for `error|warning`.
+
 ## Command Palette
 
-### Opening the Palette
+The command palette is a searchable list of every action Wixen can run. Use it when you forget a shortcut, or for actions that have no shortcut.
+
+### Opening the Command Palette
 
 Press Ctrl+Shift+P to open the command palette. A text field appears with a list of all available actions.
 
-### Using the Palette
+### Using the Command Palette
 
-Type to filter the list. The palette uses fuzzy matching, so you can type partial words. For example, typing "split h" matches "Split Horizontal".
+Type to filter the list. The palette uses fuzzy matching, so partial words work. For example, typing "split h" matches "Split Horizontal".
 
 Press Enter to run the selected action. Press Escape to close the palette without running anything.
 
-### SSH Targets in the Palette
+### SSH Targets in the Command Palette
 
-If you have SSH targets configured, they appear in the command palette. Select one to open a new tab connected to that host.
+If you have SSH targets configured, they appear in the command palette. Select one to open a new tab connected to that host. See [SSH Profiles](#profiles) for setup.
 
 ## Shell Integration
 
-Shell integration connects your shell to Wixen Terminal so it can track command boundaries, exit codes, and the current working directory. This powers several features: command block navigation for screen readers, prompt jumping, command completion announcements, and exit code detection.
+Shell integration is a small script you add to your shell. The script prints invisible markers, called OSC 133 sequences, that tell Wixen exactly where each prompt, command, and block of output begins and ends. It also reports your current folder (OSC 7).
+
+Why set it up? Without the markers, Wixen guesses where prompts are. With them, command navigation, exit codes, and completion announcements are exact. Setup takes about a minute.
 
 ### What Shell Integration Provides
 
-- **Command blocks**: Each prompt/command/output cycle is a separate block. Screen readers can navigate between blocks.
+- **Command blocks**: Each prompt/command/output cycle becomes a separate block. Screen readers can move between blocks.
 - **Exit codes**: The terminal knows whether a command succeeded or failed.
-- **Working directory**: The terminal updates the tab title and provides accurate path information.
-- **Prompt jumping**: Navigate between prompts with keyboard shortcuts.
+- **Working directory**: The terminal updates the tab title with your current folder.
+- **Prompt jumping**: Move between prompts with keyboard shortcuts.
 
 ### PowerShell Setup
 
-Add this line to your PowerShell profile (`$PROFILE`):
+The integration script `wixen.ps1` is installed in the `scripts` folder of your Wixen installation (for the `.msi` installer, `C:\Program Files\Wixen Terminal\scripts`). Copy it to `%APPDATA%\wixen` and load it from your PowerShell profile. Type these commands in PowerShell:
 
 ```powershell
-. "$env:APPDATA\wixen\wixen.ps1"
+New-Item -ItemType Directory -Force "$env:APPDATA\wixen"
+Copy-Item "C:\Program Files\Wixen Terminal\scripts\wixen.ps1" "$env:APPDATA\wixen\"
+if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE }
+Add-Content $PROFILE '. "$env:APPDATA\wixen\wixen.ps1"'
 ```
 
-The script checks for the `WIXEN_TERMINAL` environment variable and only activates inside Wixen Terminal. It emits OSC 133 markers (prompt start, command start, output start, command complete) and OSC 7 for the working directory.
+Then restart your shell, or run `. $PROFILE` to load it now.
+
+In portable mode, `wixen.ps1` already sits next to `wixen.exe` and loads automatically.
+
+The script only activates inside Wixen Terminal. It checks the `WIXEN_TERMINAL` environment variable, so it is safe to keep in your profile when you use other terminals.
 
 ### cmd.exe Setup (via Clink)
 
-Install [Clink](https://chrisant996.github.io/clink/) for cmd.exe. Place the `wixen.lua` script in your Clink scripts directory. Clink loads it automatically when cmd.exe runs inside Wixen Terminal.
+cmd.exe cannot run integration scripts on its own, so Wixen uses [Clink](https://chrisant996.github.io/clink/), a free add-on that extends cmd.exe.
 
-The Clink scripts directory is typically `%LOCALAPPDATA%\clink`.
+1. Install Clink.
+2. Copy `wixen.lua` from the Wixen `scripts` folder into your Clink scripts directory (typically `%LOCALAPPDATA%\clink`). In cmd.exe:
+
+```
+copy "C:\Program Files\Wixen Terminal\scripts\wixen.lua" "%LOCALAPPDATA%\clink\"
+```
+
+Clink loads the script automatically when cmd.exe runs inside Wixen Terminal.
+
+### Checking That It Works
+
+Run `echo $env:WIXEN_TERMINAL` in PowerShell (or `echo %WIXEN_TERMINAL%` in cmd.exe). It should print `1`. Then run any command and press Ctrl+Shift+Up: the cursor should jump to the previous prompt.
 
 ### Jumping Between Commands
 
@@ -252,11 +299,11 @@ With shell integration active, you can jump between command prompts:
 | Jump to previous prompt | Ctrl+Shift+Up |
 | Jump to next prompt | Ctrl+Shift+Down |
 
-If shell integration is not active, Wixen falls back to heuristic prompt detection using regex patterns that match common prompt formats.
+If shell integration is not active, Wixen falls back to heuristic prompt detection: it recognizes common prompt formats by their text patterns. This works for typical prompts but is less reliable than the markers.
 
 ## Accessibility
 
-Wixen Terminal is built for screen reader users from the ground up. It exposes a full UI Automation (UIA) tree with structured command blocks, live output regions, and labeled controls.
+Wixen Terminal is built for screen reader users from the ground up. It exposes its content through UI Automation (UIA), the Windows interface that screen readers use to read applications. Instead of a flat wall of text, screen readers see structured command blocks, live output regions, and labeled controls.
 
 ### Screen Reader Support
 
@@ -275,17 +322,19 @@ When shell integration is active, the terminal organizes output into command blo
 - The prompt text
 - The command you typed
 - The command's output
-- The exit code
+- The exit code (0 means success; anything else means failure)
 
-Screen readers can navigate between these blocks using their standard object navigation commands. Each block is announced with a summary like "cargo build completed: 42 lines of output" or "cargo test failed (exit 1): 100 lines of output".
+Screen readers move between blocks with their standard object navigation commands. Each block is announced with a summary. For example, after a successful build you hear "cargo build completed: 42 lines of output". After a failed test run you hear "cargo test failed (exit 1): 100 lines of output".
 
 ### Output Announcements
 
-Wixen announces terminal output through UIA live regions. The behavior depends on the verbosity setting.
+Wixen announces terminal output through UIA live regions. A live region is a signal that tells the screen reader to speak new text on its own, without you moving focus to it. How much is spoken depends on the Screen Reader Output setting below.
 
-### Verbosity Levels
+Output is sent to the screen reader in batches. The `output_debounce_ms` setting (default `100`, range 50 to 1000) controls the pause between batches. Lower values feel more responsive; higher values give speech more room to keep up.
 
-Set `screen_reader_output` in your config to control how much output is announced:
+### Screen Reader Output Levels
+
+Set `screen_reader_output` in your config (the "Screen Reader Output" field in Settings) to control how much output is announced:
 
 | Level | Behavior |
 |-------|----------|
@@ -297,16 +346,36 @@ Set `screen_reader_output` in your config to control how much output is announce
 
 ### Live Region Politeness
 
-The `live_region_politeness` setting controls how announcements interact with speech already in progress:
+The `live_region_politeness` setting controls what happens when an announcement arrives while your screen reader is already speaking:
 
 | Value | Behavior |
 |-------|----------|
 | `polite` (default) | Queues announcements behind current speech. |
 | `assertive` | Interrupts current speech with the new announcement. |
 
+### Error and Warning Detection
+
+Wixen scans command output for error and warning patterns and marks those lines in the UIA tree, so screen readers can find them. If audio feedback is on, an error tone plays as well.
+
+For example, run a build that fails, such as `cargo build` on code with a mistake. With completion announcements on (the default), you hear a summary in the form "cargo build failed (exit 101): 15 lines of output". The exit code and line count depend on the actual run. With `screen_reader_output = "errors-only"`, only the failing lines and the failure summary are spoken.
+
+### Structured Output Announcements
+
+When a command's output is a JSON, YAML, or XML document (for example, a `curl` API response), Wixen replaces the raw line count with a format summary so you are not read a stream of punctuation. For example, `cargo metadata` produces "cargo metadata completed: JSON output: 42 lines".
+
+### Progress Bar Detection
+
+Wixen detects progress indicators (percentage displays, progress bars) in terminal output. When audio feedback is on, a tone tracks the progress, so you can follow a long download or build without listening to every repaint.
+
+### Password Prompt Detection
+
+Wixen detects password prompts in terminal output. It suppresses announcement of the sensitive input and lets your screen reader tell you that a password is being requested.
+
 ### Audio Feedback
 
-Wixen can play short audio tones for terminal events. These work with or without a screen reader.
+Wixen can play short tones for terminal events. The tones work with or without a screen reader, and they carry information that is faster to hear than speech: a failure tone tells you a build broke before the summary is spoken.
+
+`audio_feedback` is the master switch and is off by default. The per-event settings below only make sound when the master switch is on:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -314,20 +383,13 @@ Wixen can play short audio tones for terminal events. These work with or without
 | `audio_progress` | `true` | Tone when a progress bar is detected. |
 | `audio_errors` | `true` | Tone when an error or warning is detected in output. |
 | `audio_command_complete` | `true` | Tone when a command finishes. |
+| `audio_mode_toggle` | `true` | Tone when read-only, broadcast, or pane zoom toggles. |
+| `audio_password_prompt` | `true` | Tone when a password prompt is detected. |
+| `audio_navigation` | `true` | Tone when switching tabs or panes. |
+| `audio_selection` | `true` | Tone when the text selection changes. |
+| `audio_boundaries` | `true` | Tone at history and line-edit boundaries. |
 
-Note: `audio_progress`, `audio_errors`, and `audio_command_complete` only produce sound when `audio_feedback` is `true`.
-
-### Error and Warning Detection
-
-Wixen scans command output for error and warning patterns. When detected, these lines are marked in the UIA tree so screen readers can identify them. If audio feedback is enabled, an error tone plays.
-
-### Progress Bar Detection
-
-Wixen detects progress indicators in terminal output (percentage displays, progress bars). When detected and audio feedback is enabled, a tone plays to indicate progress.
-
-### Password Prompt Detection
-
-Wixen detects password prompts in terminal output. This prevents the terminal from announcing sensitive input and lets screen readers inform the user that a password is being requested.
+For example, to hear a tone whenever a command fails: open Settings (Ctrl+Comma), go to the Accessibility tab, and turn on Audio Feedback. Audio Errors is already on by default. Now run a failing build; the error tone plays as soon as the error appears in the output.
 
 ### High Contrast Mode
 
@@ -341,9 +403,9 @@ The `high_contrast` setting controls high contrast rendering:
 
 ### Minimum Contrast Ratio
 
-The `min_contrast_ratio` setting (default `4.5`) adjusts terminal colors to meet a minimum foreground-to-background contrast ratio. WCAG AA requires 4.5:1. WCAG AAA requires 7.0:1. Set to `0.0` to disable contrast adjustment.
+Some programs print text in colors that are hard to read against the background. The `min_contrast_ratio` setting (default `4.5`) fixes this: when a program picks a color below the threshold, Wixen adjusts the foreground color until it meets the minimum contrast ratio.
 
-When a program sets colors below the threshold, Wixen adjusts the foreground color to meet the minimum ratio.
+WCAG AA (the common accessibility standard) requires 4.5:1. WCAG AAA requires 7.0:1. Set the value to `0.0` to turn the adjustment off.
 
 ### Reduced Motion
 
@@ -365,7 +427,7 @@ When `announce_tab_details` is `true` (default), switching tabs announces the ta
 
 ### Image Announcements
 
-When `announce_images` is `true` (default), inline images placed via Sixel, iTerm2, or Kitty protocols are announced with their dimensions and filename (if available).
+When `announce_images` is `true` (default), inline images placed through the Sixel, iTerm2, or Kitty image protocols are announced with their dimensions and filename (if available).
 
 ## Settings
 
@@ -379,13 +441,15 @@ The settings panel has seven tabs:
 
 | Tab | Contents |
 |-----|----------|
-| Font | Font family, size, line height, ligatures, fallback fonts, font file path |
-| Window | Window size, title, renderer, opacity, background style, background image, quake mode, scrollbar mode, tab bar mode, padding |
-| Terminal | Scrollback lines, cursor style, cursor blink, bell style, OSC 52 policy, command notification threshold, session restore |
-| Colors | Theme selection, foreground color, background color, cursor color, selection color, palette overrides |
-| Profiles | Shell profiles (name, program, arguments, working directory, default flag) |
-| Keybindings | All keyboard shortcuts with chord editor (modifier checkboxes and key input) |
-| Accessibility | Screen reader verbosity, announcements, audio feedback, contrast, motion, prompt detection |
+| Font | Font family, font size, line height, fallback fonts |
+| Window | Window title, width, height, renderer, opacity, background style, dark title bar, scrollbar, tab bar |
+| Terminal | Scrollback lines, cursor style, cursor blink, blink interval, bell style |
+| Colors | Theme, foreground, background, cursor color, selection background, and the 16 ANSI palette colors |
+| Profiles | For each profile: name, program, arguments, default flag |
+| Keybindings | Every keyboard shortcut, with a chord editor (modifier checkboxes and key input) |
+| Accessibility | Screen reader output, announcements, prompt detection, contrast, motion, and all audio tones |
+
+Some options are not in the settings panel yet: ligatures, font file path, background image, quake mode, window padding, OSC 52 policy, command notification threshold, session restore, and profile working directories. Set these in `config.toml` (see the [Configuration File](#configuration-file) section).
 
 ### Navigating Settings
 
@@ -396,7 +460,7 @@ The settings panel has seven tabs:
 
 ### Saving Settings
 
-Changes are collected into a draft. When you close the settings panel, you are prompted to save or discard. Saved changes are written to your `config.toml` file and take effect immediately.
+Your changes go into a draft while you edit. When you close the settings panel, Wixen asks whether to save or discard the draft. Saved changes are written to your `config.toml` file and take effect immediately.
 
 ## Configuration File
 
@@ -404,7 +468,7 @@ Changes are collected into a draft. When you close the settings panel, you are p
 
 Wixen looks for configuration in this order:
 
-1. `config.toml` next to the executable (portable mode, requires a `portable` marker file)
+1. `config.toml` next to the executable (portable mode, requires the `wixen.portable` marker file)
 2. `%APPDATA%\wixen\config.toml`
 
 ### Format
@@ -413,7 +477,7 @@ Configuration files use [TOML](https://toml.io/) format. Lua configuration (`con
 
 ### Hot Reload
 
-Changes to the configuration file are detected automatically. Most settings take effect immediately without restarting Wixen.
+Wixen detects changes to the configuration file automatically. Most settings take effect immediately without a restart.
 
 ### Full Configuration Reference
 
@@ -459,7 +523,7 @@ Changes to the configuration file are detected automatically. Most settings take
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `scrollback_lines` | integer | `0` | Maximum scrollback lines. 0 means infinite scrollback with automatic compression. |
+| `scrollback_lines` | integer | `0` | Maximum scrollback lines. 0 means unlimited scrollback with automatic compression. |
 | `cursor_style` | string | `"block"` | Cursor style: `"block"`, `"underline"`, or `"bar"`. |
 | `cursor_blink` | bool | `true` | Whether the cursor blinks. |
 | `cursor_blink_ms` | integer | `530` | Cursor blink interval in milliseconds. Valid range: 100 to 5000. |
@@ -510,7 +574,7 @@ The `args` field supports escape sequences: `\n` (newline), `\r` (carriage retur
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `screen_reader_output` | string | `"auto"` | Verbosity: `"auto"`, `"all"`, `"commands-only"`, `"errors-only"`, `"silent"`. |
+| `screen_reader_output` | string | `"auto"` | Output level: `"auto"`, `"all"`, `"commands-only"`, `"errors-only"`, `"silent"`. |
 | `announce_command_complete` | bool | `true` | Announce when commands finish (includes exit code and output line count). |
 | `announce_exit_codes` | bool | `true` | Include exit codes in completion announcements. |
 | `live_region_politeness` | string | `"polite"` | UIA live region mode: `"polite"` (queues) or `"assertive"` (interrupts). |
@@ -525,12 +589,18 @@ The `args` field supports escape sequences: `\n` (newline), `\r` (carriage retur
 | `audio_progress` | bool | `true` | Play a tone on progress bar detection (requires `audio_feedback = true`). |
 | `audio_errors` | bool | `true` | Play a tone on error/warning detection (requires `audio_feedback = true`). |
 | `audio_command_complete` | bool | `true` | Play a tone on command completion (requires `audio_feedback = true`). |
+| `audio_mode_toggle` | bool | `true` | Play a tone when read-only, broadcast, or zoom toggles (requires `audio_feedback = true`). |
+| `audio_password_prompt` | bool | `true` | Play a tone when a password prompt is detected (requires `audio_feedback = true`). |
+| `audio_navigation` | bool | `true` | Play a tone when switching tabs or panes (requires `audio_feedback = true`). |
+| `audio_selection` | bool | `true` | Play a tone when the text selection changes (requires `audio_feedback = true`). |
+| `audio_boundaries` | bool | `true` | Play a tone at history and line-edit boundaries (requires `audio_feedback = true`). |
+| `output_debounce_ms` | integer | `100` | Milliseconds between batched screen reader announcements. Range: 50 to 1000. |
 
 ## Profiles
 
 ### What Profiles Are
 
-Profiles let you define multiple shell configurations. Each profile has a name, a shell program, arguments, and a working directory. You can open a new tab with a specific profile from the command palette.
+A profile is a saved shell configuration: a name, a shell program, arguments, and a working directory. Define one profile per shell you use, then open any of them as a new tab from the command palette.
 
 If you define no profiles, Wixen creates one from the `[shell]` section of your config.
 
@@ -558,7 +628,7 @@ The profile with `is_default = true` is used for new tabs opened with Ctrl+Shift
 
 ### SSH Profiles
 
-Define SSH targets in your config. They appear in the command palette.
+An SSH target is a saved remote connection. Define targets in your config and they appear in the command palette, so you can open a connection to a server without typing the full `ssh` command each time.
 
 ```toml
 [[ssh]]
@@ -570,11 +640,11 @@ identity_file = ""
 extra_args = []
 ```
 
-Opening an SSH target launches a new tab running `ssh.exe` with the configured host, port, and user.
+Opening an SSH target launches a new tab running `ssh.exe` with the configured host, port, and user. Leave `identity_file` empty to use your default SSH key. Use `extra_args` for additional `ssh` options, such as `["-o", "StrictHostKeyChecking=no"]`.
 
 ### WSL Profiles
 
-Wixen auto-detects installed WSL distributions by running `wsl -l -v`. Detected distributions appear as profiles in the command palette. You do not need to configure them manually.
+Wixen auto-detects installed WSL distributions by running `wsl -l -v`. Detected distributions appear as profiles in the command palette, named like "WSL: Ubuntu". You do not need to configure them manually.
 
 ## Color Schemes
 
@@ -646,6 +716,7 @@ The `palette` array contains 16 colors in standard ANSI order: black, red, green
 | Command palette | Ctrl+Shift+P |
 | Settings | Ctrl+Comma |
 | Open config file | Ctrl+Shift+Comma |
+| Open user guide (help) | F1 |
 | Toggle fullscreen | F11 |
 | Toggle fullscreen (alternate) | Alt+Enter |
 | New window | Ctrl+Shift+N |
@@ -723,21 +794,18 @@ The `palette` array contains 16 colors in standard ANSI order: black, red, green
 
 Override or add shortcuts in `config.toml`. New bindings are added to the default set. To replace a default binding, define a new binding with the same chord and a different action.
 
-```toml
-[[keybindings.bindings]]
-chord = "ctrl+shift+t"
-action = "new_tab"
+For example, to bind Ctrl+Shift+E to split the terminal:
 
+```toml
 [[keybindings.bindings]]
 chord = "ctrl+shift+e"
 action = "split_horizontal"
 ```
 
-You can also add keybindings through Lua configuration (`config.lua`):
+You can also add keybindings through Lua configuration (`config.lua`). `wixen.bind` takes a chord and an action name:
 
 ```lua
 wixen.bind("ctrl+shift+e", "split_horizontal")
-wixen.bind("ctrl+alt+1", "send_text", "echo hello\n")
 ```
 
 ### Available Actions
@@ -770,6 +838,7 @@ wixen.bind("ctrl+alt+1", "send_text", "echo hello\n")
 | `command_palette` | Open the command palette |
 | `settings` | Open the settings panel |
 | `open_config_file` | Open the config file in your default editor |
+| `open_help` | Open the user guide in your default browser |
 | `toggle_fullscreen` | Toggle fullscreen mode |
 | `new_window` | Open a new Wixen Terminal window |
 | `zoom_in` | Increase font size |
@@ -789,31 +858,59 @@ wixen.bind("ctrl+alt+1", "send_text", "echo hello\n")
 
 ### Terminal Won't Start
 
-If the GPU renderer fails, Wixen falls back to software rendering automatically. If you see a blank window or crash on startup:
+**Symptom**: Blank window, crash on startup, or nothing appears.
 
-1. Try setting `renderer = "software"` in your `config.toml`.
-2. If the config file is corrupt, delete it and restart. Wixen recreates it with defaults.
+**Likely cause**: A GPU driver problem or a corrupt config file. (When the GPU renderer fails cleanly, Wixen falls back to software rendering on its own; a hard driver fault can still prevent startup.)
+
+**Fix**:
+
+1. Set `renderer = "software"` in your `config.toml` (in `%APPDATA%\wixen`).
+2. If that does not help, the config file may be corrupt. Rename or delete it and restart. Wixen recreates it with defaults.
 3. Check that your Windows version is 1903 (build 18362) or later.
 
 ### No Shell Integration Markers
 
-If prompt jumping and command completion announcements do not work:
+**Symptom**: Prompt jumping (Ctrl+Shift+Up/Down) and command completion announcements do not work.
 
-1. Verify the integration script is loaded. For PowerShell, check that `. "$env:APPDATA\wixen\wixen.ps1"` is in your `$PROFILE`. For cmd.exe, check that `wixen.lua` is in your Clink scripts directory.
-2. Confirm the `WIXEN_TERMINAL` environment variable is set. Run `echo $env:WIXEN_TERMINAL` in PowerShell or `echo %WIXEN_TERMINAL%` in cmd.exe. It should print a value.
-3. If shell integration is unavailable, Wixen uses heuristic prompt detection as a fallback. You can force this with `prompt_detection = "heuristic"` in your config.
+**Likely cause**: The integration script is not loaded in your shell.
+
+**Fix**:
+
+1. For PowerShell, check that `. "$env:APPDATA\wixen\wixen.ps1"` is in your `$PROFILE` and that the file exists at that path. For cmd.exe, check that `wixen.lua` is in your Clink scripts directory.
+2. Confirm the `WIXEN_TERMINAL` environment variable is set. Run `echo $env:WIXEN_TERMINAL` in PowerShell or `echo %WIXEN_TERMINAL%` in cmd.exe. It should print `1`.
+3. If you cannot use shell integration, Wixen falls back to heuristic prompt detection. You can force this mode with `prompt_detection = "heuristic"` in your config.
 
 ### Screen Reader Not Reading Output
 
-1. Check the `screen_reader_output` setting. It should be `"auto"` or `"all"`. If set to `"silent"`, no output is announced.
-2. Verify your screen reader is running and UIA support is enabled.
-3. Try setting `live_region_politeness = "assertive"` if announcements are being lost.
+**Symptom**: The terminal works, but your screen reader says nothing when output appears.
+
+**Likely cause**: Output announcements are turned down or the announcements are losing a race with other speech.
+
+**Fix**:
+
+1. Check the `screen_reader_output` setting. It should be `"auto"` or `"all"`. If it is `"silent"`, no output is announced.
+2. Verify your screen reader is running and supports UI Automation.
+3. If announcements seem to disappear behind other speech, try `live_region_politeness = "assertive"`.
+
+### No Sound from Audio Feedback
+
+**Symptom**: You expect tones for errors or command completion, but hear nothing.
+
+**Likely cause**: The master switch is off. The per-event settings (`audio_errors`, `audio_command_complete`, and the rest) make no sound on their own.
+
+**Fix**: Set `audio_feedback = true` in the `[accessibility]` section of your config, or turn on Audio Feedback in the Settings Accessibility tab.
 
 ### High CPU Usage
 
-1. If scrollback is large, the terminal may use more memory and CPU. Set `scrollback_lines` to a fixed number (e.g., `50000`) to limit it.
-2. Check if `cursor_blink` is causing redraws. Try `cursor_blink = false`.
-3. Try `renderer = "software"` if the GPU driver is causing issues.
+**Symptom**: Wixen uses noticeably more CPU than expected, even when idle.
+
+**Likely cause**: Very large scrollback, constant cursor-blink redraws, or a misbehaving GPU driver.
+
+**Fix**:
+
+1. Set `scrollback_lines` to a fixed number (e.g., `50000`) instead of unlimited.
+2. Try `cursor_blink = false` to stop blink redraws.
+3. Try `renderer = "software"` to rule out the GPU driver.
 
 ### Reporting Issues
 
