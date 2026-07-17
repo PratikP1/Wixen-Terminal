@@ -359,16 +359,14 @@ impl SettingsUI {
                     }
                 }
                 SettingsField::Keybinding {
-                    editing,
-                    sub_focus,
+                    editing: true,
+                    sub_focus: 5,
                     key,
                     ..
                 } => {
-                    if *editing && *sub_focus == 5 {
-                        // Replace the key text with the typed character
-                        *key = ch.to_lowercase().to_string();
-                        self.dirty = true;
-                    }
+                    // Replace the key text with the typed character
+                    *key = ch.to_lowercase().to_string();
+                    self.dirty = true;
                 }
                 _ => {}
             }
@@ -393,15 +391,13 @@ impl SettingsUI {
                     self.dirty = true;
                 }
                 SettingsField::Keybinding {
-                    editing,
-                    sub_focus,
+                    editing: true,
+                    sub_focus: 5,
                     key,
                     ..
                 } => {
-                    if *editing && *sub_focus == 5 {
-                        key.clear();
-                        self.dirty = true;
-                    }
+                    key.clear();
+                    self.dirty = true;
                 }
                 _ => {}
             }
@@ -985,6 +981,26 @@ impl SettingsUI {
                 label: "Audio Command Complete",
                 value: a.audio_command_complete,
             },
+            SettingsField::Toggle {
+                label: "Audio Mode Toggle",
+                value: a.audio_mode_toggle,
+            },
+            SettingsField::Toggle {
+                label: "Audio Password Prompt",
+                value: a.audio_password_prompt,
+            },
+            SettingsField::Toggle {
+                label: "Audio Navigation",
+                value: a.audio_navigation,
+            },
+            SettingsField::Toggle {
+                label: "Audio Selection",
+                value: a.audio_selection,
+            },
+            SettingsField::Toggle {
+                label: "Audio Boundaries",
+                value: a.audio_boundaries,
+            },
         ]
     }
 
@@ -1297,6 +1313,21 @@ impl SettingsUI {
         if let Some(SettingsField::Toggle { value, .. }) = fields.get(14) {
             self.draft.accessibility.audio_command_complete = *value;
         }
+        if let Some(SettingsField::Toggle { value, .. }) = fields.get(15) {
+            self.draft.accessibility.audio_mode_toggle = *value;
+        }
+        if let Some(SettingsField::Toggle { value, .. }) = fields.get(16) {
+            self.draft.accessibility.audio_password_prompt = *value;
+        }
+        if let Some(SettingsField::Toggle { value, .. }) = fields.get(17) {
+            self.draft.accessibility.audio_navigation = *value;
+        }
+        if let Some(SettingsField::Toggle { value, .. }) = fields.get(18) {
+            self.draft.accessibility.audio_selection = *value;
+        }
+        if let Some(SettingsField::Toggle { value, .. }) = fields.get(19) {
+            self.draft.accessibility.audio_boundaries = *value;
+        }
     }
 }
 
@@ -1323,6 +1354,43 @@ fn action_label(action: &str) -> &'static str {
         "command_palette" => "Command Palette",
         "settings" => "Settings",
         "toggle_fullscreen" => "Toggle Fullscreen",
+        "close_pane" => "Close Pane",
+        "zoom_in" => "Zoom In",
+        "zoom_out" => "Zoom Out",
+        "zoom_reset" => "Reset Zoom",
+        "select_all" => "Select All",
+        "scroll_up_page" => "Scroll Up One Page",
+        "scroll_down_page" => "Scroll Down One Page",
+        "scroll_to_top" => "Scroll to Top",
+        "scroll_to_bottom" => "Scroll to Bottom",
+        "jump_to_previous_prompt" => "Jump to Previous Prompt",
+        "jump_to_next_prompt" => "Jump to Next Prompt",
+        "select_tab_1" => "Select Tab 1",
+        "select_tab_2" => "Select Tab 2",
+        "select_tab_3" => "Select Tab 3",
+        "select_tab_4" => "Select Tab 4",
+        "select_tab_5" => "Select Tab 5",
+        "select_tab_6" => "Select Tab 6",
+        "select_tab_7" => "Select Tab 7",
+        "select_tab_8" => "Select Tab 8",
+        "select_tab_9" => "Select Tab 9",
+        "focus_pane_left" => "Focus Pane Left",
+        "focus_pane_right" => "Focus Pane Right",
+        "focus_pane_up" => "Focus Pane Up",
+        "focus_pane_down" => "Focus Pane Down",
+        "resize_pane_shrink" => "Shrink Pane",
+        "resize_pane_grow" => "Grow Pane",
+        "duplicate_tab" => "Duplicate Tab",
+        "new_window" => "New Window",
+        "open_config_file" => "Open Config File",
+        "find_next" => "Find Next",
+        "find_previous" => "Find Previous",
+        "toggle_zoom" => "Toggle Pane Zoom",
+        "toggle_read_only" => "Toggle Read-Only Mode",
+        "toggle_broadcast_input" => "Toggle Broadcast Input",
+        "clear_terminal" => "Clear Terminal",
+        "clear_scrollback" => "Clear Scrollback",
+        "open_help" => "Open Help",
         _ => "Unknown Action",
     }
 }
@@ -1403,6 +1471,11 @@ mod tests {
         assert!(!ui.dirty);
         // Font tab should have 4 fields
         assert_eq!(ui.active_fields().len(), 4);
+    }
+
+    #[test]
+    fn test_action_label_knows_open_help() {
+        assert_eq!(action_label("open_help"), "Open Help");
     }
 
     #[test]
@@ -1885,7 +1958,7 @@ program = "cmd.exe"
             .iter()
             .position(|&t| t == SettingsTab::Accessibility)
             .unwrap();
-        assert_eq!(ui.tab_fields[idx].len(), 15);
+        assert_eq!(ui.tab_fields[idx].len(), 20);
     }
 
     #[test]
@@ -1913,6 +1986,53 @@ program = "cmd.exe"
     }
 
     #[test]
+    fn test_accessibility_tab_exposes_all_audio_event_toggles() {
+        let mut ui = SettingsUI::default();
+        ui.open();
+        ui.active_tab = SettingsTab::Accessibility;
+        assert_eq!(
+            ui.active_fields().len(),
+            20,
+            "Accessibility tab should expose 20 fields (15 base + 5 audio event toggles)"
+        );
+
+        // Fields 15..20 are the per-event audio toggles, default on.
+        for (idx, label) in [
+            (15, "Audio Mode Toggle"),
+            (16, "Audio Password Prompt"),
+            (17, "Audio Navigation"),
+            (18, "Audio Selection"),
+            (19, "Audio Boundaries"),
+        ] {
+            match ui.active_fields().get(idx) {
+                Some(SettingsField::Toggle { label: l, value }) => {
+                    assert_eq!(*l, label);
+                    assert!(*value, "{label} should default on");
+                }
+                other => panic!("Expected toggle {label} at index {idx}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_accessibility_audio_event_toggles_apply_to_draft() {
+        let mut ui = SettingsUI::default();
+        ui.open();
+        ui.active_tab = SettingsTab::Accessibility;
+
+        for idx in 15..20 {
+            ui.focused_field = idx;
+            ui.start_edit(); // toggles immediately (all default on -> off)
+        }
+        assert!(ui.dirty);
+        assert!(!ui.draft.accessibility.audio_mode_toggle);
+        assert!(!ui.draft.accessibility.audio_password_prompt);
+        assert!(!ui.draft.accessibility.audio_navigation);
+        assert!(!ui.draft.accessibility.audio_selection);
+        assert!(!ui.draft.accessibility.audio_boundaries);
+    }
+
+    #[test]
     fn test_accessibility_toggle_audio_feedback() {
         let mut ui = SettingsUI::default();
         ui.open();
@@ -1934,6 +2054,22 @@ program = "cmd.exe"
         assert!(now);
         assert!(ui.dirty);
         assert!(ui.draft.accessibility.audio_feedback);
+    }
+
+    #[test]
+    fn test_every_default_action_has_a_label() {
+        let config = Config::default();
+        let unlabeled: Vec<&str> = config
+            .keybindings
+            .bindings
+            .iter()
+            .map(|b| b.action.as_str())
+            .filter(|action| action_label(action) == "Unknown Action")
+            .collect();
+        assert!(
+            unlabeled.is_empty(),
+            "these default actions render as \"Unknown Action\" in settings: {unlabeled:?}"
+        );
     }
 
     #[test]

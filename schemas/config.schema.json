@@ -13,10 +13,15 @@
         "announce_images": true,
         "announce_pane_position": true,
         "announce_tab_details": true,
+        "audio_boundaries": true,
         "audio_command_complete": true,
         "audio_errors": true,
         "audio_feedback": false,
+        "audio_mode_toggle": true,
+        "audio_navigation": true,
+        "audio_password_prompt": true,
         "audio_progress": true,
+        "audio_selection": true,
         "high_contrast": "auto",
         "live_region_politeness": "polite",
         "min_contrast_ratio": 4.5,
@@ -347,6 +352,11 @@
           "type": "boolean",
           "default": true
         },
+        "audio_boundaries": {
+          "description": "Enable audio tone at history and line-edit boundaries.",
+          "type": "boolean",
+          "default": true
+        },
         "audio_command_complete": {
           "description": "Enable audio tone specifically for command completion.",
           "type": "boolean",
@@ -362,8 +372,28 @@
           "type": "boolean",
           "default": false
         },
+        "audio_mode_toggle": {
+          "description": "Enable audio tone for mode toggles (read-only, broadcast, zoom).",
+          "type": "boolean",
+          "default": true
+        },
+        "audio_navigation": {
+          "description": "Enable audio tone when switching tabs or panes.",
+          "type": "boolean",
+          "default": true
+        },
+        "audio_password_prompt": {
+          "description": "Enable audio tone when a password/no-echo prompt is detected.",
+          "type": "boolean",
+          "default": true
+        },
         "audio_progress": {
           "description": "Enable audio tone specifically for progress bar updates.",
+          "type": "boolean",
+          "default": true
+        },
+        "audio_selection": {
+          "description": "Enable audio tone when the text selection changes.",
           "type": "boolean",
           "default": true
         },

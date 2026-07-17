@@ -491,6 +491,16 @@ pub struct AccessibilityConfig {
     pub audio_errors: bool,
     /// Enable audio tone specifically for command completion.
     pub audio_command_complete: bool,
+    /// Enable audio tone for mode toggles (read-only, broadcast, zoom).
+    pub audio_mode_toggle: bool,
+    /// Enable audio tone when a password/no-echo prompt is detected.
+    pub audio_password_prompt: bool,
+    /// Enable audio tone when switching tabs or panes.
+    pub audio_navigation: bool,
+    /// Enable audio tone when the text selection changes.
+    pub audio_selection: bool,
+    /// Enable audio tone at history and line-edit boundaries.
+    pub audio_boundaries: bool,
     /// Milliseconds between screen reader output announcements.
     ///
     /// Controls how often batched terminal output is sent to the screen reader.
@@ -517,6 +527,11 @@ impl Default for AccessibilityConfig {
             audio_progress: true,
             audio_errors: true,
             audio_command_complete: true,
+            audio_mode_toggle: true,
+            audio_password_prompt: true,
+            audio_navigation: true,
+            audio_selection: true,
+            audio_boundaries: true,
             output_debounce_ms: 100,
         }
     }
@@ -879,6 +894,14 @@ impl Config {
             }
         }
 
+        // Clamp/validate all numeric and enum fields. A hostile config file (or
+        // Lua override) could otherwise set e.g. font.size = 1e9 or a NaN,
+        // triggering a huge glyph-atlas allocation or NaN propagation into the
+        // renderer at startup. Validation runs last so Lua overrides are covered.
+        for warning in config.validate() {
+            tracing::warn!(field = %warning.field, message = %warning.message, "Config value clamped");
+        }
+
         Ok(config)
     }
 
@@ -959,6 +982,38 @@ impl Config {
     /// safe defaults or clamped to their valid range.
     pub fn validate(&mut self) -> Vec<ValidationWarning> {
         let mut warnings = Vec::new();
+
+        // Non-finite floats (NaN, ±inf) slip past `<`/`>` comparisons because all
+        // such comparisons are false. Reset them to defaults before range checks
+        // so a `size = nan` in the config cannot reach the renderer.
+        let defaults_font = FontConfig::default();
+        let defaults_window = WindowConfig::default();
+        for (value, default, field) in [
+            (&mut self.font.size, defaults_font.size, "font.size"),
+            (
+                &mut self.font.line_height,
+                defaults_font.line_height,
+                "font.line_height",
+            ),
+            (
+                &mut self.window.opacity,
+                defaults_window.opacity,
+                "window.opacity",
+            ),
+            (
+                &mut self.window.background_image_opacity,
+                defaults_window.background_image_opacity,
+                "window.background_image_opacity",
+            ),
+        ] {
+            if !value.is_finite() {
+                warnings.push(ValidationWarning {
+                    field: field.into(),
+                    message: format!("{field} was not a finite number, reset to {default}"),
+                });
+                *value = default;
+            }
+        }
 
         // font.size: [4.0, 128.0]
         if self.font.size < 4.0 {
@@ -1310,6 +1365,48 @@ pub fn clink_scripts_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    fn read_default_toml() -> String {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/default.toml");
+        std::fs::read_to_string(path).expect("config/default.toml should be readable")
+    }
+
+    #[test]
+    fn default_toml_matches_code_defaults() {
+        let parsed: Config =
+            toml::from_str(&read_default_toml()).expect("config/default.toml should parse");
+        let defaults = Config::default();
+        assert_eq!(
+            parsed.keybindings.bindings, defaults.keybindings.bindings,
+            "config/default.toml keybindings drifted from KeybindingsConfig::default()"
+        );
+        assert_eq!(
+            parsed.accessibility, defaults.accessibility,
+            "config/default.toml [accessibility] values drifted from AccessibilityConfig::default()"
+        );
+    }
+
+    #[test]
+    fn default_toml_documents_every_accessibility_field() {
+        let doc: toml::Value =
+            toml::from_str(&read_default_toml()).expect("config/default.toml should parse");
+        let file_section = doc
+            .get("accessibility")
+            .and_then(|v| v.as_table())
+            .expect("config/default.toml should have an [accessibility] table");
+        let defaults =
+            toml::Value::try_from(AccessibilityConfig::default()).expect("serialize accessibility");
+        let missing: Vec<&String> = defaults
+            .as_table()
+            .expect("accessibility serializes to a table")
+            .keys()
+            .filter(|key| !file_section.contains_key(key.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "config/default.toml [accessibility] omits documented fields: {missing:?}"
+        );
+    }
+
     #[test]
     fn test_default_config() {
         let config = Config::default();
@@ -1473,6 +1570,34 @@ background = "mica"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.window.background, BackgroundStyle::Mica);
+    }
+
+    #[test]
+    fn test_accessibility_audio_event_toggles_default_on() {
+        let a = AccessibilityConfig::default();
+        assert!(a.audio_mode_toggle, "audio_mode_toggle should default on");
+        assert!(
+            a.audio_password_prompt,
+            "audio_password_prompt should default on"
+        );
+        assert!(a.audio_navigation, "audio_navigation should default on");
+        assert!(a.audio_selection, "audio_selection should default on");
+        assert!(a.audio_boundaries, "audio_boundaries should default on");
+    }
+
+    #[test]
+    fn test_accessibility_audio_event_toggles_roundtrip_toml() {
+        let mut config = Config::default();
+        config.accessibility.audio_feedback = true;
+        config.accessibility.audio_mode_toggle = false;
+        config.accessibility.audio_password_prompt = false;
+        config.accessibility.audio_navigation = false;
+        config.accessibility.audio_selection = false;
+        config.accessibility.audio_boundaries = false;
+
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.accessibility, config.accessibility);
     }
 
     #[test]
@@ -1723,6 +1848,41 @@ action = "new_tab"
         let config = Config::load(&toml_path).unwrap();
         assert_eq!(config.font.size, 22.0); // overridden by Lua
         assert_eq!(config.colors.foreground, "#abcdef"); // overridden by Lua
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A hostile config file with an absurd font size must be clamped during
+    /// `load`, not silently passed to the renderer (which would allocate a huge
+    /// glyph atlas).
+    #[test]
+    fn test_load_clamps_hostile_font_size() {
+        let dir = std::env::temp_dir().join("wixen_config_test_hostile_font");
+        let _ = std::fs::create_dir_all(&dir);
+        let toml_path = dir.join("config.toml");
+        std::fs::write(&toml_path, "[font]\nsize = 1000000000.0\n").unwrap();
+
+        let config = Config::load(&toml_path).unwrap();
+        assert_eq!(config.font.size, 128.0, "font size must be clamped on load");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A NaN font size (valid TOML `nan`) slips past the range comparisons and
+    /// must be reset to a finite default during `load`.
+    #[test]
+    fn test_load_resets_nan_font_size() {
+        let dir = std::env::temp_dir().join("wixen_config_test_nan_font");
+        let _ = std::fs::create_dir_all(&dir);
+        let toml_path = dir.join("config.toml");
+        std::fs::write(&toml_path, "[font]\nsize = nan\n").unwrap();
+
+        let config = Config::load(&toml_path).unwrap();
+        assert!(
+            config.font.size.is_finite() && (4.0..=128.0).contains(&config.font.size),
+            "NaN font size must be reset to a finite in-range value, got {}",
+            config.font.size
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

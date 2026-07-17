@@ -121,9 +121,10 @@ working_directory = ""
 chord = "ctrl+shift+t"
 action = "new_tab"
 
+# Ctrl+Shift+W closes the active pane (and the tab when it is the last pane).
 [[keybindings.bindings]]
 chord = "ctrl+shift+w"
-action = "close_tab"
+action = "close_pane"
 
 [[keybindings.bindings]]
 chord = "ctrl+tab"
@@ -241,6 +242,86 @@ action = "select_tab_8"
 chord = "ctrl+9"
 action = "select_tab_9"
 
+# Pane navigation (Windows Terminal compatible).
+[[keybindings.bindings]]
+chord = "alt+left"
+action = "focus_pane_left"
+
+[[keybindings.bindings]]
+chord = "alt+right"
+action = "focus_pane_right"
+
+[[keybindings.bindings]]
+chord = "alt+up"
+action = "focus_pane_up"
+
+[[keybindings.bindings]]
+chord = "alt+down"
+action = "focus_pane_down"
+
+# Pane resize.
+[[keybindings.bindings]]
+chord = "alt+shift+left"
+action = "resize_pane_shrink"
+
+[[keybindings.bindings]]
+chord = "alt+shift+right"
+action = "resize_pane_grow"
+
+# Tab and window management.
+[[keybindings.bindings]]
+chord = "ctrl+shift+d"
+action = "duplicate_tab"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+n"
+action = "new_window"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+comma"
+action = "open_config_file"
+
+# Search navigation.
+[[keybindings.bindings]]
+chord = "f3"
+action = "find_next"
+
+[[keybindings.bindings]]
+chord = "shift+f3"
+action = "find_previous"
+
+# Alternate fullscreen binding.
+[[keybindings.bindings]]
+chord = "alt+enter"
+action = "toggle_fullscreen"
+
+# Accessibility helpers.
+[[keybindings.bindings]]
+chord = "ctrl+shift+z"
+action = "toggle_zoom"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+r"
+action = "toggle_read_only"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+b"
+action = "toggle_broadcast_input"
+
+# Clearing.
+[[keybindings.bindings]]
+chord = "ctrl+shift+l"
+action = "clear_terminal"
+
+[[keybindings.bindings]]
+chord = "ctrl+shift+k"
+action = "clear_scrollback"
+
+# Help. F1 opens the user guide.
+[[keybindings.bindings]]
+chord = "f1"
+action = "open_help"
+
 # ─── Profiles ────────────────────────────────────────────────────────────────
 #
 # Named shell profiles. If empty, a single profile is synthesized from [shell].
@@ -302,3 +383,15 @@ audio_progress = true
 audio_errors = true
 # Enable command completion tones
 audio_command_complete = true
+# Enable a tone for mode toggles (read-only, broadcast input, pane zoom)
+audio_mode_toggle = true
+# Enable a tone when a password or no-echo prompt is detected
+audio_password_prompt = true
+# Enable a tone when switching tabs or panes
+audio_navigation = true
+# Enable a tone when the text selection changes
+audio_selection = true
+# Enable a tone at history and line-edit boundaries
+audio_boundaries = true
+# Milliseconds between screen reader output announcements (range 50 to 1000)
+output_debounce_ms = 100
