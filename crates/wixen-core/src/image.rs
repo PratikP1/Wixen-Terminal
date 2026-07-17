@@ -26,10 +26,24 @@ pub struct TerminalImage {
     pub cell_rows: usize,
 }
 
+/// Maximum number of images retained at once.
+///
+/// A hostile program can spam inline-image sequences; without a ceiling the
+/// store would grow without bound. Oldest images are evicted first (FIFO).
+pub const MAX_IMAGES: usize = 256;
+
+/// Maximum total decoded pixel memory retained across all images (256 MiB).
+///
+/// The per-image APC size cap bounds one image, but 1000 images of 16 MiB each
+/// would still hold 16 GiB. This bounds the aggregate.
+pub const MAX_TOTAL_IMAGE_BYTES: usize = 256 * 1024 * 1024;
+
 /// Manages all images placed in the terminal.
 pub struct ImageStore {
     images: Vec<TerminalImage>,
     next_id: u64,
+    /// Running total of `pixels.len()` across all stored images.
+    total_bytes: usize,
 }
 
 impl ImageStore {
@@ -37,12 +51,17 @@ impl ImageStore {
         Self {
             images: Vec::new(),
             next_id: 1,
+            total_bytes: 0,
         }
     }
 
     /// Add an image at the given grid position.
     ///
     /// `cell_size` is `(cell_width, cell_height)` in pixels for grid placement.
+    ///
+    /// The store enforces both a count cap ([`MAX_IMAGES`]) and an aggregate
+    /// memory cap ([`MAX_TOTAL_IMAGE_BYTES`]), evicting the oldest images first
+    /// so a flood of inline images cannot exhaust memory.
     pub fn add(
         &mut self,
         pixels: Vec<u8>,
@@ -56,6 +75,7 @@ impl ImageStore {
         let cell_rows = (height as f32 / cell_size.1).ceil().max(1.0) as usize;
         let id = self.next_id;
         self.next_id += 1;
+        let byte_len = pixels.len();
         debug!(id, width, height, cell_cols, cell_rows, "Image added");
         self.images.push(TerminalImage {
             id,
@@ -67,7 +87,27 @@ impl ImageStore {
             cell_cols,
             cell_rows,
         });
+        self.total_bytes += byte_len;
+        self.enforce_limits();
         id
+    }
+
+    /// Evict the oldest images until both the count and memory caps are met.
+    ///
+    /// The most recently added image is always retained, even if it alone
+    /// exceeds the memory cap, so a valid render is still possible.
+    fn enforce_limits(&mut self) {
+        while self.images.len() > MAX_IMAGES
+            || (self.total_bytes > MAX_TOTAL_IMAGE_BYTES && self.images.len() > 1)
+        {
+            let evicted = self.images.remove(0);
+            self.total_bytes = self.total_bytes.saturating_sub(evicted.pixels.len());
+        }
+    }
+
+    /// Total decoded pixel memory currently retained, in bytes.
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
     }
 
     /// Get all images.
@@ -78,18 +118,24 @@ impl ImageStore {
     /// Remove images that have scrolled off-screen.
     pub fn prune(&mut self, min_row: usize) {
         self.images.retain(|img| img.row + img.cell_rows > min_row);
+        self.recompute_total_bytes();
     }
 
     /// Remove all images.
     pub fn clear(&mut self) {
         self.images.clear();
+        self.total_bytes = 0;
     }
 
     /// Remove a specific image by its ID. Returns true if found and removed.
     pub fn remove_by_id(&mut self, id: u64) -> bool {
         let before = self.images.len();
         self.images.retain(|img| img.id != id);
-        self.images.len() < before
+        let removed = self.images.len() < before;
+        if removed {
+            self.recompute_total_bytes();
+        }
+        removed
     }
 
     /// Remove images at a specific grid position (col, row).
@@ -100,6 +146,12 @@ impl ImageStore {
                 && img.row <= row
                 && row < img.row + img.cell_rows)
         });
+        self.recompute_total_bytes();
+    }
+
+    /// Recompute `total_bytes` from the retained images after a bulk removal.
+    fn recompute_total_bytes(&mut self) {
+        self.total_bytes = self.images.iter().map(|img| img.pixels.len()).sum();
     }
 
     /// Number of stored images.
@@ -790,6 +842,36 @@ mod tests {
         assert_eq!(store.len(), 2);
         store.clear();
         assert!(store.is_empty());
+    }
+
+    /// A flood of images must be capped by count — oldest evicted first.
+    #[test]
+    fn test_image_store_enforces_count_cap() {
+        let mut store = ImageStore::new();
+        let mut last_id = 0;
+        for _ in 0..(MAX_IMAGES + 50) {
+            last_id = store.add(vec![0u8; 4], 1, 1, 0, 0, (8.0, 16.0));
+        }
+        assert_eq!(store.len(), MAX_IMAGES, "count must be capped");
+        // The most recent image must still be present.
+        assert!(store.images().iter().any(|img| img.id == last_id));
+    }
+
+    /// A flood of large images must be capped by total memory.
+    #[test]
+    fn test_image_store_enforces_memory_cap() {
+        let mut store = ImageStore::new();
+        // Each image is 16 MiB; 100 of them would be 1.6 GiB unbounded.
+        let sixteen_mib = 16 * 1024 * 1024;
+        for _ in 0..100 {
+            store.add(vec![0u8; sixteen_mib], 2048, 2048, 0, 0, (8.0, 16.0));
+        }
+        assert!(
+            store.total_bytes() <= MAX_TOTAL_IMAGE_BYTES,
+            "aggregate image memory must be bounded, got {} bytes",
+            store.total_bytes()
+        );
+        assert!(!store.is_empty(), "the latest image must be retained");
     }
 
     #[test]

@@ -154,6 +154,22 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_message_size_cap_boundary() {
+        // One byte over the cap is rejected: this locks the exact ceiling that
+        // stops a hostile client from forcing a multi-gigabyte allocation.
+        let over = ((MAX_MESSAGE_SIZE + 1) as u32).to_le_bytes();
+        assert!(matches!(
+            decode_message(&over).unwrap_err(),
+            DecodeError::MessageTooLarge(n) if n == MAX_MESSAGE_SIZE + 1
+        ));
+
+        // Exactly at the cap is allowed through the length check — it only
+        // returns `None` because the (short) buffer lacks the full payload.
+        let at = (MAX_MESSAGE_SIZE as u32).to_le_bytes();
+        assert!(decode_message(&at).unwrap().is_none());
+    }
+
+    #[test]
     fn test_sessions_response_roundtrip() {
         let msg = IpcMessage::Response(IpcResponse::Sessions {
             sessions: vec![

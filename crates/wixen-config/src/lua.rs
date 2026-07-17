@@ -7,7 +7,18 @@
 use mlua::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, error, info};
+
+/// Maximum number of Luau interrupt callbacks (loop back-edges / calls) permitted
+/// for a single config script before execution is aborted.
+///
+/// A hostile `config.lua` containing `while true do end` would otherwise hang the
+/// terminal forever at startup. Legitimate configs execute a few thousand
+/// instructions, so this ceiling is generous while still bounding runtime to a
+/// fraction of a second.
+const MAX_LUA_INSTRUCTIONS: u64 = 10_000_000;
 
 /// A keybinding registered from Lua.
 #[derive(Debug, Clone)]
@@ -38,6 +49,14 @@ pub struct LuaConfigResult {
 /// - **`debug`** — Luau's `debug` is limited to `traceback` and `info`,
 ///   but `debug.info` can leak implementation details and assist in
 ///   sandbox-escape research.
+/// - **`getfenv` / `setfenv`** — deprecated Luau environment primitives with
+///   no legitimate use in a config script; they are classic sandbox-escape
+///   tools, so they are removed defensively.
+///
+/// Luau already omits the dynamic code loaders (`load`, `loadstring`,
+/// `dofile`, `loadfile`) and `string.dump`, so a config script cannot compile
+/// arbitrary bytecode or read files. The only remaining `require` target is
+/// Luau's built-in, time-only `os` (no `execute`), which is harmless.
 ///
 /// Safe libraries (`string`, `table`, `math`, `utf8`, `bit32`, `buffer`)
 /// and the user-facing `wixen` table are left intact.
@@ -45,12 +64,16 @@ pub fn sandbox_lua(lua: &mlua::Lua) -> LuaResult<()> {
     let globals = lua.globals();
     globals.set("os", mlua::Value::Nil)?;
     globals.set("debug", mlua::Value::Nil)?;
+    globals.set("getfenv", mlua::Value::Nil)?;
+    globals.set("setfenv", mlua::Value::Nil)?;
     Ok(())
 }
 
 /// The Lua scripting engine.
 pub struct LuaEngine {
     lua: Lua,
+    /// Interrupt counter reset before each script run; guards against infinite loops.
+    instruction_count: Arc<AtomicU64>,
 }
 
 impl LuaEngine {
@@ -59,7 +82,30 @@ impl LuaEngine {
         let lua = Lua::new();
         sandbox_lua(&lua)?;
         Self::setup_api(&lua)?;
-        Ok(Self { lua })
+
+        // Install an execution limit so a malicious or buggy config cannot hang
+        // startup with an infinite loop. Luau fires the interrupt on loop
+        // back-edges and function calls; once the ceiling is crossed we abort.
+        let instruction_count = Arc::new(AtomicU64::new(0));
+        let counter = instruction_count.clone();
+        lua.set_interrupt(move |_| {
+            if counter.fetch_add(1, Ordering::Relaxed) >= MAX_LUA_INSTRUCTIONS {
+                return Err(LuaError::external(
+                    "Lua execution limit exceeded (possible infinite loop in config)",
+                ));
+            }
+            Ok(mlua::VmState::Continue)
+        });
+
+        Ok(Self {
+            lua,
+            instruction_count,
+        })
+    }
+
+    /// Reset the interrupt counter before running a script.
+    fn reset_instruction_count(&self) {
+        self.instruction_count.store(0, Ordering::Relaxed);
     }
 
     /// Set up the `wixen` API table in the Lua global environment.
@@ -122,6 +168,7 @@ impl LuaEngine {
         let source = std::fs::read_to_string(path).map_err(LuaError::external)?;
         info!(path = %path.display(), "Loading Lua config");
 
+        self.reset_instruction_count();
         if let Err(e) = self
             .lua
             .load(&source)
@@ -137,6 +184,7 @@ impl LuaEngine {
 
     /// Load and execute a Lua string (for testing / inline scripts).
     pub fn load_string(&self, source: &str) -> LuaResult<LuaConfigResult> {
+        self.reset_instruction_count();
         self.lua.load(source).exec()?;
         self.collect_results()
     }
@@ -315,5 +363,80 @@ mod sandbox_tests {
         let engine = LuaEngine::new().unwrap();
         let result = engine.load_string(r#"debug.info(1, "s")"#);
         assert!(result.is_err());
+    }
+
+    /// A hostile config with an infinite loop must not hang startup forever.
+    /// The execution limit must abort it and surface an error.
+    #[test]
+    fn test_infinite_loop_is_aborted() {
+        let engine = LuaEngine::new().unwrap();
+        let result = engine.load_string("while true do end");
+        assert!(
+            result.is_err(),
+            "infinite loop must be aborted by the execution limit"
+        );
+    }
+
+    /// An infinite loop that also grows memory must still be aborted.
+    #[test]
+    fn test_infinite_loop_with_work_is_aborted() {
+        let engine = LuaEngine::new().unwrap();
+        let result = engine.load_string("local t = {} while true do t[#t+1] = 1 end");
+        assert!(result.is_err(), "runaway loop must be aborted");
+    }
+
+    /// The execution limit must reset between runs so a legitimate script that
+    /// follows a heavy one still succeeds.
+    #[test]
+    fn test_instruction_limit_resets_between_runs() {
+        let engine = LuaEngine::new().unwrap();
+        // A moderately busy but finite loop that stays under the ceiling.
+        engine
+            .load_string("local s = 0 for i = 1, 100000 do s = s + i end")
+            .unwrap();
+        // A second run must not inherit the previous run's instruction count.
+        let result = engine
+            .load_string(r#"wixen.set_option("font.size", 20)"#)
+            .unwrap();
+        assert_eq!(result.overrides.get("font.size").unwrap(), "20");
+    }
+
+    /// `require` may resolve Luau's built-in libraries, but none of them may
+    /// expose a process- or file-spawning capability such as `os.execute`.
+    #[test]
+    fn test_require_cannot_reach_dangerous_capabilities() {
+        let engine = LuaEngine::new().unwrap();
+        // require("os") returns Luau's time-only os table — assert no execute.
+        let reachable: bool = engine
+            .lua()
+            .load(
+                r#"
+                local ok, m = pcall(require, "os")
+                if not ok then return false end
+                return type(m) == "table" and m.execute ~= nil
+            "#,
+            )
+            .eval()
+            .unwrap();
+        assert!(
+            !reachable,
+            "os.execute must not be reachable through require"
+        );
+    }
+
+    /// The deprecated environment primitives must be stripped from the sandbox.
+    #[test]
+    fn test_getfenv_setfenv_removed() {
+        let engine = LuaEngine::new().unwrap();
+        assert!(engine.load_string("return getfenv(1)").is_err());
+        assert!(engine.load_string("setfenv(1, {})").is_err());
+    }
+
+    /// `string.dump` (bytecode extraction, an escape-analysis aid) must be absent.
+    #[test]
+    fn test_string_dump_absent() {
+        let engine = LuaEngine::new().unwrap();
+        let result = engine.load_string(r#"return string.dump(function() end)"#);
+        assert!(result.is_err(), "string.dump must not be available");
     }
 }

@@ -77,6 +77,14 @@ pub fn ssh_target_to_command(target: &SshTarget) -> (String, Vec<String>) {
     } else {
         format!("{}@{}", target.user, target.host)
     };
+
+    // Defense in depth: a destination beginning with `-` (e.g. a hostile config
+    // supplying host = "-oProxyCommand=calc.exe") would be parsed by ssh as an
+    // option, smuggling arbitrary command execution. Terminate option parsing
+    // with `--` so the destination is always treated literally.
+    if dest.starts_with('-') {
+        args.push("--".to_string());
+    }
     args.push(dest);
 
     (program, args)
@@ -105,6 +113,12 @@ pub fn parse_ssh_url(url: &str) -> Option<SshTarget> {
         return None;
     }
 
+    // Reject users that ssh would interpret as options (argument injection):
+    // e.g. `ssh://-oProxyCommand=calc@host` smuggles a command into the user field.
+    if user.starts_with('-') {
+        return None;
+    }
+
     let (host, port) = if let Some(colon_pos) = host_port.find(':') {
         let host = &host_port[..colon_pos];
         let port_str = &host_port[colon_pos + 1..];
@@ -115,6 +129,12 @@ pub fn parse_ssh_url(url: &str) -> Option<SshTarget> {
     };
 
     if host.is_empty() {
+        return None;
+    }
+
+    // Reject hosts that ssh would interpret as options (argument injection):
+    // e.g. `ssh://-oProxyCommand=calc.exe` would run an arbitrary command.
+    if host.starts_with('-') {
         return None;
     }
 
@@ -247,6 +267,59 @@ mod tests {
         assert!(parse_ssh_url("ssh://user@:9999").is_none());
     }
 
+    // ── Argument-injection hardening ──
+
+    /// A host beginning with `-` would be parsed by `ssh` as an option, so a URL
+    /// like `ssh://-oProxyCommand=calc.exe` could execute an arbitrary command.
+    /// `parse_ssh_url` must reject it.
+    #[test]
+    fn parse_url_rejects_dash_host() {
+        assert!(parse_ssh_url("ssh://-oProxyCommand=calc.exe").is_none());
+        assert!(parse_ssh_url("ssh://-lroot").is_none());
+        assert!(parse_ssh_url("ssh://user@-oProxyCommand=calc.exe").is_none());
+    }
+
+    /// A user beginning with `-` is equally dangerous and must be rejected.
+    #[test]
+    fn parse_url_rejects_dash_user() {
+        assert!(parse_ssh_url("ssh://-oProxyCommand=calc@host.com").is_none());
+    }
+
+    /// Even when an `SshTarget` is built directly from a hostile config file
+    /// (bypassing `parse_ssh_url`), `to_command` must never emit a host or user
+    /// that `ssh` would interpret as an option.
+    #[test]
+    fn to_command_neutralizes_dash_host() {
+        let target = SshTarget {
+            host: "-oProxyCommand=calc.exe".into(),
+            ..Default::default()
+        };
+        let (_, args) = ssh_target_to_command(&target);
+        // The destination must be terminated from option parsing by `--`.
+        let dash_dash = args.iter().position(|a| a == "--");
+        assert!(dash_dash.is_some(), "expected `--` separator before host");
+        let idx = dash_dash.unwrap();
+        assert_eq!(
+            args.get(idx + 1).map(String::as_str),
+            Some("-oProxyCommand=calc.exe"),
+            "host must follow the `--` separator so ssh treats it literally"
+        );
+    }
+
+    #[test]
+    fn to_command_no_separator_for_safe_host() {
+        let target = SshTarget {
+            host: "example.com".into(),
+            ..Default::default()
+        };
+        let (_, args) = ssh_target_to_command(&target);
+        assert!(
+            !args.iter().any(|a| a == "--"),
+            "no separator needed for a safe host"
+        );
+        assert_eq!(args, vec!["example.com"]);
+    }
+
     // ── SshManager ──
 
     #[test]
@@ -298,5 +371,79 @@ port = 22
     fn default_port_is_22() {
         let target = SshTarget::default();
         assert_eq!(target.port, 22);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// parse_ssh_url must never panic on arbitrary input, including
+        /// multibyte characters around the '@' and ':' separators.
+        #[test]
+        fn parse_never_panics(url in ".{0,200}") {
+            let _ = parse_ssh_url(&url);
+        }
+
+        /// Any successfully parsed target has a non-empty host, and a user
+        /// prefix in the URL never yields an empty user.
+        #[test]
+        fn parsed_targets_are_well_formed(url in "ssh://.{0,100}") {
+            if let Some(target) = parse_ssh_url(&url) {
+                prop_assert!(!target.host.is_empty());
+                prop_assert_eq!(&target.name, &target.host);
+            }
+        }
+
+        /// A well-formed ssh URL round-trips through the parser.
+        #[test]
+        fn well_formed_url_roundtrips(
+            user in proptest::option::of("[a-z][a-z0-9]{0,10}"),
+            host in "[a-z][a-z0-9.-]{0,20}",
+            port in proptest::option::of(1u16..),
+        ) {
+            let mut url = String::from("ssh://");
+            if let Some(u) = &user {
+                url.push_str(u);
+                url.push('@');
+            }
+            url.push_str(&host);
+            if let Some(p) = port {
+                url.push_str(&format!(":{p}"));
+            }
+            let target = parse_ssh_url(&url).expect("well-formed URL must parse");
+            prop_assert_eq!(&target.host, &host);
+            prop_assert_eq!(&target.user, user.as_deref().unwrap_or(""));
+            prop_assert_eq!(target.port, port.unwrap_or(22));
+        }
+
+        /// ssh_target_to_command never panics and always ends with the
+        /// destination argument.
+        #[test]
+        fn command_always_ends_with_destination(
+            host in "[a-z][a-z0-9.-]{0,20}",
+            user in "[a-z0-9]{0,10}",
+            port in any::<u16>(),
+            identity in ".{0,40}",
+        ) {
+            let target = SshTarget {
+                host: host.clone(),
+                user: user.clone(),
+                port,
+                identity_file: identity,
+                ..Default::default()
+            };
+            let (_, args) = ssh_target_to_command(&target);
+            let expected_dest = if user.is_empty() {
+                host
+            } else {
+                format!("{user}@{host}")
+            };
+            prop_assert_eq!(args.last().map(String::as_str), Some(expected_dest.as_str()));
+        }
     }
 }

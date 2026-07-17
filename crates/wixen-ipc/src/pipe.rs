@@ -5,12 +5,87 @@
 
 use std::io::{self, Read, Write};
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 
 use crate::messages::{IpcMessage, IpcRequest, IpcResponse, decode_message, encode_message};
 
 /// Default pipe name for Wixen Terminal IPC.
 pub const DEFAULT_PIPE_NAME: &str = r"\\.\pipe\wixen-terminal-ipc";
+
+/// Owner-only security descriptor for the IPC pipe, in SDDL form.
+///
+/// A named pipe created with default security lets every process in the same
+/// interactive session open it and send any `IpcRequest` — including
+/// `Shutdown`. This DACL is protected (`P`, so no inherited ACEs widen it) and
+/// grants `GENERIC_ALL` only to the object owner (`OW` — the user who created
+/// the pipe) and to LocalSystem (`SY`, so elevated service tooling can still
+/// manage it). Every other principal is implicitly denied, so a peer process
+/// running as a different user, or a sandboxed/low-integrity process, cannot
+/// connect and issue commands.
+const PIPE_SDDL: &str = "D:P(A;;GA;;;OW)(A;;GA;;;SY)";
+
+/// Owns a security descriptor built from [`PIPE_SDDL`] and frees it on drop.
+///
+/// `ConvertStringSecurityDescriptorToSecurityDescriptorW` allocates the
+/// descriptor with `LocalAlloc`, so it must be released with `LocalFree`.
+struct PipeSecurity {
+    descriptor: PSECURITY_DESCRIPTOR,
+}
+
+impl PipeSecurity {
+    /// Build the owner-only descriptor from [`PIPE_SDDL`].
+    ///
+    /// Returns `None` only if the (compile-time-constant) SDDL fails to
+    /// convert, which should not happen at runtime; callers log and fall back
+    /// to default security rather than panic.
+    fn owner_only() -> Option<Self> {
+        use windows::Win32::Security::Authorization::{
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+        };
+        use windows::core::HSTRING;
+
+        let sddl = HSTRING::from(PIPE_SDDL);
+        let mut descriptor = PSECURITY_DESCRIPTOR::default();
+        let result = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                &sddl,
+                SDDL_REVISION_1,
+                &mut descriptor,
+                None,
+            )
+        };
+        match result {
+            Ok(()) => Some(Self { descriptor }),
+            Err(e) => {
+                warn!(error = %e, "Failed to build IPC pipe security descriptor");
+                None
+            }
+        }
+    }
+
+    /// A `SECURITY_ATTRIBUTES` referencing this descriptor. The result borrows
+    /// `self` through a raw pointer, so it must not outlive the `PipeSecurity`.
+    fn attributes(&self) -> SECURITY_ATTRIBUTES {
+        SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: self.descriptor.0,
+            bInheritHandle: false.into(),
+        }
+    }
+}
+
+impl Drop for PipeSecurity {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::{HLOCAL, LocalFree};
+
+        if !self.descriptor.is_invalid() {
+            unsafe {
+                let _ = LocalFree(Some(HLOCAL(self.descriptor.0)));
+            }
+        }
+    }
+}
 
 /// Named pipe identifier.
 #[derive(Debug, Clone)]
@@ -89,16 +164,22 @@ impl IpcServer {
         use windows::core::HSTRING;
 
         let pipe_name = HSTRING::from(self.pipe_name.as_str());
+        // Restrict the pipe to the owner (see `PIPE_SDDL`). `security` and
+        // `attributes` must stay alive until after `CreateNamedPipeW` returns,
+        // because `security_ptr` borrows into them.
+        let security = PipeSecurity::owner_only();
+        let attributes = security.as_ref().map(PipeSecurity::attributes);
+        let security_ptr = attributes.as_ref().map(|a| a as *const SECURITY_ATTRIBUTES);
         let handle = unsafe {
             CreateNamedPipeW(
                 &pipe_name,
                 PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                1,    // max instances
-                4096, // out buffer
-                4096, // in buffer
-                0,    // default timeout
-                None, // default security
+                1,            // max instances
+                4096,         // out buffer
+                4096,         // in buffer
+                0,            // default timeout
+                security_ptr, // owner-only DACL
             )
         };
 
@@ -152,6 +233,11 @@ impl IpcServer {
         use windows::core::HSTRING;
 
         let name = HSTRING::from(pipe_name.as_str());
+        // Same owner-only DACL as `serve_once`, so the probe pipe another
+        // instance would connect to is never world-accessible either.
+        let security = PipeSecurity::owner_only();
+        let attributes = security.as_ref().map(PipeSecurity::attributes);
+        let security_ptr = attributes.as_ref().map(|a| a as *const SECURITY_ATTRIBUTES);
         let handle = unsafe {
             CreateNamedPipeW(
                 &name,
@@ -161,7 +247,7 @@ impl IpcServer {
                 4096,
                 4096,
                 0,
-                None,
+                security_ptr,
             )
         };
 
@@ -251,6 +337,36 @@ mod tests {
     fn test_pipe_name_default() {
         let name = PipeName::default_name();
         assert_eq!(name.as_str(), DEFAULT_PIPE_NAME);
+    }
+
+    #[test]
+    fn test_pipe_sddl_is_owner_only() {
+        // Protected DACL granting full access to owner and SYSTEM only. If this
+        // ever loosens (e.g. adds AU/Everyone), the pipe would again accept
+        // commands from other processes in the session.
+        assert_eq!(PIPE_SDDL, "D:P(A;;GA;;;OW)(A;;GA;;;SY)");
+        assert!(PIPE_SDDL.contains("D:P"), "DACL must be protected");
+        assert!(PIPE_SDDL.contains("(A;;GA;;;OW)"), "owner must have access");
+        assert!(!PIPE_SDDL.contains(";;;WD)"), "must not grant to Everyone");
+        assert!(
+            !PIPE_SDDL.contains(";;;AU)"),
+            "must not grant to Authenticated Users"
+        );
+    }
+
+    #[test]
+    fn test_owner_only_descriptor_builds() {
+        // The constant SDDL must convert to a real security descriptor. This is
+        // a pure in-memory conversion (no pipe is created), so it is safe to run
+        // in unit tests. The descriptor is freed when `security` drops.
+        let security = PipeSecurity::owner_only().expect("SDDL must convert");
+        assert!(!security.descriptor.is_invalid());
+        let attrs = security.attributes();
+        assert_eq!(
+            attrs.nLength as usize,
+            std::mem::size_of::<SECURITY_ATTRIBUTES>()
+        );
+        assert!(!attrs.lpSecurityDescriptor.is_null());
     }
 
     #[test]
