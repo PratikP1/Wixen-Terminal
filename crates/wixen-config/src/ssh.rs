@@ -192,9 +192,54 @@ impl SshManager {
     }
 }
 
+/// Resolve a command-palette `ssh_<name>` action id to its target.
+///
+/// The palette builds entry ids as `ssh_<name>` (see `CommandPalette::load_ssh_targets`),
+/// so dispatch must look the target up by name, not by numeric index.
+pub fn resolve_ssh_action<'a>(action: &str, targets: &'a [SshTarget]) -> Option<&'a SshTarget> {
+    let name = action.strip_prefix("ssh_")?;
+    targets.iter().find(|target| target.name == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_ssh_action_finds_target_by_name() {
+        let targets = vec![
+            SshTarget {
+                name: "Production".to_string(),
+                host: "prod.example.com".to_string(),
+                ..SshTarget::default()
+            },
+            SshTarget {
+                name: "Staging".to_string(),
+                host: "stage.example.com".to_string(),
+                ..SshTarget::default()
+            },
+        ];
+        let resolved = resolve_ssh_action("ssh_Staging", &targets);
+        assert_eq!(resolved.map(|t| t.host.as_str()), Some("stage.example.com"));
+    }
+
+    #[test]
+    fn resolve_ssh_action_returns_none_for_unknown_name() {
+        let targets = vec![SshTarget {
+            name: "Production".to_string(),
+            ..SshTarget::default()
+        }];
+        assert!(resolve_ssh_action("ssh_Nope", &targets).is_none());
+    }
+
+    #[test]
+    fn resolve_ssh_action_returns_none_without_prefix() {
+        let targets = vec![SshTarget {
+            name: "Production".to_string(),
+            ..SshTarget::default()
+        }];
+        assert!(resolve_ssh_action("Production", &targets).is_none());
+    }
 
     // ── ssh_target_to_command ──
 

@@ -3776,11 +3776,7 @@ fn dispatch_keybinding_action(
             DispatchResult::Handled
         }
         _ if action.starts_with("ssh_") => {
-            if let Some(idx_str) = action.strip_prefix("ssh_")
-                && let Ok(idx) = idx_str.parse::<usize>()
-                && idx < config.ssh.len()
-            {
-                let target = &config.ssh[idx];
+            if let Some(target) = wixen_config::ssh::resolve_ssh_action(action, &config.ssh) {
                 let (program, args) = target.to_command();
                 let label = if target.name.is_empty() {
                     target.host.clone()
