@@ -6,6 +6,7 @@ use crate::cursor::CursorShape;
 use crate::grid::Grid;
 use crate::hyperlink::HyperlinkStore;
 use crate::image::{ImageStore, KittyChunkState};
+use crate::keyboard::KittyKeyboardState;
 use crate::modes::{MouseMode, TerminalModes};
 use crate::selection::{GridPoint, Selection, SelectionType};
 use tracing::{debug, trace};
@@ -300,6 +301,8 @@ pub struct Terminal {
     pub echo_suppressed: bool,
     /// Pending echo check: the typed character and when it was typed.
     pub echo_check_pending: Option<(char, std::time::Instant)>,
+    /// Kitty keyboard protocol state (negotiated via CSI > / = / < / ? u).
+    kitty_keyboard: KittyKeyboardState,
 }
 
 /// A Kitty image that has been transmitted (a=t) but not yet displayed (a=p).
@@ -378,7 +381,18 @@ impl Terminal {
             pending_image_announcements: Vec::new(),
             echo_suppressed: false,
             echo_check_pending: None,
+            kitty_keyboard: KittyKeyboardState::default(),
         }
+    }
+
+    /// Current Kitty keyboard protocol flags (0 when the protocol is disabled).
+    ///
+    /// `main.rs` consults this when encoding key presses: non-zero flags mean
+    /// the focused application negotiated the Kitty keyboard protocol, so keys
+    /// should be encoded via [`crate::keyboard::encode_key_with_kitty`] rather
+    /// than the legacy [`crate::keyboard::encode_key`].
+    pub fn kitty_keyboard_flags(&self) -> u32 {
+        self.kitty_keyboard.current_flags()
     }
 
     /// Standard 16-color ANSI palette (matches VGA defaults).
@@ -1378,7 +1392,33 @@ impl Terminal {
                     self.save_cursor();
                 }
             }
-            'u' => self.restore_cursor(),
+            // CSI u — legacy restore cursor (SCORC), or Kitty keyboard protocol
+            // negotiation when prefixed with a private marker (> = < ?).
+            'u' => match intermediates.first().copied() {
+                Some(b'>') => {
+                    // Push progressive-enhancement flags.
+                    let flags = params.first().copied().unwrap_or(0) as u32;
+                    self.kitty_keyboard.push(flags);
+                }
+                Some(b'=') => {
+                    // Set flags with a mode (mode defaults to 1).
+                    let flags = params.first().copied().unwrap_or(0) as u32;
+                    let mode = param(params, 1, 1) as u8;
+                    self.kitty_keyboard.set(flags, mode);
+                }
+                Some(b'<') => {
+                    // Pop the given number of levels (defaults to 1).
+                    let levels = param(params, 0, 1) as usize;
+                    self.kitty_keyboard.pop_n(levels);
+                }
+                Some(b'?') => {
+                    // Report current flags as CSI ? flags u.
+                    let flags = self.kitty_keyboard.current_flags();
+                    self.pending_responses
+                        .push(format!("\x1b[?{flags}u").into_bytes());
+                }
+                _ => self.restore_cursor(),
+            },
 
             // Tab clear
             'g' => {
@@ -3083,6 +3123,114 @@ mod tests {
         let drained = term.drain_responses();
         assert_eq!(drained.len(), 1);
         assert!(term.pending_responses.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Kitty keyboard protocol negotiation (CSI > / = / < / ? u)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_kitty_flags_disabled_by_default() {
+        let term = Terminal::new(80, 24);
+        assert_eq!(term.kitty_keyboard_flags(), 0);
+    }
+
+    #[test]
+    fn test_kitty_push_enables_disambiguate() {
+        let mut term = Terminal::new(80, 24);
+        // CSI > 1 u — push DISAMBIGUATE_ESCAPE_CODES
+        term.csi_dispatch(&[1], b">", 'u', &[]);
+        assert_eq!(term.kitty_keyboard_flags(), 1);
+    }
+
+    #[test]
+    fn test_kitty_pop_restores_previous_flags() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[1], b">", 'u', &[]); // push 1
+        term.csi_dispatch(&[3], b">", 'u', &[]); // push 3
+        assert_eq!(term.kitty_keyboard_flags(), 3);
+        term.csi_dispatch(&[1], b"<", 'u', &[]); // pop 1 level
+        assert_eq!(term.kitty_keyboard_flags(), 1);
+    }
+
+    #[test]
+    fn test_kitty_pop_default_count_is_one() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[1], b">", 'u', &[]);
+        term.csi_dispatch(&[3], b">", 'u', &[]);
+        // CSI < u (no param) pops a single level.
+        term.csi_dispatch(&[], b"<", 'u', &[]);
+        assert_eq!(term.kitty_keyboard_flags(), 1);
+    }
+
+    #[test]
+    fn test_kitty_set_mode_1_replaces() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[7], b">", 'u', &[]); // current = 7
+        // CSI = 1 ; 1 u — set given, reset others → 1
+        term.csi_dispatch(&[1, 1], b"=", 'u', &[]);
+        assert_eq!(term.kitty_keyboard_flags(), 1);
+    }
+
+    #[test]
+    fn test_kitty_set_mode_1_is_default_mode() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[7], b">", 'u', &[]); // current = 7
+        // CSI = 5 u — mode omitted defaults to 1 → replace with 5
+        term.csi_dispatch(&[5], b"=", 'u', &[]);
+        assert_eq!(term.kitty_keyboard_flags(), 5);
+    }
+
+    #[test]
+    fn test_kitty_set_mode_2_sets_given() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[1], b">", 'u', &[]); // current = 1
+        // CSI = 2 ; 2 u — set given, keep others → 3
+        term.csi_dispatch(&[2, 2], b"=", 'u', &[]);
+        assert_eq!(term.kitty_keyboard_flags(), 3);
+    }
+
+    #[test]
+    fn test_kitty_set_mode_3_clears_given() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[7], b">", 'u', &[]); // current = 7
+        // CSI = 2 ; 3 u — reset given, keep others → 5
+        term.csi_dispatch(&[2, 3], b"=", 'u', &[]);
+        assert_eq!(term.kitty_keyboard_flags(), 5);
+    }
+
+    #[test]
+    fn test_kitty_query_reports_current_flags() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[1], b">", 'u', &[]); // enable flags = 1
+        // CSI ? u — query
+        term.csi_dispatch(&[], b"?", 'u', &[]);
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0], b"\x1b[?1u");
+    }
+
+    #[test]
+    fn test_kitty_query_reports_zero_when_disabled() {
+        let mut term = Terminal::new(80, 24);
+        term.csi_dispatch(&[], b"?", 'u', &[]);
+        let responses = term.drain_responses();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0], b"\x1b[?0u");
+    }
+
+    #[test]
+    fn test_csi_u_without_intermediate_still_restores_cursor() {
+        let mut term = Terminal::new(80, 24);
+        // Save cursor at a known position, move, then CSI u restores it.
+        term.cursor_to(5, 3);
+        term.save_cursor();
+        term.cursor_to(0, 0);
+        term.csi_dispatch(&[], &[], 'u', &[]);
+        assert_eq!(term.grid.cursor.col, 5);
+        assert_eq!(term.grid.cursor.row, 3);
+        // And it must not have touched the Kitty state.
+        assert_eq!(term.kitty_keyboard_flags(), 0);
     }
 
     #[test]

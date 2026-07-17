@@ -166,6 +166,14 @@ pub fn strip_vt_escapes(input: &str) -> String {
 
 /// Raise a UIA TextChanged event on the provider.
 ///
+/// This is a distinct UIA event (`UIA_Text_TextChangedEventId`) from the
+/// notification events used for spoken announcements: it tells assistive
+/// technology that the text-pattern content changed so it can re-query the
+/// text via `ITextProvider`.
+///
+/// NOTE: main.rs must call this whenever `TerminalA11yState::full_text`
+/// changes (i.e. on new terminal output) — it currently has no caller.
+///
 /// # Safety
 /// Must be called on the UI thread.
 pub unsafe fn raise_text_changed(provider: &IRawElementProviderSimple) {
@@ -177,6 +185,13 @@ pub unsafe fn raise_text_changed(provider: &IRawElementProviderSimple) {
 }
 
 /// Raise a UIA LiveRegionChanged event for new output.
+///
+/// The root provider advertises itself as a polite live region
+/// (`LiveSetting = Polite`); raising `UIA_LiveRegionChangedEventId` is the
+/// matching mechanism that makes screen readers announce new output.
+///
+/// NOTE: main.rs must call this when new live-region output arrives — it
+/// currently has no caller.
 ///
 /// # Safety
 /// Must be called on the UI thread.
@@ -269,69 +284,6 @@ pub unsafe fn raise_structure_changed(
                 child_runtime_id.len() as i32,
             );
         }
-    }
-}
-
-/// Raise a notification for a pane mode change (zoom, read-only, broadcast).
-///
-/// Screen readers will announce the mode change so users know their input
-/// state has changed.
-///
-/// # Safety
-/// Must be called on the UI thread.
-pub unsafe fn raise_mode_change(provider: &IRawElementProviderSimple, mode: &str, enabled: bool) {
-    unsafe {
-        if !UiaClientsAreListening().as_bool() {
-            return;
-        }
-
-        let msg = if enabled {
-            format!("{mode} enabled")
-        } else {
-            format!("{mode} disabled")
-        };
-
-        let _ = UiaRaiseNotificationEvent(
-            provider,
-            NotificationKind_ActionCompleted,
-            NotificationProcessing_ImportantAll,
-            &BSTR::from(&msg),
-            &BSTR::from("mode-change"),
-        );
-    }
-}
-
-/// Raise a notification for an inline image placed in the terminal.
-///
-/// Includes the image protocol, dimensions, and filename (if available)
-/// so screen reader users know an image was displayed.
-///
-/// # Safety
-/// Must be called on the UI thread.
-pub unsafe fn raise_image_placed(
-    provider: &IRawElementProviderSimple,
-    protocol: &str,
-    width: u32,
-    height: u32,
-    filename: Option<&str>,
-) {
-    unsafe {
-        if !UiaClientsAreListening().as_bool() {
-            return;
-        }
-
-        let msg = match filename {
-            Some(name) => format!("{protocol} image: {name} ({width}\u{00d7}{height} pixels)"),
-            None => format!("{protocol} image: {width}\u{00d7}{height} pixels"),
-        };
-
-        let _ = UiaRaiseNotificationEvent(
-            provider,
-            NotificationKind_ItemAdded,
-            NotificationProcessing_All,
-            &BSTR::from(&msg),
-            &BSTR::from("image-placed"),
-        );
     }
 }
 

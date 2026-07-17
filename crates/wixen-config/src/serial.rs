@@ -1,10 +1,11 @@
 //! Serial port connection profile configuration.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Parity mode for serial communication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Parity {
     /// No parity bit.
@@ -27,7 +28,7 @@ impl fmt::Display for Parity {
 }
 
 /// Flow control mode for serial communication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FlowControl {
     /// No flow control.
@@ -52,7 +53,7 @@ impl fmt::Display for FlowControl {
 /// Configuration for a serial port connection profile.
 ///
 /// Default is standard 9600-8-N-1 with no flow control.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SerialConfig {
     /// Serial port name (e.g., "COM3" on Windows).

@@ -474,12 +474,34 @@ impl TabManager {
         Some(tab)
     }
 
-    /// Attach a tab from another window into this manager.
+    /// Create a new tab manager seeded with a single detached tab.
     ///
-    /// The tab is inserted at the end and becomes the active tab.
+    /// This is the destination for a window *tear-off*: [`detach_tab`] removes a
+    /// tab from the source window's manager, and the caller hands that `Tab` here
+    /// to build the new window's manager. The tab keeps its id, title, color,
+    /// profile, and full pane tree. Subsequent ids are allocated above the seed
+    /// tab's id so freshly added tabs never collide with it.
+    ///
+    /// [`detach_tab`]: TabManager::detach_tab
+    pub fn from_detached_tab(tab: Tab) -> Self {
+        let next_id = tab.id.0 + 1;
+        Self {
+            tabs: vec![tab],
+            active_idx: 0,
+            prev_active_idx: 0,
+            next_id,
+        }
+    }
+
+    /// Attach a tab from another window into this manager (window *merge*).
+    ///
+    /// The tab is inserted at the end and becomes the active tab. The tab keeps
+    /// its original id; the manager's id allocator is advanced past it so later
+    /// [`add_tab`](TabManager::add_tab) calls cannot mint a colliding id.
     /// Returns the tab's ID for convenience.
     pub fn attach_tab(&mut self, tab: Tab) -> TabId {
         let id = tab.id;
+        self.next_id = self.next_id.max(id.0 + 1);
         self.tabs.push(tab);
         self.active_idx = self.tabs.len() - 1;
         id
@@ -503,6 +525,26 @@ impl TabManager {
             })
             .collect()
     }
+}
+
+/// Named preset colors offered by the tab-color picker.
+///
+/// A UI action (command palette entry or keybinding) can list these to let the
+/// user pick a tab color, then apply the chosen [`TabColor`] with
+/// [`TabManager::set_tab_color`]. Clearing is done via
+/// [`TabManager::clear_tab_color`].
+pub fn tab_color_presets() -> &'static [(&'static str, TabColor)] {
+    const PRESETS: &[(&str, TabColor)] = &[
+        ("Red", TabColor::new(0xE0, 0x1B, 0x24)),
+        ("Orange", TabColor::new(0xF2, 0x8C, 0x18)),
+        ("Yellow", TabColor::new(0xF5, 0xC2, 0x11)),
+        ("Green", TabColor::new(0x2E, 0xA0, 0x43)),
+        ("Teal", TabColor::new(0x12, 0x9E, 0x9E)),
+        ("Blue", TabColor::new(0x1E, 0x6F, 0xD9)),
+        ("Purple", TabColor::new(0x8A, 0x3F, 0xC0)),
+        ("Gray", TabColor::new(0x6E, 0x6E, 0x6E)),
+    ];
+    PRESETS
 }
 
 /// Build a rich screen reader announcement for a tab.
@@ -1313,5 +1355,81 @@ mod tests {
         let mut mgr2 = TabManager::new("C");
         mgr2.attach_tab(tab);
         assert_eq!(mgr2.active_tab().pane_tree.pane_count(), 2);
+    }
+
+    // --- Tear-off (new window) tests ---
+
+    #[test]
+    fn test_from_detached_tab_seeds_new_window() {
+        let mut src = TabManager::new("A");
+        let (b_id, _) = src.add_tab("B");
+        src.select_tab(b_id);
+        src.split_active_pane(crate::panes::SplitDirection::Vertical);
+
+        let tab = src.detach_tab(b_id).unwrap();
+        let new_window = TabManager::from_detached_tab(tab);
+
+        assert_eq!(new_window.tab_count(), 1);
+        assert_eq!(new_window.active_tab().id, b_id);
+        assert_eq!(new_window.active_tab().title, "B");
+        // The torn-off pane layout travels with the tab.
+        assert_eq!(new_window.active_tab().pane_tree.pane_count(), 2);
+    }
+
+    #[test]
+    fn test_from_detached_tab_allocates_fresh_ids() {
+        let mut src = TabManager::new("A");
+        let (b_id, _) = src.add_tab("B");
+        let tab = src.detach_tab(b_id).unwrap();
+
+        let mut new_window = TabManager::from_detached_tab(tab);
+        let (c_id, _) = new_window.add_tab("C");
+        assert_ne!(
+            c_id, b_id,
+            "a tab added to the torn-off window must not reuse the seed tab's id"
+        );
+    }
+
+    #[test]
+    fn test_attach_tab_avoids_future_id_collision() {
+        // Two independently-created windows both start allocating ids at 1, so a
+        // torn-off tab can share an id with a slot the destination will reuse.
+        let mut src = TabManager::new("A");
+        let (b_id, _) = src.add_tab("B"); // TabId(2)
+        let tab = src.detach_tab(b_id).unwrap();
+
+        let mut dst = TabManager::new("C"); // next_id == 2
+        dst.attach_tab(tab); // attaches TabId(2)
+        let (new_id, _) = dst.add_tab("D");
+
+        assert_ne!(
+            new_id, b_id,
+            "a newly added tab must not collide with a previously attached tab id"
+        );
+    }
+
+    // --- Tab color preset tests ---
+
+    #[test]
+    fn test_tab_color_presets_nonempty_with_unique_names() {
+        let presets = tab_color_presets();
+        assert!(!presets.is_empty());
+        let mut names: Vec<&str> = presets.iter().map(|(name, _)| *name).collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "preset names must be unique");
+    }
+
+    #[test]
+    fn test_tab_color_preset_can_be_applied() {
+        let presets = tab_color_presets();
+        let (_, color) = presets[0];
+
+        let mut mgr = TabManager::new("A");
+        let id = mgr.active_tab_id();
+        mgr.set_tab_color(id, color);
+
+        assert_eq!(mgr.active_tab().tab_color, Some(color));
     }
 }

@@ -42,6 +42,13 @@
         "theme": null
       }
     },
+    "effects": {
+      "description": "Background/post-processing visual effects.",
+      "$ref": "#/$defs/EffectsConfig",
+      "default": {
+        "blur_radius": 0
+      }
+    },
     "font": {
       "$ref": "#/$defs/FontConfig",
       "default": {
@@ -260,12 +267,36 @@
         ]
       }
     },
+    "macros": {
+      "description": "User-defined command macros. Built into a `MacroStore` at startup.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/MacroConfig"
+      }
+    },
+    "plugins": {
+      "description": "Declared Lua plugins. Loaded into a `PluginRegistry` at startup.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PluginManifest"
+      }
+    },
     "profiles": {
       "description": "Named shell profiles. If empty, a single profile is synthesized from `[shell]`.",
       "type": "array",
       "default": [],
       "items": {
         "$ref": "#/$defs/Profile"
+      }
+    },
+    "serial": {
+      "description": "Serial port connection profiles.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SerialConfig"
       }
     },
     "shell": {
@@ -523,6 +554,46 @@
           "default": null
         }
       }
+    },
+    "EffectsConfig": {
+      "description": "Background and post-processing visual effects.\n\nThese live in their own `[effects]` section rather than `[window]` because\nthey configure the renderer's post-processing pipeline (blur, custom\nshaders) rather than window chrome. Keeping them separate leaves room for\nthe pipeline to grow (bloom, CRT emulation, scanlines) without crowding\n`WindowConfig`, and makes the renderer wiring read from one cohesive place.",
+      "type": "object",
+      "properties": {
+        "blur_radius": {
+          "description": "Gaussian blur radius applied to the window background, in pixels.\n\n`0` disables the blur pass entirely (the default).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "shader_path": {
+          "description": "Path to a custom WGSL post-process shader (empty/absent = none).\n\nWhen set, the renderer runs this shader as a final full-screen pass.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "FlowControl": {
+      "description": "Flow control mode for serial communication.",
+      "oneOf": [
+        {
+          "description": "No flow control.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Hardware (RTS/CTS) flow control.",
+          "type": "string",
+          "const": "hardware"
+        },
+        {
+          "description": "Software (XON/XOFF) flow control.",
+          "type": "string",
+          "const": "software"
+        }
+      ]
     },
     "FontConfig": {
       "description": "Font configuration.",
@@ -804,6 +875,53 @@
         }
       }
     },
+    "MacroConfig": {
+      "description": "TOML-serializable representation of a macro.\n\nExample TOML:\n```toml\n[[macros]]\nname = \"git-status\"\ndescription = \"Run git status\"\nsteps = [{ type = \"run_command\", value = \"git status\" }]\nkeybinding = \"ctrl+shift+g\"\n```",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "default": ""
+        },
+        "keybinding": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MacroStepConfig"
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "MacroStepConfig": {
+      "description": "TOML-serializable representation of a single macro step.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Step type: \"send_text\", \"send_keys\", \"wait\", \"run_command\".",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value for the step (text, key sequence, command, or milliseconds for wait).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ]
+    },
     "Osc52Policy": {
       "description": "OSC 52 clipboard access policy.\n\nControls whether programs running in the terminal can read/write the system clipboard\nvia escape sequences. Write-only is the safe default — full read access could let a\nmalicious program silently exfiltrate clipboard contents.",
       "oneOf": [
@@ -861,6 +979,62 @@
           "minimum": 0
         }
       }
+    },
+    "Parity": {
+      "description": "Parity mode for serial communication.",
+      "oneOf": [
+        {
+          "description": "No parity bit.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Even parity.",
+          "type": "string",
+          "const": "even"
+        },
+        {
+          "description": "Odd parity.",
+          "type": "string",
+          "const": "odd"
+        }
+      ]
+    },
+    "PluginManifest": {
+      "description": "Describes a plugin that can be loaded by the terminal.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Short description shown in the plugin list.",
+          "type": "string"
+        },
+        "entry_point": {
+          "description": "Path to the Lua entry-point file, relative to the plugin directory.",
+          "type": "string"
+        },
+        "events": {
+          "description": "Events this plugin subscribes to (e.g. `\"on_tab_created\"`, `\"on_output\"`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "Human-readable plugin name (must be unique in the registry).",
+          "type": "string"
+        },
+        "version": {
+          "description": "SemVer version string.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "description",
+        "entry_point",
+        "events"
+      ]
     },
     "Profile": {
       "description": "A named shell profile.",
@@ -970,6 +1144,50 @@
           "const": "never"
         }
       ]
+    },
+    "SerialConfig": {
+      "description": "Configuration for a serial port connection profile.\n\nDefault is standard 9600-8-N-1 with no flow control.",
+      "type": "object",
+      "properties": {
+        "baud_rate": {
+          "description": "Baud rate in bits per second.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 9600,
+          "minimum": 0
+        },
+        "data_bits": {
+          "description": "Number of data bits (5, 6, 7, or 8).",
+          "type": "integer",
+          "format": "uint8",
+          "default": 8,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "flow_control": {
+          "description": "Flow control mode.",
+          "$ref": "#/$defs/FlowControl",
+          "default": "none"
+        },
+        "parity": {
+          "description": "Parity checking mode.",
+          "$ref": "#/$defs/Parity",
+          "default": "none"
+        },
+        "port": {
+          "description": "Serial port name (e.g., \"COM3\" on Windows).",
+          "type": "string",
+          "default": ""
+        },
+        "stop_bits": {
+          "description": "Number of stop bits (1 or 2).",
+          "type": "integer",
+          "format": "uint8",
+          "default": 1,
+          "maximum": 255,
+          "minimum": 0
+        }
+      }
     },
     "ShellConfig": {
       "description": "Shell configuration.",

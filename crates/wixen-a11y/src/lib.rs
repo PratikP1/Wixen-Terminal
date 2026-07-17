@@ -16,7 +16,7 @@ pub mod tree;
 
 pub use events::{EventThrottler, strip_vt_escapes};
 pub use fragment::ChildFragmentProvider;
-pub use grid_provider::{GridSnapshot, TerminalGridProvider};
+pub use grid_provider::{GridSnapshot, TableGridProvider, TerminalGridProvider};
 pub use palette_provider::{PaletteEntrySnapshot, PaletteSnapshot};
 pub use provider::{TerminalA11yState, TerminalProvider};
 pub use settings_provider::{FieldSnapshot, FieldType, SettingsSnapshot, SubFieldSnapshot};

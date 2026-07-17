@@ -16,6 +16,7 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
 use windows::core::*;
 
+use crate::grid_provider::TableGridProvider;
 use crate::provider::TerminalA11yState;
 use crate::tree::{A11yNode, NodeId, SemanticRole};
 
@@ -43,6 +44,14 @@ pub(crate) enum NodeKind {
     TextRegion {
         text: String,
         role: SemanticRole,
+    },
+    Table {
+        rows: usize,
+        cols: usize,
+    },
+    Hyperlink {
+        url: String,
+        text: String,
     },
 }
 
@@ -84,8 +93,16 @@ fn snapshot_recursive(parent: &A11yNode, target: NodeId) -> Option<NodeSnapshot>
                     text: text.clone(),
                     role: *role,
                 },
+                A11yNode::Table { rows, cols, .. } => NodeKind::Table {
+                    rows: *rows,
+                    cols: *cols,
+                },
+                A11yNode::Hyperlink { url, text, .. } => NodeKind::Hyperlink {
+                    url: url.clone(),
+                    text: text.clone(),
+                },
                 // Document and LiveRegion are not exposed as child fragments
-                _ => return None,
+                A11yNode::Document { .. } | A11yNode::LiveRegion { .. } => return None,
             };
 
             return Some(NodeSnapshot {
@@ -159,8 +176,18 @@ impl IRawElementProviderSimple_Impl for ChildFragmentProvider_Impl {
         Ok(ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading)
     }
 
-    fn GetPatternProvider(&self, _pattern_id: UIA_PATTERN_ID) -> Result<IUnknown> {
-        // Child fragments don't expose patterns (text pattern is on root)
+    fn GetPatternProvider(&self, pattern_id: UIA_PATTERN_ID) -> Result<IUnknown> {
+        // A Table fragment exposes the grid pattern so screen readers can walk
+        // its cells by row/column. Other child fragments expose no patterns
+        // (the text pattern lives on the root).
+        if pattern_id == UIA_GridPatternId {
+            let snap = self.snapshot().ok_or_else(Error::empty)?;
+            if matches!(snap.kind, NodeKind::Table { .. }) {
+                let grid = TableGridProvider::new(Arc::clone(&self.state), self.node_id);
+                let igrid: IGridProvider = grid.into();
+                return igrid.cast();
+            }
+        }
         Err(Error::empty())
     }
 
@@ -172,6 +199,8 @@ impl IRawElementProviderSimple_Impl for ChildFragmentProvider_Impl {
                 let type_id = match &snap.kind {
                     NodeKind::CommandBlock { .. } => UIA_GroupControlTypeId.0,
                     NodeKind::TextRegion { .. } => UIA_TextControlTypeId.0,
+                    NodeKind::Table { .. } => UIA_TableControlTypeId.0,
+                    NodeKind::Hyperlink { .. } => UIA_HyperlinkControlTypeId.0,
                 };
                 Ok(VARIANT::from(type_id))
             }
@@ -187,6 +216,10 @@ impl IRawElementProviderSimple_Impl for ChildFragmentProvider_Impl {
                         SemanticRole::StatusLine => format!("Status: {}", text),
                         SemanticRole::OutputText => text.clone(),
                     },
+                    NodeKind::Table { rows, cols } => {
+                        format!("Table, {} rows by {} columns", rows, cols)
+                    }
+                    NodeKind::Hyperlink { text, .. } => text.clone(),
                 };
                 Ok(VARIANT::from(BSTR::from(&name)))
             }
@@ -198,21 +231,32 @@ impl IRawElementProviderSimple_Impl for ChildFragmentProvider_Impl {
                     NodeKind::TextRegion { role, .. } => {
                         format!("{:?}_{}", role, self.node_id.0)
                     }
+                    NodeKind::Table { .. } => format!("Table_{}", self.node_id.0),
+                    NodeKind::Hyperlink { .. } => format!("Hyperlink_{}", self.node_id.0),
                 };
                 Ok(VARIANT::from(BSTR::from(&aid)))
             }
             UIA_IsContentElementPropertyId | UIA_IsControlElementPropertyId => {
                 Ok(VARIANT::from(true))
             }
+            UIA_IsGridPatternAvailablePropertyId => {
+                Ok(VARIANT::from(matches!(snap.kind, NodeKind::Table { .. })))
+            }
+            UIA_HelpTextPropertyId => match &snap.kind {
+                // Surface the link target so screen reader users can hear where
+                // a hyperlink points, even when the display text differs.
+                NodeKind::Hyperlink { url, .. } => Ok(VARIANT::from(BSTR::from(url))),
+                _ => Err(Error::empty()),
+            },
             UIA_LandmarkTypePropertyId => match &snap.kind {
                 NodeKind::CommandBlock { .. } => Ok(VARIANT::from(UIA_CustomLandmarkTypeId.0)),
-                NodeKind::TextRegion { .. } => Err(Error::empty()),
+                _ => Err(Error::empty()),
             },
             UIA_LocalizedLandmarkTypePropertyId => match &snap.kind {
                 NodeKind::CommandBlock { landmark_label, .. } => {
                     Ok(VARIANT::from(BSTR::from(landmark_label)))
                 }
-                NodeKind::TextRegion { .. } => Err(Error::empty()),
+                _ => Err(Error::empty()),
             },
             UIA_LocalizedControlTypePropertyId => {
                 let label = match &snap.kind {
@@ -232,6 +276,8 @@ impl IRawElementProviderSimple_Impl for ChildFragmentProvider_Impl {
                         SemanticRole::Url => "link",
                         SemanticRole::StatusLine => "status",
                     },
+                    NodeKind::Table { .. } => "table",
+                    NodeKind::Hyperlink { .. } => "link",
                 };
                 Ok(VARIANT::from(BSTR::from(label)))
             }
@@ -525,5 +571,118 @@ mod tests {
     fn test_snapshot_not_found() {
         let tree = build_test_tree();
         assert!(snapshot_node(&tree.root, NodeId(9999)).is_none());
+    }
+
+    const TABULAR_OUTPUT: &str = "A     B     C\n1     2     3\n4     5     6";
+
+    /// Build a tree whose single command block's output contains both a URL
+    /// (yielding a Hyperlink node) and column-aligned text (yielding a Table).
+    fn build_rich_output_tree() -> AccessibilityTree {
+        let mut tree = AccessibilityTree::new();
+        let blocks = vec![CommandBlock {
+            id: 1,
+            prompt: Some(RowRange::new(0, 0)),
+            input: Some(RowRange::new(1, 1)),
+            output: Some(RowRange::new(2, 4)),
+            exit_code: Some(0),
+            cwd: None,
+            command_text: Some("report".to_string()),
+            state: BlockState::Completed,
+            started_at: None,
+            output_line_count: 0,
+        }];
+        tree.rebuild(&blocks, |s, e| {
+            if s == 2 && e == 4 {
+                "See https://example.com\nA     B     C\n1     2     3".to_string()
+            } else {
+                format!("rows {}-{}", s, e)
+            }
+        });
+        tree
+    }
+
+    /// The output TextRegion of the first command block.
+    fn output_region(tree: &AccessibilityTree) -> &A11yNode {
+        tree.root.children()[0].children().last().unwrap()
+    }
+
+    #[test]
+    fn test_snapshot_hyperlink() {
+        let tree = build_rich_output_tree();
+        let hyperlink = output_region(&tree)
+            .children()
+            .iter()
+            .find(|n| matches!(n, A11yNode::Hyperlink { .. }))
+            .unwrap();
+
+        let snap = snapshot_node(&tree.root, hyperlink.id()).unwrap();
+        match &snap.kind {
+            NodeKind::Hyperlink { url, text } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(text, "https://example.com");
+            }
+            _ => panic!("Expected Hyperlink"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_table() {
+        let mut tree = AccessibilityTree::new();
+        let blocks = vec![CommandBlock {
+            id: 1,
+            prompt: None,
+            input: None,
+            output: Some(RowRange::new(2, 4)),
+            exit_code: Some(0),
+            cwd: None,
+            command_text: Some("wsl -l -v".to_string()),
+            state: BlockState::Completed,
+            started_at: None,
+            output_line_count: 0,
+        }];
+        tree.rebuild(&blocks, |_, _| TABULAR_OUTPUT.to_string());
+
+        let table = output_region(&tree)
+            .children()
+            .iter()
+            .find(|n| matches!(n, A11yNode::Table { .. }))
+            .unwrap();
+
+        let snap = snapshot_node(&tree.root, table.id()).unwrap();
+        match &snap.kind {
+            NodeKind::Table { rows, cols } => {
+                assert_eq!(*rows, 3); // header + 2 data rows
+                assert_eq!(*cols, 3);
+            }
+            _ => panic!("Expected Table"),
+        }
+    }
+
+    #[test]
+    fn test_every_child_of_output_region_snapshots_to_a_real_fragment() {
+        // Regression: Table/Hyperlink children were listed for navigation but
+        // resolved to None, breaking screen reader tree walking. Every child id
+        // the tree exposes must snapshot to a real fragment.
+        let tree = build_rich_output_tree();
+        let region = output_region(&tree);
+        assert!(
+            region
+                .children()
+                .iter()
+                .any(|n| matches!(n, A11yNode::Hyperlink { .. }))
+        );
+        assert!(
+            region
+                .children()
+                .iter()
+                .any(|n| matches!(n, A11yNode::Table { .. }))
+        );
+        for child in region.children() {
+            assert!(
+                snapshot_node(&tree.root, child.id()).is_some(),
+                "child {:?} must resolve to a navigable fragment",
+                child.id()
+            );
+        }
     }
 }

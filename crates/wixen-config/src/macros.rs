@@ -1,5 +1,6 @@
 //! Macro/snippet system for saving and replaying command sequences.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -72,7 +73,7 @@ impl MacroStore {
 }
 
 /// TOML-serializable representation of a single macro step.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MacroStepConfig {
     /// Step type: "send_text", "send_keys", "wait", "run_command".
     #[serde(rename = "type")]
@@ -91,7 +92,7 @@ pub struct MacroStepConfig {
 /// steps = [{ type = "run_command", value = "git status" }]
 /// keybinding = "ctrl+shift+g"
 /// ```
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MacroConfig {
     pub name: String,
     #[serde(default)]

@@ -1,50 +1,9 @@
-//! Gaussian blur: GPU compute shader and CPU fallback for background images.
-
-/// WGSL compute shader for single-pass Gaussian blur.
-///
-/// The GPU path dispatches this shader twice (horizontal then vertical)
-/// using a uniform to flip the blur direction.
-pub const BLUR_SHADER_WGSL: &str = r#"
-struct Params {
-    radius: u32,
-    horizontal: u32,
-    width: u32,
-    height: u32,
-}
-
-@group(0) @binding(0) var input_tex: texture_2d<f32>;
-@group(0) @binding(1) var output_tex: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(2) var<uniform> params: Params;
-@group(0) @binding(3) var<storage, read> weights: array<f32>;
-
-@compute @workgroup_size(16, 16)
-fn blur_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let x = gid.x;
-    let y = gid.y;
-    if x >= params.width || y >= params.height {
-        return;
-    }
-
-    var color = vec4<f32>(0.0);
-    let r = i32(params.radius);
-
-    for (var i = -r; i <= r; i = i + 1) {
-        let w = weights[u32(i + r)];
-        var sx: i32;
-        var sy: i32;
-        if params.horizontal != 0u {
-            sx = clamp(i32(x) + i, 0, i32(params.width) - 1);
-            sy = i32(y);
-        } else {
-            sx = i32(x);
-            sy = clamp(i32(y) + i, 0, i32(params.height) - 1);
-        }
-        color = color + w * textureLoad(input_tex, vec2<i32>(sx, sy), 0);
-    }
-
-    textureStore(output_tex, vec2<i32>(i32(x), i32(y)), color);
-}
-"#;
+//! Gaussian blur for background images (separable CPU implementation).
+//!
+//! The blur runs on the CPU when the background image is (re)uploaded — see
+//! [`crate::Renderer::set_blur_radius`] and the software renderer. Because the
+//! image is blurred once per radius change rather than per frame, the CPU cost
+//! is negligible and no GPU compute pipeline is required.
 
 /// Compute a 1-D Gaussian kernel of the given radius.
 ///
@@ -191,17 +150,5 @@ mod tests {
         let original = pixels.clone();
         apply_cpu_blur(&mut pixels, 2, 1, 0);
         assert_eq!(pixels, original);
-    }
-
-    #[test]
-    fn shader_source_is_non_empty() {
-        assert!(
-            !BLUR_SHADER_WGSL.is_empty(),
-            "BLUR_SHADER_WGSL must contain a compute shader"
-        );
-        assert!(
-            BLUR_SHADER_WGSL.contains("@compute"),
-            "shader must contain a compute entry point"
-        );
     }
 }

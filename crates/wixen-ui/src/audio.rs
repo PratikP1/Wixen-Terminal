@@ -191,6 +191,31 @@ pub fn play_event(config: &AudioConfig, event: AudioEvent) {
     }
 }
 
+/// Select the tone for a mode toggle based on its new on/off direction.
+///
+/// Enabling a mode (`active == true`) uses the higher [`tones::MODE_ON`] click;
+/// disabling it (`active == false`) uses the lower [`tones::MODE_OFF`] click, so
+/// the two directions are audibly distinct.
+pub fn mode_toggle_tone(active: bool) -> Tone {
+    if active {
+        tones::MODE_ON
+    } else {
+        tones::MODE_OFF
+    }
+}
+
+/// Play the mode-toggle tone for the given on/off direction, if mode-toggle
+/// audio is enabled.
+///
+/// This is the direction-aware counterpart to [`play_event`]: rather than always
+/// sounding [`tones::MODE_ON`], it sounds [`tones::MODE_OFF`] when a mode is being
+/// turned off. Gated on the same [`AudioEvent::ModeToggle`] enable flag.
+pub fn play_mode_toggle(config: &AudioConfig, active: bool) {
+    if config.should_play(AudioEvent::ModeToggle) {
+        play_tone(mode_toggle_tone(active));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,5 +378,56 @@ mod tests {
         config.enabled = true;
         assert!(config.should_play(AudioEvent::HistoryBoundary));
         assert!(config.should_play(AudioEvent::EditBoundary));
+    }
+
+    const ALL_EVENTS: [AudioEvent; 11] = [
+        AudioEvent::CommandSuccess,
+        AudioEvent::CommandError,
+        AudioEvent::OutputWarning,
+        AudioEvent::Progress,
+        AudioEvent::ProgressComplete,
+        AudioEvent::ModeToggle,
+        AudioEvent::PasswordPrompt,
+        AudioEvent::Navigation,
+        AudioEvent::Selection,
+        AudioEvent::HistoryBoundary,
+        AudioEvent::EditBoundary,
+    ];
+
+    #[test]
+    fn mode_toggle_on_uses_mode_on_tone() {
+        assert_eq!(mode_toggle_tone(true), tones::MODE_ON);
+    }
+
+    #[test]
+    fn mode_toggle_off_uses_mode_off_tone() {
+        assert_eq!(mode_toggle_tone(false), tones::MODE_OFF);
+    }
+
+    #[test]
+    fn mode_toggle_direction_tones_differ() {
+        assert_ne!(mode_toggle_tone(true), mode_toggle_tone(false));
+    }
+
+    #[test]
+    fn play_mode_toggle_noop_when_disabled() {
+        let config = AudioConfig::default();
+        // Disabled config: neither direction should panic.
+        play_mode_toggle(&config, true);
+        play_mode_toggle(&config, false);
+    }
+
+    #[test]
+    fn every_audio_event_maps_to_a_tone() {
+        let config = AudioConfig::default();
+        // Exercising tone_for over the full enumeration guarantees the match is
+        // exhaustive at runtime and that no variant is left without a tone.
+        for event in ALL_EVENTS {
+            let tone = config.tone_for(event);
+            assert!(
+                tone.freq >= 37 && tone.freq <= 32767,
+                "{event:?} produced an out-of-range tone"
+            );
+        }
     }
 }

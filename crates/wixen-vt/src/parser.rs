@@ -885,6 +885,68 @@ mod tests {
         }
     }
 
+    /// Helper: parse a byte sequence expected to yield a single CsiDispatch,
+    /// returning its (params, intermediates, action).
+    fn single_csi(bytes: &[u8]) -> (Vec<u16>, Vec<u8>, char) {
+        let mut parser = Parser::new();
+        let actions = parser.process(bytes);
+        assert_eq!(actions.len(), 1, "expected exactly one action");
+        match &actions[0] {
+            Action::CsiDispatch {
+                params,
+                intermediates,
+                action,
+                ..
+            } => (params.clone(), intermediates.clone(), *action),
+            other => panic!("Expected CsiDispatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_csi_kitty_push() {
+        // CSI > 1 u — push progressive-enhancement flags
+        let (params, intermediates, action) = single_csi(b"\x1b[>1u");
+        assert_eq!(action, 'u');
+        assert_eq!(intermediates, b">");
+        assert_eq!(params, &[1]);
+    }
+
+    #[test]
+    fn test_csi_kitty_set() {
+        // CSI = 1 ; 2 u — set flags with mode
+        let (params, intermediates, action) = single_csi(b"\x1b[=1;2u");
+        assert_eq!(action, 'u');
+        assert_eq!(intermediates, b"=");
+        assert_eq!(params, &[1, 2]);
+    }
+
+    #[test]
+    fn test_csi_kitty_pop() {
+        // CSI < 2 u — pop 2 levels
+        let (params, intermediates, action) = single_csi(b"\x1b[<2u");
+        assert_eq!(action, 'u');
+        assert_eq!(intermediates, b"<");
+        assert_eq!(params, &[2]);
+    }
+
+    #[test]
+    fn test_csi_kitty_query() {
+        // CSI ? u — query current flags (no params)
+        let (params, intermediates, action) = single_csi(b"\x1b[?u");
+        assert_eq!(action, 'u');
+        assert_eq!(intermediates, b"?");
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn test_csi_plain_u_has_no_intermediate() {
+        // CSI u — legacy restore cursor; must not be confused with Kitty.
+        let (params, intermediates, action) = single_csi(b"\x1b[u");
+        assert_eq!(action, 'u');
+        assert!(intermediates.is_empty());
+        assert!(params.is_empty());
+    }
+
     #[test]
     fn test_apc_dispatch() {
         // ESC _ G a = T ESC \   → APC with "Ga=T"

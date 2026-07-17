@@ -1,11 +1,12 @@
 //! Lua plugin/extension API: manifest, registry, and event definitions.
 
 use mlua::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Describes a plugin that can be loaded by the terminal.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct PluginManifest {
     /// Human-readable plugin name (must be unique in the registry).
     pub name: String,
@@ -33,6 +34,22 @@ impl PluginRegistry {
         }
         self.plugins.push(manifest);
         true
+    }
+
+    /// Build a registry from declared plugin manifests (e.g. `config.plugins`).
+    ///
+    /// Manifests are registered in order. Any whose name duplicates an
+    /// already-registered plugin is skipped; its name is returned in the second
+    /// tuple element so the caller can warn the user.
+    pub fn from_manifests(manifests: &[PluginManifest]) -> (Self, Vec<String>) {
+        let mut registry = Self::default();
+        let mut rejected = Vec::new();
+        for manifest in manifests {
+            if !registry.register(manifest.clone()) {
+                rejected.push(manifest.name.clone());
+            }
+        }
+        (registry, rejected)
     }
 
     /// Unregister a plugin by name. Returns `true` if it was found and removed.
@@ -247,6 +264,36 @@ mod tests {
             event_name(&PluginEvent::ConfigReloaded),
             "on_config_reloaded"
         );
+    }
+
+    #[test]
+    fn from_manifests_registers_all() {
+        let manifests = vec![
+            sample_manifest("alpha", &["on_output"]),
+            sample_manifest("beta", &["on_tab_created"]),
+        ];
+        let (registry, rejected) = PluginRegistry::from_manifests(&manifests);
+        assert_eq!(registry.list().len(), 2);
+        assert!(rejected.is_empty());
+    }
+
+    #[test]
+    fn from_manifests_skips_duplicate_names() {
+        let manifests = vec![
+            sample_manifest("dup", &["on_output"]),
+            sample_manifest("dup", &["on_tab_created"]),
+            sample_manifest("unique", &[]),
+        ];
+        let (registry, rejected) = PluginRegistry::from_manifests(&manifests);
+        assert_eq!(registry.list().len(), 2);
+        assert_eq!(rejected, vec!["dup".to_string()]);
+    }
+
+    #[test]
+    fn from_manifests_empty_is_empty() {
+        let (registry, rejected) = PluginRegistry::from_manifests(&[]);
+        assert!(registry.list().is_empty());
+        assert!(rejected.is_empty());
     }
 
     #[test]

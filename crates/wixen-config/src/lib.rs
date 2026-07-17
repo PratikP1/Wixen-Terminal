@@ -10,7 +10,11 @@ mod watcher;
 pub mod wsl;
 
 pub use lua::{LuaConfigResult, LuaEngine, LuaKeybinding, sandbox_lua};
-pub use plugin::{execute_plugin_event, execute_plugin_event_from_source};
+pub use macros::{Macro, MacroConfig, MacroConvertError, MacroStep, MacroStepConfig, MacroStore};
+pub use plugin::{
+    PluginManifest, PluginRegistry, execute_plugin_event, execute_plugin_event_from_source,
+};
+pub use serial::{FlowControl, Parity, SerialConfig, serial_to_profile_command};
 pub use session::{SavedTab, SessionState};
 pub use ssh::{SshManager, SshTarget, parse_ssh_url, ssh_target_to_command};
 pub use watcher::{ConfigDelta, ConfigWatcher};
@@ -407,6 +411,18 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     /// SSH connection targets.
     pub ssh: Vec<SshTarget>,
+    /// User-defined command macros. Built into a `MacroStore` at startup.
+    #[serde(default)]
+    pub macros: Vec<MacroConfig>,
+    /// Declared Lua plugins. Loaded into a `PluginRegistry` at startup.
+    #[serde(default)]
+    pub plugins: Vec<PluginManifest>,
+    /// Serial port connection profiles.
+    #[serde(default)]
+    pub serial: Vec<SerialConfig>,
+    /// Background/post-processing visual effects.
+    #[serde(default)]
+    pub effects: EffectsConfig,
 }
 
 /// Screen reader output verbosity level.
@@ -694,6 +710,27 @@ pub struct WindowConfig {
     pub tab_bar: TabBarMode,
     /// Terminal content padding in pixels.
     pub padding: Padding,
+}
+
+/// Background and post-processing visual effects.
+///
+/// These live in their own `[effects]` section rather than `[window]` because
+/// they configure the renderer's post-processing pipeline (blur, custom
+/// shaders) rather than window chrome. Keeping them separate leaves room for
+/// the pipeline to grow (bloom, CRT emulation, scanlines) without crowding
+/// `WindowConfig`, and makes the renderer wiring read from one cohesive place.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(default)]
+pub struct EffectsConfig {
+    /// Gaussian blur radius applied to the window background, in pixels.
+    ///
+    /// `0` disables the blur pass entirely (the default).
+    pub blur_radius: u32,
+    /// Path to a custom WGSL post-process shader (empty/absent = none).
+    ///
+    /// When set, the renderer runs this shader as a final full-screen pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shader_path: Option<String>,
 }
 
 /// OSC 52 clipboard access policy.
@@ -2754,6 +2791,103 @@ output_debounce_ms = 250
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.accessibility.output_debounce_ms, 250);
+    }
+
+    #[test]
+    fn default_config_subsystem_lists_are_empty() {
+        let config = Config::default();
+        assert!(config.macros.is_empty());
+        assert!(config.plugins.is_empty());
+        assert!(config.serial.is_empty());
+        assert_eq!(config.effects, EffectsConfig::default());
+        assert_eq!(config.effects.blur_radius, 0);
+        assert_eq!(config.effects.shader_path, None);
+    }
+
+    #[test]
+    fn macros_deserialize_and_build_store() {
+        let toml_str = r#"
+[[macros]]
+name = "git-status"
+description = "Run git status"
+steps = [{ type = "run_command", value = "git status" }]
+keybinding = "ctrl+shift+g"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.macros.len(), 1);
+
+        let (store, errors) = MacroStore::load_from_config(&config.macros);
+        assert!(errors.is_empty());
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.get("git-status").unwrap().steps.len(), 1);
+    }
+
+    #[test]
+    fn plugins_deserialize_and_build_registry() {
+        let toml_str = r#"
+[[plugins]]
+name = "notifier"
+version = "1.0.0"
+description = "Desktop notifications"
+entry_point = "notifier/init.lua"
+events = ["on_command_complete"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.plugins.len(), 1);
+
+        let (registry, rejected) = PluginRegistry::from_manifests(&config.plugins);
+        assert!(rejected.is_empty());
+        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.plugins_for_event("on_command_complete").len(), 1);
+    }
+
+    #[test]
+    fn serial_deserialize_and_build_command() {
+        let toml_str = r#"
+[[serial]]
+port = "COM3"
+baud_rate = 115200
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.serial.len(), 1);
+
+        let (program, args) = serial_to_profile_command(&config.serial[0]).unwrap();
+        assert_eq!(program, "wixen-serial");
+        assert!(args.contains(&"COM3".to_string()));
+        assert!(args.contains(&"115200".to_string()));
+    }
+
+    #[test]
+    fn effects_deserialize_from_toml() {
+        let toml_str = r#"
+[effects]
+blur_radius = 12
+shader_path = "shaders/crt.wgsl"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.effects.blur_radius, 12);
+        assert_eq!(
+            config.effects.shader_path.as_deref(),
+            Some("shaders/crt.wgsl")
+        );
+    }
+
+    #[test]
+    fn effects_default_when_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.effects.blur_radius, 0);
+        assert_eq!(config.effects.shader_path, None);
+    }
+
+    #[test]
+    fn default_toml_effects_matches_code_defaults() {
+        let parsed: Config =
+            toml::from_str(&read_default_toml()).expect("config/default.toml should parse");
+        assert_eq!(
+            parsed.effects,
+            EffectsConfig::default(),
+            "config/default.toml [effects] drifted from EffectsConfig::default()"
+        );
     }
 }
 

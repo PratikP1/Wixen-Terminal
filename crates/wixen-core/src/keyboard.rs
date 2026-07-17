@@ -42,6 +42,41 @@ impl KittyKeyboardState {
         self.stack.pop();
     }
 
+    /// Pop up to `n` levels off the stack (`CSI < number u`).
+    ///
+    /// Popping more levels than are present empties the stack without error.
+    pub fn pop_n(&mut self, n: usize) {
+        for _ in 0..n {
+            if self.stack.pop().is_none() {
+                break;
+            }
+        }
+    }
+
+    /// Apply a set-flags command (`CSI = flags ; mode u`).
+    ///
+    /// Per the Kitty spec, `mode` selects how `flags` combines with the
+    /// current (top-of-stack) value:
+    /// - `1`: set the given flags, resetting all others (`current = flags`).
+    /// - `2`: set the given flags, leaving others unchanged (`current |= flags`).
+    /// - `3`: reset the given flags, leaving others unchanged (`current &= !flags`).
+    ///
+    /// Any other mode is a no-op. The result replaces the current flags,
+    /// pushing a new stack entry when the stack is empty.
+    pub fn set(&mut self, flags: u32, mode: u8) {
+        let current = self.current_flags();
+        let updated = match mode {
+            1 => flags,
+            2 => current | flags,
+            3 => current & !flags,
+            _ => return,
+        };
+        match self.stack.last_mut() {
+            Some(top) => *top = updated,
+            None => self.stack.push(updated),
+        }
+    }
+
     /// Return the current (top-of-stack) flags, or 0 if the stack is empty.
     pub fn current_flags(&self) -> u32 {
         self.stack.last().copied().unwrap_or(0)
@@ -83,6 +118,57 @@ pub fn encode_kitty_key(key_code: u32, modifiers: u32, event_type: u8, flags: u3
 
     seq.push('u');
     seq
+}
+
+/// Map a Windows virtual key code to the Unicode codepoint the Kitty
+/// keyboard protocol uses as the key's base "unicode-key-code".
+///
+/// Only keys with a stable base codepoint are mapped. Functional keys
+/// (arrows, function keys, navigation) return `None`, so callers fall back
+/// to the legacy xterm encoding for those.
+fn vk_to_unicode(vk: u16) -> Option<u32> {
+    match vk {
+        0x08 => Some(127),                       // Backspace
+        0x09 => Some(9),                         // Tab
+        0x0D => Some(13),                        // Enter
+        0x1B => Some(27),                        // Escape
+        0x20 => Some(32),                        // Space
+        0x30..=0x39 => Some(vk as u32),          // 0–9
+        0x41..=0x5A => Some((vk + 0x20) as u32), // A–Z → lowercase base key
+        _ => None,
+    }
+}
+
+/// Encode a key press, honoring the Kitty keyboard protocol when active.
+///
+/// This is the entry point `main.rs` calls for every key press. Pass the
+/// current flags from [`crate::Terminal::kitty_keyboard_flags`]:
+///
+/// - When `flags` is non-zero, keys with a Unicode base codepoint are
+///   encoded as `CSI codepoint ; modifiers u` via [`encode_kitty_key`].
+///   Keys without such a codepoint fall back to [`encode_key`].
+/// - When `flags` is zero, this is exactly [`encode_key`] (legacy xterm).
+///
+/// Returns `None` for keys that produce no sequence (e.g. a plain letter
+/// in legacy mode, which arrives separately as text input).
+pub fn encode_key_with_kitty(
+    vk: u16,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    app_cursor: bool,
+    flags: u32,
+) -> Option<Vec<u8>> {
+    if flags == 0 {
+        return encode_key(vk, shift, ctrl, alt, app_cursor);
+    }
+    match vk_to_unicode(vk) {
+        Some(codepoint) => {
+            let modifiers = modifier_param(shift, ctrl, alt) as u32;
+            Some(encode_kitty_key(codepoint, modifiers, 1, flags).into_bytes())
+        }
+        None => encode_key(vk, shift, ctrl, alt, app_cursor),
+    }
 }
 
 /// Encode a key press into a terminal escape sequence.
@@ -505,6 +591,162 @@ mod tests {
             assert_eq!(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS, 0b0_0100);
             assert_eq!(KittyKeyboardFlags::REPORT_ALL_KEYS, 0b0_1000);
             assert_eq!(KittyKeyboardFlags::REPORT_ASSOCIATED_TEXT, 0b1_0000);
+        }
+
+        // -- pop_n tests (CSI < number u) --
+
+        #[test]
+        fn pop_n_pops_multiple_levels() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0001);
+            state.push(0b0011);
+            state.push(0b0111);
+            state.pop_n(2);
+            assert_eq!(state.current_flags(), 0b0001);
+        }
+
+        #[test]
+        fn pop_n_zero_is_noop() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0001);
+            state.pop_n(0);
+            assert_eq!(state.current_flags(), 0b0001);
+        }
+
+        #[test]
+        fn pop_n_beyond_depth_empties_without_panic() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0001);
+            state.push(0b0011);
+            state.pop_n(10);
+            assert_eq!(state.current_flags(), 0);
+            assert!(!state.is_enabled());
+        }
+
+        // -- set tests (CSI = flags ; mode u) --
+
+        #[test]
+        fn set_mode_1_replaces_all_flags() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0111);
+            // Mode 1: set given, reset all others.
+            state.set(0b0001, 1);
+            assert_eq!(state.current_flags(), 0b0001);
+        }
+
+        #[test]
+        fn set_mode_1_on_empty_stack_pushes() {
+            let mut state = KittyKeyboardState::default();
+            state.set(0b0101, 1);
+            assert_eq!(state.current_flags(), 0b0101);
+        }
+
+        #[test]
+        fn set_mode_2_ors_flags() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0001);
+            // Mode 2: set given, keep others.
+            state.set(0b0010, 2);
+            assert_eq!(state.current_flags(), 0b0011);
+        }
+
+        #[test]
+        fn set_mode_3_clears_flags() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0111);
+            // Mode 3: reset given, keep others.
+            state.set(0b0010, 3);
+            assert_eq!(state.current_flags(), 0b0101);
+        }
+
+        #[test]
+        fn set_unknown_mode_is_noop() {
+            let mut state = KittyKeyboardState::default();
+            state.push(0b0011);
+            state.set(0b1111, 9);
+            assert_eq!(state.current_flags(), 0b0011);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // encode_key_with_kitty — the path main.rs consults per key press.
+    // -----------------------------------------------------------------------
+
+    mod encode_with_kitty {
+        use super::super::*;
+
+        const DISAMBIGUATE: u32 = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES;
+
+        #[test]
+        fn disabled_falls_back_to_legacy_enter() {
+            // flags == 0 → legacy xterm encoding: Enter → \r
+            assert_eq!(
+                encode_key_with_kitty(0x0D, false, false, false, false, 0),
+                Some(b"\r".to_vec())
+            );
+        }
+
+        #[test]
+        fn disabled_plain_letter_is_none() {
+            // flags == 0 → plain letters are handled via CharInput, not here.
+            assert_eq!(
+                encode_key_with_kitty(0x41, false, false, false, false, 0),
+                None
+            );
+        }
+
+        #[test]
+        fn disabled_ctrl_letter_is_legacy_control_char() {
+            // flags == 0 → Ctrl+A → 0x01 (legacy path).
+            assert_eq!(
+                encode_key_with_kitty(0x41, false, true, false, false, 0),
+                Some(vec![0x01])
+            );
+        }
+
+        #[test]
+        fn enabled_enter_encodes_kitty() {
+            // Enter → codepoint 13 → CSI 13 u
+            assert_eq!(
+                encode_key_with_kitty(0x0D, false, false, false, false, DISAMBIGUATE),
+                Some(b"\x1b[13u".to_vec())
+            );
+        }
+
+        #[test]
+        fn enabled_plain_letter_encodes_kitty() {
+            // 'a' → codepoint 97 → CSI 97 u
+            assert_eq!(
+                encode_key_with_kitty(0x41, false, false, false, false, DISAMBIGUATE),
+                Some(b"\x1b[97u".to_vec())
+            );
+        }
+
+        #[test]
+        fn enabled_shift_letter_includes_modifier() {
+            // Shift+a → CSI 97 ; 2 u
+            assert_eq!(
+                encode_key_with_kitty(0x41, true, false, false, false, DISAMBIGUATE),
+                Some(b"\x1b[97;2u".to_vec())
+            );
+        }
+
+        #[test]
+        fn enabled_ctrl_letter_uses_kitty_not_control_char() {
+            // Ctrl+a → modifier 5 → CSI 97 ; 5 u (NOT the legacy 0x01)
+            assert_eq!(
+                encode_key_with_kitty(0x41, false, true, false, false, DISAMBIGUATE),
+                Some(b"\x1b[97;5u".to_vec())
+            );
+        }
+
+        #[test]
+        fn enabled_unmapped_key_falls_back_to_legacy() {
+            // Up arrow (0x26) has no Kitty base codepoint here → legacy CSI A.
+            assert_eq!(
+                encode_key_with_kitty(0x26, false, false, false, false, DISAMBIGUATE),
+                Some(b"\x1b[A".to_vec())
+            );
         }
     }
 }

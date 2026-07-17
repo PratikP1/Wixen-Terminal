@@ -107,6 +107,136 @@ pub fn history_entry_label(entry: &HistoryEntry) -> String {
     }
 }
 
+/// Overlay model for browsing and searching command history.
+///
+/// Mirrors [`crate::command_palette::CommandPalette`]: it owns the overlay's
+/// visibility, the search query, the selection index, and a filtered snapshot of
+/// matching entries (newest first). It is populated from a [`CommandHistory`] and
+/// returns the chosen command text on confirm.
+///
+/// The snapshot is cloned from the history so the browser does not borrow it
+/// between calls — callers pass `&CommandHistory` only when (re)populating.
+pub struct HistoryBrowser {
+    /// Whether the browser overlay is visible.
+    pub visible: bool,
+    /// Current search query.
+    pub query: String,
+    /// Highlighted index within the filtered snapshot.
+    pub selected: usize,
+    /// Filtered entries (newest first), cloned from the source history.
+    filtered: Vec<HistoryEntry>,
+}
+
+impl HistoryBrowser {
+    /// Create a hidden, empty history browser.
+    pub fn new() -> Self {
+        Self {
+            visible: false,
+            query: String::new(),
+            selected: 0,
+            filtered: Vec::new(),
+        }
+    }
+
+    /// Open the browser over `history`, clearing any prior query and showing all
+    /// entries with the newest selected.
+    pub fn open(&mut self, history: &CommandHistory) {
+        self.visible = true;
+        self.query.clear();
+        self.selected = 0;
+        self.populate(history);
+    }
+
+    /// Close the browser and drop the filtered snapshot.
+    pub fn close(&mut self) {
+        self.visible = false;
+        self.query.clear();
+        self.selected = 0;
+        self.filtered.clear();
+    }
+
+    /// Refresh the filtered snapshot from `history` using the current query.
+    ///
+    /// Selection is clamped so it always points at a valid entry (or 0 when the
+    /// result is empty).
+    pub fn populate(&mut self, history: &CommandHistory) {
+        self.filtered = history.search(&self.query).into_iter().cloned().collect();
+        if self.filtered.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len() - 1;
+        }
+    }
+
+    /// Replace the query and re-filter against `history`, resetting the selection.
+    pub fn set_query(&mut self, history: &CommandHistory, query: &str) {
+        self.query = query.to_string();
+        self.selected = 0;
+        self.populate(history);
+    }
+
+    /// Append a character to the query and re-filter.
+    pub fn push_char(&mut self, history: &CommandHistory, ch: char) {
+        self.query.push(ch);
+        self.selected = 0;
+        self.populate(history);
+    }
+
+    /// Remove the last query character and re-filter.
+    pub fn pop_char(&mut self, history: &CommandHistory) {
+        self.query.pop();
+        self.selected = 0;
+        self.populate(history);
+    }
+
+    /// Move the selection to the next (older) entry, wrapping to the top.
+    pub fn select_next(&mut self) {
+        if !self.filtered.is_empty() {
+            self.selected = (self.selected + 1) % self.filtered.len();
+        }
+    }
+
+    /// Move the selection to the previous (newer) entry, wrapping to the bottom.
+    pub fn select_prev(&mut self) {
+        if !self.filtered.is_empty() {
+            self.selected = self
+                .selected
+                .checked_sub(1)
+                .unwrap_or(self.filtered.len() - 1);
+        }
+    }
+
+    /// The filtered entries currently shown (newest first).
+    pub fn entries(&self) -> &[HistoryEntry] {
+        &self.filtered
+    }
+
+    /// The currently highlighted entry, if any.
+    pub fn current(&self) -> Option<&HistoryEntry> {
+        self.filtered.get(self.selected)
+    }
+
+    /// Confirm the selection: return the chosen command text and close the
+    /// browser. Returns `None` when there is nothing selected.
+    pub fn confirm(&mut self) -> Option<String> {
+        let command = self.current().map(|e| e.command.clone());
+        self.close();
+        command
+    }
+
+    /// Screen-reader / overlay render lines — one accessible label per filtered
+    /// entry, in display order (newest first).
+    pub fn overlay_lines(&self) -> Vec<String> {
+        self.filtered.iter().map(history_entry_label).collect()
+    }
+}
+
+impl Default for HistoryBrowser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +352,150 @@ mod tests {
     fn history_entry_label_no_exit_code() {
         let entry = make_entry("running", None, 1);
         assert_eq!(history_entry_label(&entry), "running");
+    }
+
+    // ── HistoryBrowser ──
+
+    fn sample_history() -> CommandHistory {
+        let mut h = CommandHistory::new();
+        h.push(make_entry("cargo build", Some(0), 1));
+        h.push(make_entry("cargo test", Some(1), 2));
+        h.push(make_entry("git status", Some(0), 3));
+        h
+    }
+
+    #[test]
+    fn browser_open_shows_all_entries_newest_first() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        assert!(!b.visible);
+
+        b.open(&history);
+
+        assert!(b.visible);
+        assert_eq!(b.entries().len(), 3);
+        assert_eq!(b.entries()[0].command, "git status");
+        assert_eq!(b.entries()[2].command, "cargo build");
+        assert_eq!(b.selected, 0);
+    }
+
+    #[test]
+    fn browser_filters_using_search() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+
+        b.set_query(&history, "cargo");
+
+        assert_eq!(b.entries().len(), 2);
+        assert!(b.entries().iter().all(|e| e.command.contains("cargo")));
+        assert_eq!(b.selected, 0);
+    }
+
+    #[test]
+    fn browser_push_and_pop_char_refilter() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+
+        b.push_char(&history, 'g');
+        b.push_char(&history, 'i');
+        b.push_char(&history, 't');
+        assert_eq!(b.entries().len(), 1);
+        assert_eq!(b.entries()[0].command, "git status");
+
+        b.pop_char(&history);
+        b.pop_char(&history);
+        b.pop_char(&history);
+        assert_eq!(b.entries().len(), 3);
+    }
+
+    #[test]
+    fn browser_selection_moves_and_wraps() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+
+        assert_eq!(b.selected, 0);
+        b.select_next();
+        assert_eq!(b.selected, 1);
+        b.select_prev();
+        assert_eq!(b.selected, 0);
+        // Wrap backwards to the last entry.
+        b.select_prev();
+        assert_eq!(b.selected, 2);
+        // Wrap forwards to the first entry.
+        b.select_next();
+        assert_eq!(b.selected, 0);
+    }
+
+    #[test]
+    fn browser_empty_history_has_no_selection() {
+        let history = CommandHistory::new();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+
+        assert!(b.entries().is_empty());
+        assert!(b.current().is_none());
+        // Movement on an empty list is a no-op, not a panic.
+        b.select_next();
+        b.select_prev();
+        assert_eq!(b.selected, 0);
+        assert!(b.confirm().is_none());
+    }
+
+    #[test]
+    fn browser_confirm_returns_selected_command_and_closes() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+        b.select_next(); // move to "cargo test"
+
+        let chosen = b.confirm();
+
+        assert_eq!(chosen.as_deref(), Some("cargo test"));
+        assert!(!b.visible);
+        assert!(b.entries().is_empty());
+    }
+
+    #[test]
+    fn browser_current_tracks_selection() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+
+        assert_eq!(b.current().map(|e| e.command.as_str()), Some("git status"));
+        b.select_next();
+        assert_eq!(b.current().map(|e| e.command.as_str()), Some("cargo test"));
+    }
+
+    #[test]
+    fn browser_overlay_lines_use_entry_labels() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+
+        let lines = b.overlay_lines();
+        assert_eq!(
+            lines,
+            vec![
+                "git status (succeeded)".to_string(),
+                "cargo test (exit 1)".to_string(),
+                "cargo build (succeeded)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn browser_populate_clamps_stale_selection() {
+        let history = sample_history();
+        let mut b = HistoryBrowser::new();
+        b.open(&history);
+        b.select_prev(); // selected = 2 (last)
+
+        // Narrow to a single result: selection must clamp into range.
+        b.set_query(&history, "git");
+        assert_eq!(b.entries().len(), 1);
+        assert_eq!(b.selected, 0);
     }
 }

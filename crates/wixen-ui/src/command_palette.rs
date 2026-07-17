@@ -346,13 +346,6 @@ impl CommandPalette {
         }
     }
 
-    /// Update the search query and re-filter.
-    pub fn set_query(&mut self, query: &str) {
-        self.query = query.to_string();
-        self.filter();
-        self.selected = 0;
-    }
-
     /// Append a character to the query.
     pub fn push_char(&mut self, ch: char) {
         self.query.push(ch);
@@ -405,21 +398,6 @@ impl CommandPalette {
             .collect()
     }
 
-    /// Get the currently selected entry.
-    pub fn selected_entry(&self) -> Option<&PaletteEntry> {
-        self.filtered
-            .get(self.selected)
-            .map(|&idx| &self.commands[idx])
-    }
-
-    /// Add a custom command (e.g., from Lua scripts).
-    pub fn add_command(&mut self, entry: PaletteEntry) {
-        self.commands.push(entry);
-        if self.visible {
-            self.filter();
-        }
-    }
-
     /// Set profile entries in the palette. Replaces any previous profile entries.
     ///
     /// Each profile gets a "New Tab: {name}" entry with action `new_tab_profile_{index}`
@@ -442,27 +420,6 @@ impl CommandPalette {
         self.ssh_start = self.commands.len();
 
         // Always refresh the filtered list so entries() returns the full set
-        self.filter();
-    }
-
-    /// Set SSH target entries in the palette. Replaces any previous SSH entries.
-    ///
-    /// Each SSH target gets an "SSH: {name}" entry with action `ssh_{index}`.
-    pub fn set_ssh_targets(&mut self, targets: &[String]) {
-        // Remove old SSH entries (keep everything up to ssh_start)
-        self.commands.truncate(self.ssh_start);
-
-        // Add new SSH entries
-        for (i, name) in targets.iter().enumerate() {
-            self.commands.push(PaletteEntry {
-                id: format!("ssh_{i}"),
-                label: format!("SSH: {name}"),
-                shortcut: None,
-                category: "SSH".to_string(),
-            });
-        }
-
-        // Refresh filtered list
         self.filter();
     }
 
@@ -489,11 +446,6 @@ impl CommandPalette {
         }
 
         self.filter();
-    }
-
-    /// Number of registered commands.
-    pub fn command_count(&self) -> usize {
-        self.commands.len()
     }
 
     /// Re-filter commands based on the current query.
@@ -544,6 +496,14 @@ fn fuzzy_match(text: &str, pattern: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// Type a whole string into the palette query, one char at a time — the live
+    /// input path (`push_char`) used by `main.rs`.
+    fn type_query(p: &mut CommandPalette, text: &str) {
+        for ch in text.chars() {
+            p.push_char(ch);
+        }
+    }
+
     #[test]
     fn test_fuzzy_match_basic() {
         assert!(fuzzy_match("new tab", "nt"));
@@ -565,7 +525,7 @@ mod tests {
         p.open();
         assert!(p.visible);
         assert!(p.query.is_empty());
-        assert_eq!(p.filtered.len(), p.command_count());
+        assert_eq!(p.entries().len(), BUILTIN_COUNT);
         p.close();
         assert!(!p.visible);
     }
@@ -574,7 +534,7 @@ mod tests {
     fn test_palette_filter() {
         let mut p = CommandPalette::new();
         p.open();
-        p.set_query("tab");
+        type_query(&mut p, "tab");
         // Should find "New Tab", "Close Tab", "Next Tab", "Previous Tab", etc.
         assert!(p.filtered.len() >= 4);
         for &idx in &p.filtered {
@@ -631,7 +591,7 @@ mod tests {
     #[test]
     fn test_builtin_command_count() {
         let p = CommandPalette::new();
-        assert_eq!(p.command_count(), BUILTIN_COUNT);
+        assert_eq!(p.entries().len(), BUILTIN_COUNT);
     }
 
     #[test]
@@ -652,7 +612,7 @@ mod tests {
             ("Git Bash".to_string(), None),
         ];
         p.set_profiles(&profiles);
-        assert_eq!(p.command_count(), BUILTIN_COUNT + 3);
+        assert_eq!(p.entries().len(), BUILTIN_COUNT + 3);
 
         // Verify profile entries
         let entries = p.entries();
@@ -674,12 +634,12 @@ mod tests {
         let mut p = CommandPalette::new();
         let profiles_v1 = vec![("PowerShell".to_string(), None)];
         p.set_profiles(&profiles_v1);
-        assert_eq!(p.command_count(), BUILTIN_COUNT + 1);
+        assert_eq!(p.entries().len(), BUILTIN_COUNT + 1);
 
         // Reload with different profiles
         let profiles_v2 = vec![("pwsh".to_string(), None), ("cmd".to_string(), None)];
         p.set_profiles(&profiles_v2);
-        assert_eq!(p.command_count(), BUILTIN_COUNT + 2);
+        assert_eq!(p.entries().len(), BUILTIN_COUNT + 2);
 
         // Old profile entry should be gone
         let entries = p.entries();
@@ -700,7 +660,7 @@ mod tests {
 
         // Navigate to the profile entry and confirm
         p.open();
-        p.set_query("powershell");
+        type_query(&mut p, "powershell");
         assert!(!p.filtered.is_empty());
         let result = p.confirm().unwrap();
         assert_eq!(
@@ -709,41 +669,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_ssh_palette_entries() {
-        let mut p = CommandPalette::new();
-        let targets = vec![
-            "Production".to_string(),
-            "Staging".to_string(),
-            "Dev".to_string(),
-        ];
-        p.set_ssh_targets(&targets);
-
-        let entries = p.entries();
-        let ssh_entries: Vec<_> = entries.iter().filter(|e| e.category == "SSH").collect();
-        assert_eq!(ssh_entries.len(), 3);
-        assert_eq!(ssh_entries[0].label, "SSH: Production");
-        assert_eq!(ssh_entries[0].id, "ssh_0");
-        assert_eq!(ssh_entries[1].label, "SSH: Staging");
-        assert_eq!(ssh_entries[1].id, "ssh_1");
-        assert_eq!(ssh_entries[2].label, "SSH: Dev");
-        assert_eq!(ssh_entries[2].id, "ssh_2");
+    fn ssh_target(name: &str, host: &str, user: &str, port: u16) -> wixen_config::ssh::SshTarget {
+        wixen_config::ssh::SshTarget {
+            name: name.into(),
+            host: host.into(),
+            port,
+            user: user.into(),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn test_ssh_targets_reload_replaces() {
+    fn test_load_ssh_targets_reload_replaces() {
         let mut p = CommandPalette::new();
-        p.set_ssh_targets(&["OldServer".to_string()]);
-        let entries = p.entries();
-        assert!(entries.iter().any(|e| e.label == "SSH: OldServer"));
+        p.load_ssh_targets(&[ssh_target("old", "old.example.com", "root", 22)]);
+        assert!(p.entries().iter().any(|e| e.id == "ssh_old"));
 
-        // Reload with different targets
-        p.set_ssh_targets(&["NewServer".to_string(), "Backup".to_string()]);
+        // Reload with different targets — the previous entry is gone.
+        p.load_ssh_targets(&[
+            ssh_target("new", "new.example.com", "deploy", 22),
+            ssh_target("backup", "backup.local", "", 2222),
+        ]);
         let entries = p.entries();
         let ssh_entries: Vec<_> = entries.iter().filter(|e| e.category == "SSH").collect();
         assert_eq!(ssh_entries.len(), 2);
-        assert!(!entries.iter().any(|e| e.label == "SSH: OldServer"));
-        assert!(entries.iter().any(|e| e.label == "SSH: NewServer"));
+        assert!(!entries.iter().any(|e| e.id == "ssh_old"));
+        assert!(entries.iter().any(|e| e.id == "ssh_new"));
     }
 
     #[test]
@@ -751,23 +702,23 @@ mod tests {
         let mut p = CommandPalette::new();
         let profiles = vec![("PowerShell".to_string(), None)];
         p.set_profiles(&profiles);
-        p.set_ssh_targets(&["Production".to_string()]);
+        p.load_ssh_targets(&[ssh_target("prod", "prod.example.com", "deploy", 22)]);
 
         let entries = p.entries();
         assert!(entries.iter().any(|e| e.label == "New Tab: PowerShell"));
-        assert!(entries.iter().any(|e| e.label == "SSH: Production"));
+        assert!(entries.iter().any(|e| e.id == "ssh_prod"));
     }
 
     #[test]
     fn test_ssh_action_dispatch() {
         let mut p = CommandPalette::new();
-        p.set_ssh_targets(&["MyServer".to_string()]);
+        p.load_ssh_targets(&[ssh_target("myserver", "my.example.com", "me", 22)]);
 
         p.open();
-        p.set_query("ssh myserver");
+        type_query(&mut p, "myserver");
         assert!(!p.filtered.is_empty());
         let result = p.confirm().unwrap();
-        assert_eq!(result, PaletteResult::Action("ssh_0".to_string()));
+        assert_eq!(result, PaletteResult::Action("ssh_myserver".to_string()));
     }
 
     #[test]

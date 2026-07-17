@@ -28,6 +28,8 @@ pub enum ShaderError {
     MissingFragmentEntry,
     /// An I/O error occurred while reading the shader file.
     IoError(String),
+    /// wgpu rejected the composed shader during pipeline creation.
+    CompileError(String),
 }
 
 impl fmt::Display for ShaderError {
@@ -44,6 +46,7 @@ impl fmt::Display for ShaderError {
                 write!(f, "shader source is missing an @fragment entry point")
             }
             ShaderError::IoError(msg) => write!(f, "I/O error: {msg}"),
+            ShaderError::CompileError(msg) => write!(f, "shader failed to compile: {msg}"),
         }
     }
 }
@@ -92,6 +95,11 @@ impl ShaderParams {
 }
 
 /// A minimal passthrough WGSL fragment shader.
+///
+/// Used as the default post-process fragment: it is composed with
+/// [`crate::post_process::POST_PROCESS_PRELUDE`] (which declares `t_screen`,
+/// `s_screen`, and the vertex stage) and runs whenever no custom shader is
+/// loaded, sampling the rendered frame unchanged.
 pub const DEFAULT_POST_PROCESS_SHADER: &str = r#"
 @fragment
 fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
@@ -174,6 +182,11 @@ mod tests {
             ShaderError::IoError("not found".into())
                 .to_string()
                 .contains("not found")
+        );
+        assert!(
+            ShaderError::CompileError("bad binding".into())
+                .to_string()
+                .contains("bad binding")
         );
     }
 }

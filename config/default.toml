@@ -59,6 +59,17 @@ right = 4
 top = 4
 bottom = 4
 
+# ─── Effects ─────────────────────────────────────────────────────────────────
+#
+# Background and post-processing visual effects (renderer pipeline).
+
+[effects]
+# Gaussian blur radius applied to the window background, in pixels. 0 disables it.
+blur_radius = 0
+# Path to a custom WGSL post-process shader run as a final full-screen pass.
+# Leave unset for none.
+# shader_path = "shaders/crt.wgsl"
+
 # ─── Terminal ────────────────────────────────────────────────────────────────
 
 [terminal]
@@ -350,6 +361,48 @@ action = "open_help"
 # host = "dev.example.com"
 # port = 22
 # user = "deploy"
+
+# ─── Macros ──────────────────────────────────────────────────────────────────
+#
+# User-defined command macros. Each macro has ordered steps and an optional
+# keybinding. Step types: send_text, send_keys, wait (value = milliseconds),
+# run_command (types the command and presses Enter). Example:
+#
+# [[macros]]
+# name = "deploy"
+# description = "Build and deploy to prod"
+# keybinding = "ctrl+shift+d"
+# steps = [
+#   { type = "run_command", value = "cargo build --release" },
+#   { type = "wait", value = "500" },
+#   { type = "run_command", value = "./deploy.sh" },
+# ]
+
+# ─── Plugins ─────────────────────────────────────────────────────────────────
+#
+# Declared Lua plugins. Each subscribes to events dispatched by the terminal
+# (on_tab_created, on_tab_closed, on_command_complete, on_output,
+# on_config_reloaded). Example:
+#
+# [[plugins]]
+# name = "notifier"
+# version = "1.0.0"
+# description = "Desktop notification on long command completion"
+# entry_point = "notifier/init.lua"
+# events = ["on_command_complete"]
+
+# ─── Serial ──────────────────────────────────────────────────────────────────
+#
+# Serial port connection profiles (default is 9600-8-N-1, no flow control).
+# parity: none, even, odd. flow_control: none, hardware, software. Example:
+#
+# [[serial]]
+# port = "COM3"
+# baud_rate = 115200
+# data_bits = 8
+# stop_bits = 1
+# parity = "none"
+# flow_control = "none"
 
 # ── Accessibility ────────────────────────────────────────────────────────────
 [accessibility]

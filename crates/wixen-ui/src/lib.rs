@@ -20,8 +20,9 @@ pub mod tray;
 pub mod window;
 
 pub use command_palette::{CommandPalette, PaletteEntry, PaletteMode, PaletteResult};
+pub use history::{CommandHistory, HistoryBrowser, HistoryEntry, history_entry_label};
 pub use panes::{PaneId, PaneRect, PaneTree, SplitDirection};
 pub use plugin_bridge::PluginBridge;
 pub use settings::{SettingsField, SettingsTab, SettingsUI};
-pub use tabs::{Tab, TabId, TabManager};
+pub use tabs::{Tab, TabColor, TabId, TabManager, tab_color_presets};
 pub use window::Window;

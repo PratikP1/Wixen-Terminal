@@ -8,6 +8,7 @@ pub mod colors;
 pub mod custom_shader;
 pub mod dwrite;
 pub mod pipeline;
+pub mod post_process;
 pub mod soft;
 
 use std::num::NonZero;
@@ -72,14 +73,14 @@ pub struct Renderer {
     /// Optional background image (texture + bind group for fullscreen quad).
     bg_image: Option<BgImageState>,
     /// Raw RGBA pixel data of the decoded background image (kept for CPU blur).
-    #[allow(dead_code)]
     bg_image_pixels: Option<bg_image::BgImageData>,
     /// Gaussian blur radius for the background image layer (0 = no blur).
-    #[allow(dead_code)]
     blur_radius: u32,
-    /// Optional custom post-process shader configuration (validated, not compiled).
-    #[allow(dead_code)]
+    /// Metadata for the loaded custom post-process shader (path, params, enabled).
+    /// The compiled pipeline itself lives in `post`.
     custom_shader_config: Option<custom_shader::CustomShaderConfig>,
+    /// Offscreen scene texture + post-process pass (passthrough or custom shader).
+    post: post_process::PostProcess,
     pub atlas: GlyphAtlas,
     pub colors: ColorScheme,
 }
@@ -416,6 +417,8 @@ impl Renderer {
             cache: None,
         });
 
+        let post = post_process::PostProcess::new(&device, surface_format, width, height);
+
         Ok(Self {
             device,
             queue,
@@ -432,6 +435,7 @@ impl Renderer {
             bg_image_pixels: None,
             blur_radius: 0,
             custom_shader_config: None,
+            post,
             atlas,
             colors,
         })
@@ -554,6 +558,9 @@ impl Renderer {
             self.surface_config.width = width;
             self.surface_config.height = height;
             self.surface.configure(&self.device, &self.surface_config);
+
+            // Resize the offscreen scene texture used by the post-process pass.
+            self.post.resize(&self.device, width, height);
 
             // Update uniforms
             let uniforms = Uniforms {
@@ -747,14 +754,19 @@ impl Renderer {
 
     /// Load a custom post-process shader from a file path.
     ///
-    /// The shader source is read, validated for structural correctness
-    /// (non-empty, size limit, contains `@fragment`), and stored. The actual
-    /// GPU pipeline creation requires the `wgpu::Device` to compile the WGSL —
-    /// that wiring should be added when the post-process render pass is built.
+    /// The shader source is read, validated (non-empty, size limit, contains
+    /// `@fragment`), composed with the post-process prelude, and compiled into a
+    /// real `wgpu::RenderPipeline`. The pipeline then runs as a fullscreen pass
+    /// over the rendered frame on every `render()` call until cleared. Any
+    /// wgpu compile/validation error is surfaced as [`custom_shader::ShaderError::CompileError`].
     pub fn load_custom_shader(&mut self, path: &str) -> Result<(), custom_shader::ShaderError> {
         let source = std::fs::read_to_string(path)
             .map_err(|e| custom_shader::ShaderError::IoError(e.to_string()))?;
         custom_shader::validate_shader_source(&source)?;
+
+        // Compile into the post-process pass. On failure, leave the previous
+        // pipeline untouched and propagate the error.
+        self.post.set_shader(&self.device, &source)?;
 
         self.custom_shader_config = Some(custom_shader::CustomShaderConfig {
             enabled: true,
@@ -762,28 +774,58 @@ impl Renderer {
             params: std::collections::HashMap::new(),
         });
 
-        info!(path, "Custom shader loaded and validated");
+        info!(path, "Custom shader compiled and active");
         Ok(())
     }
 
     /// Set a named float parameter on the custom shader.
     ///
-    /// These parameters are passed as GPU uniforms when the custom shader
-    /// pipeline is active.
+    /// Parameters are packed (sorted by name) into the post-process uniform and
+    /// exposed to the shader as `params.user`.
     pub fn set_shader_param(&mut self, name: &str, value: f32) {
+        self.post.set_param(name, value);
         if let Some(ref mut config) = self.custom_shader_config {
             config.params.insert(name.to_string(), value);
         }
     }
 
-    /// Remove the custom shader, reverting to the default pipeline.
+    /// Remove the custom shader, reverting to the passthrough post-process pass.
     pub fn clear_custom_shader(&mut self) {
         self.custom_shader_config = None;
+        self.post.clear_shader();
     }
 
     /// Get a reference to the current custom shader config (if any).
     pub fn custom_shader_config(&self) -> Option<&custom_shader::CustomShaderConfig> {
         self.custom_shader_config.as_ref()
+    }
+
+    /// Run the fullscreen post-process pass: sample the offscreen scene texture
+    /// into `target`, applying the custom shader if loaded (else passthrough).
+    fn run_post_process(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        let resolution = [
+            self.surface_config.width as f32,
+            self.surface_config.height as f32,
+        ];
+        self.post.update_uniform(&self.queue, resolution);
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Post Process Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(self.post.active_pipeline());
+        pass.set_bind_group(0, self.post.bind_group(), &[]);
+        pass.draw(0..3, 0..1);
     }
 
     /// Render a frame from the terminal state.
@@ -969,11 +1011,14 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
+        // The terminal frame is rendered into the offscreen scene texture, then
+        // the post-process pass samples it into the surface (passthrough or
+        // custom shader).
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Terminal Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: self.post.scene_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(self.colors.clear_color()),
@@ -1101,7 +1146,7 @@ impl Renderer {
                             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 label: Some("Image Pass"),
                                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: &view,
+                                    view: self.post.scene_view(),
                                     resolve_target: None,
                                     ops: wgpu::Operations {
                                         load: wgpu::LoadOp::Load,
@@ -1125,6 +1170,10 @@ impl Renderer {
                 }
             }
         }
+
+        // Post-process pass: sample the scene texture into the surface, applying
+        // the custom shader if one is loaded (otherwise a passthrough copy).
+        self.run_post_process(&mut encoder, &view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -1394,7 +1443,7 @@ impl Renderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Multi-Pane Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: self.post.scene_view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(self.colors.clear_color()),
@@ -1518,7 +1567,7 @@ impl Renderer {
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                     label: Some("Image Pass"),
                                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                        view: &view,
+                                        view: self.post.scene_view(),
                                         resolve_target: None,
                                         ops: wgpu::Operations {
                                             load: wgpu::LoadOp::Load,
@@ -1542,6 +1591,9 @@ impl Renderer {
                 }
             }
         }
+
+        // Post-process pass: scene texture -> surface (passthrough or custom).
+        self.run_post_process(&mut encoder, &view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -1914,14 +1966,6 @@ mod tests {
         let original = pixels.clone();
         blur::apply_cpu_blur(&mut pixels, 3, 3, 0);
         assert_eq!(pixels, original, "radius 0 must be an identity transform");
-    }
-
-    #[test]
-    fn blur_shader_wgsl_is_valid_compute() {
-        assert!(
-            blur::BLUR_SHADER_WGSL.contains("@compute"),
-            "GPU blur shader must contain @compute entry point"
-        );
     }
 
     #[test]
