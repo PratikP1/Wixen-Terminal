@@ -41,6 +41,7 @@ windows = { version = "0.61", features = [
     "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_System_Variant",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
@@ -130,6 +131,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+proptest = "1.10.0"
 
 [[bench]]
 name = "vt_parser"

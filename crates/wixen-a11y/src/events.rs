@@ -479,6 +479,90 @@ mod tests {
     }
 
     #[test]
+    fn test_flood_of_10000_lines_yields_bounded_announcements() {
+        // Simulate 10,000 lines arriving over one virtual second (one line
+        // every 100 microseconds). With a 100ms debounce the throttler must
+        // emit roughly 10 announcements — assert a hard bound of 50.
+        let mut throttler = EventThrottler::new();
+        let virtual_line_interval = Duration::from_micros(100);
+        let mut virtual_elapsed_since_emit = Duration::ZERO;
+        let mut announcement_count = 0_usize;
+
+        for line_number in 0..10_000 {
+            virtual_elapsed_since_emit += virtual_line_interval;
+            throttler.last_text_changed = Instant::now() - virtual_elapsed_since_emit;
+            if throttler.on_output(&format!("line {}\n", line_number)) {
+                throttler.take_pending();
+                virtual_elapsed_since_emit = Duration::ZERO;
+                announcement_count += 1;
+            }
+        }
+
+        assert!(
+            announcement_count <= 50,
+            "flood of 10,000 lines must be bounded to at most 50 announcements, got {}",
+            announcement_count
+        );
+        assert!(
+            announcement_count >= 1,
+            "throttler must not suppress all output during a flood"
+        );
+    }
+
+    #[test]
+    fn test_flood_final_line_is_announced_after_flood_stops() {
+        // After a rapid flood ends, the throttler must still hold (and hand
+        // over) the tail of the output — the last line must never be lost.
+        let mut throttler = EventThrottler::new();
+        let mut announced = String::new();
+
+        for line_number in 0..10_000 {
+            if throttler.on_output(&format!("line {}\n", line_number))
+                && let Some(batch) = throttler.take_pending()
+            {
+                announced.push_str(&batch);
+            }
+        }
+
+        // Flood over: drain whatever is still pending (the caller's flush path).
+        if throttler.has_pending()
+            && let Some(final_batch) = throttler.take_pending()
+        {
+            announced.push_str(&final_batch);
+        }
+
+        assert!(
+            announced.contains("line 9999"),
+            "final line of the flood must be announced"
+        );
+        assert!(!throttler.has_pending(), "flush must leave nothing behind");
+    }
+
+    #[test]
+    fn test_sparse_updates_pass_through_individually() {
+        // Updates slower than the debounce interval must each be announced
+        // on their own — no batching, no drops.
+        let mut throttler = EventThrottler::new();
+
+        for update_number in 0..5 {
+            // Simulate 150ms of quiet since the last announcement.
+            throttler.last_text_changed = Instant::now() - Duration::from_millis(150);
+            let update = format!("update {}\n", update_number);
+            assert!(
+                throttler.on_output(&update),
+                "sparse update {} must be announced immediately",
+                update_number
+            );
+            assert_eq!(
+                throttler.take_pending().as_deref(),
+                Some(update.as_str()),
+                "sparse update {} must pass through unbatched",
+                update_number
+            );
+        }
+    }
+
+    #[test]
     fn test_streaming_detection() {
         let mut throttler = EventThrottler::new();
         throttler.last_text_changed = Instant::now() - Duration::from_millis(150);

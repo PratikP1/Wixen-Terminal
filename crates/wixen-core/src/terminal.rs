@@ -11,6 +11,28 @@ use crate::selection::{GridPoint, Selection, SelectionType};
 use tracing::{debug, trace};
 use wixen_shell_integ::ShellIntegration;
 
+/// Maximum length (in bytes) of a window title accepted from OSC 0/2.
+///
+/// Real titles are short; anything longer is a resource-exhaustion attempt.
+const MAX_WINDOW_TITLE_LEN: usize = 512;
+
+/// Sanitize an attacker-controlled window title before it reaches SetWindowTextW.
+///
+/// Removes control characters (which can corrupt or spoof the title bar) and
+/// caps the length on a character boundary.
+fn sanitize_window_title(raw: &str) -> String {
+    let cleaned: String = raw.chars().filter(|c| !c.is_control()).collect();
+    if cleaned.len() <= MAX_WINDOW_TITLE_LEN {
+        return cleaned;
+    }
+    // Truncate on a char boundary at or below the byte cap.
+    let mut end = MAX_WINDOW_TITLE_LEN;
+    while end > 0 && !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    cleaned[..end].to_string()
+}
+
 /// Image protocol that produced an inline image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageProtocol {
@@ -565,21 +587,28 @@ impl Terminal {
         }
     }
 
-    /// Get the hyperlink at a viewport-relative position, if any.
+    /// Get the openable hyperlink at a viewport-relative position, if any.
     ///
     /// First checks for an explicit OSC 8 hyperlink. If none is found, falls
     /// back to regex-based URL detection on the row text.
+    ///
+    /// Only URLs with a safe scheme (`http`, `https`, `ftp`) are returned. An
+    /// OSC 8 sequence lets a program supply an arbitrary URI directly, so a
+    /// hostile program could otherwise hand the open path a `file://` or
+    /// `ms-settings:` URI that `ShellExecuteW` would happily launch. Filtering
+    /// here closes that hole at the source, independent of the caller.
     pub fn hyperlink_at(&self, col: usize, viewport_row: usize) -> Option<String> {
         if let Some(cell) = self.viewport_cell(col, viewport_row)
             && cell.attrs.hyperlink_id > 0
             && let Some(link) = self.hyperlinks.get(cell.attrs.hyperlink_id)
+            && crate::url::is_safe_url_scheme(&link.uri)
         {
             return Some(link.uri.clone());
         }
 
-        // Fallback: regex URL detection on the row text.
+        // Fallback: regex URL detection on the row text, safe schemes only.
         let row_text = self.viewport_row_text(viewport_row);
-        crate::url::url_at_col(&row_text, col)
+        crate::url::url_at_col(&row_text, col).filter(|u| crate::url::is_safe_url_scheme(u))
     }
 
     /// Update the URL hover state for the given viewport-relative position.
@@ -1482,9 +1511,15 @@ impl Terminal {
         let cmd = std::str::from_utf8(&params[0]).unwrap_or("");
         match cmd {
             "0" | "2" => {
-                // Set window title
+                // Set window title.
+                //
+                // The title is fully attacker-controlled (any program can emit
+                // OSC 0/2) and is passed to SetWindowTextW. Strip control
+                // characters — which could corrupt the title bar or be used for
+                // spoofing — and cap the length so a multi-megabyte title cannot
+                // exhaust memory or stall the window manager.
                 if let Some(title) = params.get(1) {
-                    self.title = String::from_utf8_lossy(title).into_owned();
+                    self.title = sanitize_window_title(&String::from_utf8_lossy(title));
                     self.title_dirty = true;
                     debug!(title = %self.title, "Window title set");
                 }
@@ -1652,6 +1687,12 @@ impl Terminal {
                             self.shell_integ.current_block().and_then(|b| b.input)
                     {
                         let cmd_text = self.extract_row_text(input_range.start, input_range.end);
+                        // Sanitize before storing: this text is attacker-influenced
+                        // (a hostile program controls both the OSC 133 markers and the
+                        // input rows) and flows into screen-reader announcements, tab
+                        // titles, and history. Strip escape/control sequences and bound
+                        // the length before it reaches any user-facing sink.
+                        let cmd_text = wixen_shell_integ::sanitize_command_text(&cmd_text);
                         if !cmd_text.is_empty()
                             && let Some(block) = self.shell_integ.current_block_mut()
                         {
@@ -3322,6 +3363,102 @@ mod tests {
         assert_eq!(term.hyperlinks.get(id_b).unwrap().uri, "https://second.com");
     }
 
+    /// An OSC 8 hyperlink with an unsafe scheme (file://, ms-settings:, etc.)
+    /// must NOT be returned as openable — otherwise Ctrl+click would hand it
+    /// straight to ShellExecuteW, launching local files or system settings.
+    #[test]
+    fn test_hyperlink_at_rejects_unsafe_osc8_schemes() {
+        for uri in [
+            "file:///C:/Windows/System32/calc.exe",
+            "ms-settings:privacy",
+            "javascript:alert(1)",
+            "vbscript:msgbox(1)",
+            "\\\\attacker\\share\\evil.exe",
+        ] {
+            let mut term = Terminal::new(20, 3);
+            term.osc_dispatch(&[b"8".to_vec(), b"".to_vec(), uri.as_bytes().to_vec()]);
+            term.print('X');
+            term.osc_dispatch(&[b"8".to_vec(), b"".to_vec(), b"".to_vec()]);
+            assert_eq!(
+                term.hyperlink_at(0, 0),
+                None,
+                "unsafe OSC 8 scheme must not be openable: {uri}"
+            );
+        }
+    }
+
+    /// A safe OSC 8 hyperlink is still returned.
+    #[test]
+    fn test_hyperlink_at_allows_safe_osc8_scheme() {
+        let mut term = Terminal::new(20, 3);
+        term.osc_dispatch(&[b"8".to_vec(), b"".to_vec(), b"https://example.com".to_vec()]);
+        term.print('X');
+        term.osc_dispatch(&[b"8".to_vec(), b"".to_vec(), b"".to_vec()]);
+        assert_eq!(
+            term.hyperlink_at(0, 0),
+            Some("https://example.com".to_string())
+        );
+    }
+
+    /// A plain-text `file://` URL detected by regex must also be non-openable.
+    #[test]
+    fn test_hyperlink_at_rejects_unsafe_regex_scheme() {
+        let mut term = Terminal::new(60, 3);
+        for ch in "open file:///etc/passwd now".chars() {
+            term.print(ch);
+        }
+        assert_eq!(term.hyperlink_at(8, 0), None);
+    }
+
+    /// A hostile program can emit an OSC 0 title of arbitrary length with
+    /// embedded control characters. The stored title must be bounded and free
+    /// of control characters before it reaches SetWindowTextW.
+    #[test]
+    fn test_window_title_is_bounded_and_control_stripped() {
+        let mut term = Terminal::new(20, 3);
+        let mut evil = String::from("safe\x07\x1b\x08title");
+        evil.push_str(&"A".repeat(100_000));
+        term.osc_dispatch(&[b"0".to_vec(), evil.into_bytes()]);
+
+        assert!(
+            term.title.len() <= MAX_WINDOW_TITLE_LEN,
+            "title must be capped, got {} bytes",
+            term.title.len()
+        );
+        assert!(
+            !term.title.chars().any(|c| c.is_control()),
+            "title must not contain control characters"
+        );
+        assert!(term.title.starts_with("safetitle"));
+    }
+
+    /// Command text extracted from OSC 133 input rows must be sanitized and
+    /// length-bounded before it is stored and announced to a screen reader.
+    #[test]
+    fn test_command_text_is_sanitized_and_bounded() {
+        let mut term = Terminal::new(80, 24);
+        // Prompt start, then input start.
+        term.osc_dispatch(&[b"133".to_vec(), b"A".to_vec()]);
+        term.osc_dispatch(&[b"133".to_vec(), b"B".to_vec()]);
+        // Type a very long command that wraps across many rows.
+        for _ in 0..2000 {
+            term.print('x');
+        }
+        // Execution start — this is where command_text is captured.
+        term.osc_dispatch(&[b"133".to_vec(), b"C".to_vec()]);
+
+        let cmd = term
+            .shell_integ
+            .current_block()
+            .and_then(|b| b.command_text.clone())
+            .expect("command text should be captured");
+        assert!(
+            cmd.len() <= 1024,
+            "command text must be bounded, got {} bytes",
+            cmd.len()
+        );
+    }
+
     #[test]
     fn test_hyperlink_at_regex_fallback() {
         let mut term = Terminal::new(40, 3);
@@ -4814,6 +4951,36 @@ mod tests {
     }
 
     #[test]
+    fn test_image_announcement_message_includes_filename() {
+        let ann = ImageAnnouncement {
+            width: 640,
+            height: 480,
+            cell_cols: 80,
+            cell_rows: 30,
+            protocol: ImageProtocol::ITerm2,
+            filename: Some("chart.png".to_string()),
+        };
+        assert_eq!(
+            ann.message(),
+            "iTerm2 image: chart.png (640\u{00d7}480 pixels)"
+        );
+    }
+
+    #[test]
+    fn test_iterm2_announcement_carries_decoded_filename() {
+        use base64::Engine;
+        let mut term = Terminal::new(80, 24);
+        term.cell_pixel_width = 8.0;
+        term.cell_pixel_height = 16.0;
+        let name_b64 = base64::engine::general_purpose::STANDARD.encode(b"chart.png");
+        let payload = format!("File=name={};inline=1:{}", name_b64, make_tiny_png_base64());
+        term.osc_dispatch(&[b"1337".to_vec(), payload.into_bytes()]);
+        assert_eq!(term.pending_image_announcements.len(), 1);
+        let ann = &term.pending_image_announcements[0];
+        assert_eq!(ann.filename.as_deref(), Some("chart.png"));
+    }
+
+    #[test]
     fn test_sixel_pushes_announcement() {
         let mut term = Terminal::new(80, 24);
         term.cell_pixel_width = 8.0;
@@ -4829,6 +4996,7 @@ mod tests {
         assert_eq!(ann.cell_cols, 1); // ceil(1/8) = 1
         assert_eq!(ann.cell_rows, 1); // ceil(6/16) = 1
         assert_eq!(ann.protocol, ImageProtocol::Sixel);
+        assert_eq!(ann.filename, None); // Sixel carries no filename
     }
 
     #[test]

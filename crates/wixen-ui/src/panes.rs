@@ -491,6 +491,30 @@ fn collect_ids(node: &PaneNode, ids: &mut Vec<PaneId>) {
     }
 }
 
+/// A pane-level mode that can be toggled at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToggleMode {
+    /// Zoomed pane fills the whole window.
+    Zoom,
+    /// Keyboard input is mirrored to every pane.
+    BroadcastInput,
+    /// Keyboard input to the pane is suppressed.
+    ReadOnly,
+}
+
+/// Screen reader announcement for a mode toggle, e.g. `"Broadcast input on"`.
+pub fn mode_toggle_announcement(mode: ToggleMode, active: bool) -> String {
+    match (mode, active) {
+        (ToggleMode::Zoom, true) => "Pane zoomed",
+        (ToggleMode::Zoom, false) => "Zoom off",
+        (ToggleMode::BroadcastInput, true) => "Broadcast input on",
+        (ToggleMode::BroadcastInput, false) => "Broadcast input off",
+        (ToggleMode::ReadOnly, true) => "Read-only mode on",
+        (ToggleMode::ReadOnly, false) => "Read-only mode off",
+    }
+    .to_string()
+}
+
 /// Build a spatial label like "Left pane, 1 of 3" for screen reader announcements.
 ///
 /// Determines spatial position (left/right/top/bottom/center) from the pane's
@@ -554,6 +578,42 @@ pub fn pane_position_label(tree: &PaneTree, pane_id: PaneId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mode_toggle_announcement_zoom() {
+        assert_eq!(
+            mode_toggle_announcement(ToggleMode::Zoom, true),
+            "Pane zoomed"
+        );
+        assert_eq!(
+            mode_toggle_announcement(ToggleMode::Zoom, false),
+            "Zoom off"
+        );
+    }
+
+    #[test]
+    fn test_mode_toggle_announcement_broadcast_input() {
+        assert_eq!(
+            mode_toggle_announcement(ToggleMode::BroadcastInput, true),
+            "Broadcast input on"
+        );
+        assert_eq!(
+            mode_toggle_announcement(ToggleMode::BroadcastInput, false),
+            "Broadcast input off"
+        );
+    }
+
+    #[test]
+    fn test_mode_toggle_announcement_read_only() {
+        assert_eq!(
+            mode_toggle_announcement(ToggleMode::ReadOnly, true),
+            "Read-only mode on"
+        );
+        assert_eq!(
+            mode_toggle_announcement(ToggleMode::ReadOnly, false),
+            "Read-only mode off"
+        );
+    }
 
     #[test]
     fn test_single_pane_layout() {

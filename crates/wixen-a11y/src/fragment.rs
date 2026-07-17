@@ -38,6 +38,7 @@ pub(crate) enum NodeKind {
         name: String,
         shell_block_id: u64,
         is_error: bool,
+        landmark_label: String,
     },
     TextRegion {
         text: String,
@@ -71,11 +72,13 @@ fn snapshot_recursive(parent: &A11yNode, target: NodeId) -> Option<NodeSnapshot>
                     name,
                     shell_block_id,
                     is_error,
+                    landmark_label,
                     ..
                 } => NodeKind::CommandBlock {
                     name: name.clone(),
                     shell_block_id: *shell_block_id,
                     is_error: *is_error,
+                    landmark_label: landmark_label.clone(),
                 },
                 A11yNode::TextRegion { text, role, .. } => NodeKind::TextRegion {
                     text: text.clone(),
@@ -201,6 +204,16 @@ impl IRawElementProviderSimple_Impl for ChildFragmentProvider_Impl {
             UIA_IsContentElementPropertyId | UIA_IsControlElementPropertyId => {
                 Ok(VARIANT::from(true))
             }
+            UIA_LandmarkTypePropertyId => match &snap.kind {
+                NodeKind::CommandBlock { .. } => Ok(VARIANT::from(UIA_CustomLandmarkTypeId.0)),
+                NodeKind::TextRegion { .. } => Err(Error::empty()),
+            },
+            UIA_LocalizedLandmarkTypePropertyId => match &snap.kind {
+                NodeKind::CommandBlock { landmark_label, .. } => {
+                    Ok(VARIANT::from(BSTR::from(landmark_label)))
+                }
+                NodeKind::TextRegion { .. } => Err(Error::empty()),
+            },
             UIA_LocalizedControlTypePropertyId => {
                 let label = match &snap.kind {
                     NodeKind::CommandBlock { is_error, .. } => {
@@ -485,6 +498,27 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_snapshot_command_block_carries_landmark_label() {
+        let tree = build_test_tree();
+
+        let first_snap = snapshot_node(&tree.root, tree.root.children()[0].id()).unwrap();
+        match &first_snap.kind {
+            NodeKind::CommandBlock { landmark_label, .. } => {
+                assert_eq!(landmark_label, "Command 1");
+            }
+            _ => panic!("Expected CommandBlock"),
+        }
+
+        let second_snap = snapshot_node(&tree.root, tree.root.children()[1].id()).unwrap();
+        match &second_snap.kind {
+            NodeKind::CommandBlock { landmark_label, .. } => {
+                assert_eq!(landmark_label, "Command 2");
+            }
+            _ => panic!("Expected CommandBlock"),
+        }
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Wixen Terminal — accessible, GPU-accelerated terminal emulator for Windows.
 
+mod crash;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -36,6 +38,7 @@ use wixen_render::{
 use wixen_search::{SearchDirection, SearchEngine, SearchOptions};
 use wixen_ui::audio::{AudioConfig, AudioEvent, play_event};
 use wixen_ui::history::{CommandHistory, HistoryEntry};
+use wixen_ui::panes::ToggleMode;
 use wixen_ui::window::{Window, WindowEvent};
 use wixen_ui::{CommandPalette, PaneId, SettingsField, SettingsUI, TabManager};
 use wixen_vt::{Action, Parser};
@@ -318,8 +321,7 @@ fn main() {
     std::panic::set_hook(Box::new(|info| {
         let location = info
             .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_else(|| "unknown".to_string());
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
         let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
             s.to_string()
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -327,20 +329,28 @@ fn main() {
         } else {
             "unknown panic".to_string()
         };
-        let msg = format!("PANIC at {location}: {payload}\n");
-        eprintln!("{msg}");
-        // Also write to a file next to the exe for when stderr isn't visible
-        if let Ok(exe) = std::env::current_exe() {
-            let log = exe.with_file_name("wixen-panic.log");
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log)
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    write!(f, "{}", msg)
-                });
-        }
+        let timestamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| format!("epoch+{}s", d.as_secs()))
+            .unwrap_or_else(|_| "unknown time".to_string());
+        let entry = crash::format_panic_entry(
+            &timestamp,
+            env!("CARGO_PKG_VERSION"),
+            location.as_deref(),
+            &payload,
+        );
+        eprintln!("{entry}");
+        // Append to a user-writable log so installed users (whose exe lives in a
+        // read-only Program Files directory) still get a crash record.
+        let _ = std::fs::create_dir_all(crash::crash_log_dir());
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(crash::crash_log_path())
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(entry.as_bytes())
+            });
     }));
 
     // Install a vectored exception handler to capture access violations.
@@ -708,7 +718,7 @@ fn main() {
     let mut broadcast_input = false;
 
     // --- Accessibility state ---
-    let audio_config = AudioConfig::default();
+    let mut audio_config = AudioConfig::from_accessibility(&config.accessibility);
     let mut last_announced_progress: Option<u8> = None;
 
     // Apply contrast enforcement from config
@@ -830,6 +840,13 @@ fn main() {
                                                     broadcast = broadcast_input,
                                                     "Broadcast input toggled via palette"
                                                 );
+                                                announce_mode_toggle(
+                                                    ToggleMode::BroadcastInput,
+                                                    broadcast_input,
+                                                    &uia_provider,
+                                                    config.accessibility.screen_reader_output,
+                                                    &audio_config,
+                                                );
                                             }
                                             wixen_ui::PaletteResult::Action(action_id) => {
                                                 let result = dispatch_keybinding_action(
@@ -843,6 +860,19 @@ fn main() {
                                                     &mut window,
                                                     &base_title,
                                                 );
+                                                if let DispatchResult::ModeToggled {
+                                                    mode,
+                                                    active,
+                                                } = result
+                                                {
+                                                    announce_mode_toggle(
+                                                        mode,
+                                                        active,
+                                                        &uia_provider,
+                                                        config.accessibility.screen_reader_output,
+                                                        &audio_config,
+                                                    );
+                                                }
                                                 handle_deferred_action(
                                                     result,
                                                     &mut config,
@@ -1041,6 +1071,13 @@ fn main() {
                             if action == "toggle_broadcast_input" {
                                 broadcast_input = !broadcast_input;
                                 info!(broadcast = broadcast_input, "Broadcast input toggled");
+                                announce_mode_toggle(
+                                    ToggleMode::BroadcastInput,
+                                    broadcast_input,
+                                    &uia_provider,
+                                    config.accessibility.screen_reader_output,
+                                    &audio_config,
+                                );
                                 continue;
                             }
 
@@ -1132,6 +1169,15 @@ fn main() {
                                 &mut window,
                                 &base_title,
                             );
+                            if let DispatchResult::ModeToggled { mode, active } = result {
+                                announce_mode_toggle(
+                                    mode,
+                                    active,
+                                    &uia_provider,
+                                    config.accessibility.screen_reader_output,
+                                    &audio_config,
+                                );
+                            }
                             let deferred_handled = handle_deferred_action(
                                 result,
                                 &mut config,
@@ -1631,7 +1677,7 @@ fn main() {
                                 } else {
                                     set_window_title(
                                         window.hwnd(),
-                                        &format!("{} — Search: _", &base_title),
+                                        &format!("{} — Search: _", base_title),
                                     );
                                 }
                                 pane.terminal.dirty = true;
@@ -1848,6 +1894,7 @@ fn main() {
             }
 
             config = delta.config;
+            audio_config = AudioConfig::from_accessibility(&config.accessibility);
         }
 
         // Resolve the active pane after event processing (tab switches may have changed it)
@@ -1868,6 +1915,9 @@ fn main() {
                     config.accessibility.screen_reader_output,
                     "output",
                 );
+                // Re-anchor screen reader focus on the terminal root so the
+                // newly active pane's content is what gets read next.
+                wixen_a11y::events::raise_focus_changed(&uia_provider);
             }
             play_event(&audio_config, AudioEvent::Navigation);
             prev_active_pane = active_pane_id;
@@ -2104,7 +2154,17 @@ fn main() {
                                 if let Some(block) =
                                     pane.terminal.shell_integ.block_by_id(completion.block_id)
                                 {
-                                    let summary = wixen_shell_integ::command_summary(block);
+                                    let output_text = block.output.map(|range| {
+                                        pane.terminal.extract_row_text(range.start, range.end)
+                                    });
+                                    let output_lines: Vec<&str> = output_text
+                                        .as_deref()
+                                        .map_or_else(Vec::new, |text| text.lines().collect());
+                                    let summary =
+                                        wixen_core::structured_detect::completion_announcement(
+                                            block,
+                                            &output_lines,
+                                        );
                                     unsafe {
                                         raise_if_allowed(
                                             &uia_provider,
@@ -2805,10 +2865,24 @@ fn send_mouse_event(
     }
 }
 
-/// Open a URL in the user's default browser via ShellExecuteW.
+/// Open a web URL in the user's default browser via `ShellExecuteW`.
+///
+/// Defense in depth: only `http`, `https`, and `ftp` URLs are launched. One
+/// caller is the Ctrl+click OSC 8 handler, whose URI comes straight from
+/// terminal output and is therefore attacker-influenced. A hostile program
+/// could otherwise smuggle a `file://`, `ms-settings:`, `javascript:`, or UNC
+/// (`\\host\share`) target that `ShellExecuteW` would happily execute. The
+/// scheme is filtered at the source in `Terminal::hyperlink_at`; this guard
+/// closes the same hole for every other caller. Program-controlled local files
+/// must go through [`open_local_file`], never this function.
 fn open_url(url: &str) {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::core::PCWSTR;
+
+    if !wixen_core::url::is_safe_url_scheme(url) {
+        warn!(url, "Refusing to open URL with unsafe scheme");
+        return;
+    }
 
     let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
     let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
@@ -2823,6 +2897,38 @@ fn open_url(url: &str) {
         );
     }
     info!(url, "Opened URL via ShellExecuteW");
+}
+
+/// Open a program-controlled local file (e.g. the user's own config file) via
+/// `ShellExecuteW`.
+///
+/// This deliberately bypasses the web-scheme guard in [`open_url`] because a
+/// local path like `C:\Users\...\wixen.toml` has no `http`/`https`/`ftp` scheme
+/// and would be rejected there. It must ONLY be called with paths the program
+/// itself constructs — never with any string derived from terminal output,
+/// OSC sequences, or other attacker input.
+fn open_local_file(path: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(wide.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        );
+    }
+    info!(path = %path.display(), "Opened local file via ShellExecuteW");
 }
 
 /// Apply a font size change: rebuild the font, recalculate grid, resize all panes.
@@ -2886,6 +2992,8 @@ fn handle_deferred_action(
 ) -> bool {
     match result {
         DispatchResult::Handled => true,
+        // Announced at the dispatch call site, which owns the UIA provider.
+        DispatchResult::ModeToggled { .. } => true,
         DispatchResult::Unhandled => false,
         DispatchResult::ZoomIn => {
             let new_size = (config.font.size + 2.0).min(72.0);
@@ -2935,7 +3043,7 @@ fn handle_deferred_action(
             true
         }
         DispatchResult::OpenConfigFile => {
-            open_url(&cfg_path.to_string_lossy());
+            open_local_file(cfg_path);
             info!(path = %cfg_path.display(), "Opened config file");
             true
         }
@@ -3006,9 +3114,16 @@ fn handle_deferred_action(
 }
 
 /// Result of dispatching a keybinding action.
+#[derive(Clone, Copy)]
 enum DispatchResult {
     /// Action was fully handled.
     Handled,
+    /// A pane mode (zoom, broadcast input, read-only) was toggled; the caller
+    /// announces the new state via UIA and plays the mode-toggle audio cue.
+    ModeToggled {
+        mode: ToggleMode,
+        active: bool,
+    },
     /// Action not recognized.
     Unhandled,
     /// Zoom: rebuild font at new size. `f32` is the delta (+2, -2) or 0 for reset.
@@ -3232,23 +3347,16 @@ fn dispatch_keybinding_action(
         "zoom_reset" => DispatchResult::ZoomReset,
         "open_config_file" => DispatchResult::OpenConfigFile,
         "open_help" => {
-            // Open user guide HTML in the default browser
-            let exe_dir = std::env::current_exe()
+            // Open the user guide HTML in the default browser
+            let local_guide = std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            let doc_path = exe_dir
-                .as_ref()
-                .map(|d| d.join("docs").join("user-guide.html"))
-                .filter(|p| p.exists());
-            if let Some(path) = doc_path {
-                let _ = std::process::Command::new("explorer.exe")
-                    .arg(&path)
-                    .spawn();
-                info!(path = %path.display(), "Opened user guide");
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .and_then(|d| wixen_ui::help::resolve_help_file(&d));
+            if let Some(path) = local_guide {
+                wixen_ui::help::open_help(&path);
             } else {
                 // Local HTML not found: open the online version
-                let url = "https://github.com/PratikP1/Wixen-Terminal/blob/main/docs/user-guide.md";
-                let _ = std::process::Command::new("explorer.exe").arg(url).spawn();
+                open_url("https://github.com/PratikP1/Wixen-Terminal/blob/main/docs/user-guide.md");
                 info!("Opened online user guide (local HTML not found)");
             }
             DispatchResult::Handled
@@ -3370,13 +3478,19 @@ fn dispatch_keybinding_action(
                 p.terminal.dirty = true;
             }
             info!(zoomed, "Pane zoom toggled");
-            DispatchResult::Handled
+            DispatchResult::ModeToggled {
+                mode: ToggleMode::Zoom,
+                active: zoomed,
+            }
         }
         "toggle_read_only" => {
             let tab = tab_mgr.active_tab_mut();
             let read_only = tab.pane_tree.toggle_read_only(tab.active_pane);
             info!(read_only, "Read-only mode toggled");
-            DispatchResult::Handled
+            DispatchResult::ModeToggled {
+                mode: ToggleMode::ReadOnly,
+                active: read_only,
+            }
         }
         "copy_cwd" => {
             let active = tab_mgr.active_tab().active_pane;
@@ -4325,6 +4439,22 @@ unsafe fn raise_if_allowed(
     true
 }
 
+/// Announce a pane mode toggle (zoom, broadcast input, read-only) via UIA
+/// notification and the mode-toggle audio cue.
+fn announce_mode_toggle(
+    mode: ToggleMode,
+    active: bool,
+    provider: &IRawElementProviderSimple,
+    verbosity: ScreenReaderVerbosity,
+    audio_config: &AudioConfig,
+) {
+    let message = wixen_ui::panes::mode_toggle_announcement(mode, active);
+    unsafe {
+        raise_if_allowed(provider, &message, "mode-toggle", verbosity, "output");
+    }
+    play_event(audio_config, AudioEvent::ModeToggle);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4353,5 +4483,52 @@ mod tests {
     fn test_unescape_send_text_hex() {
         let result = unescape_send_text(r"\x1b[A");
         assert_eq!(result, b"\x1b[A");
+    }
+
+    // --- open_url scheme-guard decision logic ---
+    //
+    // `open_url` gates ShellExecuteW on `wixen_core::url::is_safe_url_scheme`.
+    // These tests lock the classification the guard depends on: attacker-
+    // influenced URIs (OSC 8, OSC 7, regex-detected text) with dangerous
+    // schemes must never be treated as openable web URLs.
+
+    #[test]
+    fn test_open_url_guard_allows_web_schemes() {
+        for url in [
+            "http://example.com",
+            "https://example.com/path?q=1#frag",
+            "ftp://files.example.com/pub",
+        ] {
+            assert!(
+                wixen_core::url::is_safe_url_scheme(url),
+                "expected {url} to be openable"
+            );
+        }
+    }
+
+    #[test]
+    fn test_open_url_guard_rejects_dangerous_schemes() {
+        for url in [
+            "file:///C:/Windows/System32/calc.exe",
+            "ms-settings:privacy",
+            "javascript:alert(1)",
+            "data:text/html,<h1>hi</h1>",
+            r"\\attacker-host\share\payload.exe",
+            "",
+        ] {
+            assert!(
+                !wixen_core::url::is_safe_url_scheme(url),
+                "expected {url:?} to be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn test_open_url_guard_rejects_local_config_path() {
+        // A bare local path (what `open_local_file` handles) has no web scheme
+        // and must NOT be openable through the web-URL path.
+        assert!(!wixen_core::url::is_safe_url_scheme(
+            r"C:\Users\pratik\AppData\Roaming\wixen\wixen.toml"
+        ));
     }
 }

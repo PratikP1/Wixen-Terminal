@@ -508,3 +508,65 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// encode_kitty_key must never panic for any keycode/modifier/
+        /// event-type/flag combination and always yields a well-formed
+        /// ASCII CSI ... u sequence.
+        #[test]
+        fn kitty_encoding_is_well_formed_csi(
+            key_code in any::<u32>(),
+            modifiers in any::<u32>(),
+            event_type in any::<u8>(),
+            flags in any::<u32>(),
+        ) {
+            let seq = encode_kitty_key(key_code, modifiers, event_type, flags);
+            prop_assert!(seq.starts_with("\x1b["), "must start with CSI: {seq:?}");
+            prop_assert!(seq.ends_with('u'), "must end with 'u': {seq:?}");
+            let body = &seq[2..seq.len() - 1];
+            prop_assert!(
+                body.bytes().all(|b| b.is_ascii_digit() || b == b';' || b == b':'),
+                "CSI body must be digits/;/: only: {seq:?}"
+            );
+        }
+
+        /// encode_key must never panic for any vk/modifier combination, and
+        /// any produced sequence is non-empty.
+        #[test]
+        fn encode_key_never_panics(
+            vk in any::<u16>(),
+            shift in any::<bool>(),
+            ctrl in any::<bool>(),
+            alt in any::<bool>(),
+            app_cursor in any::<bool>(),
+        ) {
+            if let Some(seq) = encode_key(vk, shift, ctrl, alt, app_cursor) {
+                prop_assert!(!seq.is_empty());
+            }
+        }
+
+        /// Kitty push/pop state never panics under arbitrary operation
+        /// sequences, and current_flags always reflects the last push.
+        #[test]
+        fn kitty_state_stack_never_panics(
+            ops in proptest::collection::vec(proptest::option::of(any::<u32>()), 0..50),
+        ) {
+            let mut state = KittyKeyboardState::default();
+            let mut expected: Vec<u32> = Vec::new();
+            for op in ops {
+                match op {
+                    Some(flags) => { state.push(flags); expected.push(flags); }
+                    None => { state.pop(); expected.pop(); }
+                }
+                prop_assert_eq!(state.current_flags(), expected.last().copied().unwrap_or(0));
+            }
+        }
+    }
+}

@@ -20,6 +20,7 @@ pub mod modes;
 pub mod mouse;
 pub mod selection;
 pub mod session;
+pub mod structured_detect;
 pub mod table_detect;
 pub mod terminal;
 pub mod themes;

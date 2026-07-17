@@ -125,6 +125,27 @@ impl Default for AudioConfig {
 }
 
 impl AudioConfig {
+    /// Build an `AudioConfig` from the user's accessibility settings.
+    pub fn from_accessibility(a: &wixen_config::AccessibilityConfig) -> Self {
+        let events = HashMap::from([
+            (AudioEvent::CommandSuccess, a.audio_command_complete),
+            (AudioEvent::CommandError, a.audio_errors),
+            (AudioEvent::OutputWarning, a.audio_errors),
+            (AudioEvent::Progress, a.audio_progress),
+            (AudioEvent::ProgressComplete, a.audio_progress),
+            (AudioEvent::ModeToggle, a.audio_mode_toggle),
+            (AudioEvent::PasswordPrompt, a.audio_password_prompt),
+            (AudioEvent::Navigation, a.audio_navigation),
+            (AudioEvent::Selection, a.audio_selection),
+            (AudioEvent::HistoryBoundary, a.audio_boundaries),
+            (AudioEvent::EditBoundary, a.audio_boundaries),
+        ]);
+        Self {
+            enabled: a.audio_feedback,
+            events,
+        }
+    }
+
     /// Check if a specific event type should produce audio.
     pub fn should_play(&self, event: AudioEvent) -> bool {
         self.enabled && self.events.get(&event).copied().unwrap_or(false)
@@ -173,6 +194,49 @@ pub fn play_event(config: &AudioConfig, event: AudioEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_accessibility_maps_master_enable() {
+        let mut a = wixen_config::AccessibilityConfig::default();
+        a.audio_feedback = true;
+        assert!(AudioConfig::from_accessibility(&a).enabled);
+        a.audio_feedback = false;
+        assert!(!AudioConfig::from_accessibility(&a).enabled);
+    }
+
+    #[test]
+    fn from_accessibility_maps_every_event_toggle() {
+        let mut a = wixen_config::AccessibilityConfig::default();
+        a.audio_feedback = true;
+        a.audio_command_complete = false;
+        a.audio_errors = false;
+        a.audio_progress = false;
+        a.audio_mode_toggle = false;
+        a.audio_password_prompt = false;
+        a.audio_navigation = false;
+        a.audio_selection = false;
+        a.audio_boundaries = false;
+
+        let config = AudioConfig::from_accessibility(&a);
+        for event in [
+            AudioEvent::CommandSuccess,
+            AudioEvent::CommandError,
+            AudioEvent::OutputWarning,
+            AudioEvent::Progress,
+            AudioEvent::ProgressComplete,
+            AudioEvent::ModeToggle,
+            AudioEvent::PasswordPrompt,
+            AudioEvent::Navigation,
+            AudioEvent::Selection,
+            AudioEvent::HistoryBoundary,
+            AudioEvent::EditBoundary,
+        ] {
+            assert!(
+                !config.should_play(event),
+                "{event:?} should be off when its config toggle is off"
+            );
+        }
+    }
 
     #[test]
     fn default_config_audio_disabled() {

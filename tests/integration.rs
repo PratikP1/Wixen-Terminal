@@ -1046,3 +1046,193 @@ fn test_terminal_new_accepts_clamped_range() {
         }
     }
 }
+
+// ===========================================================================
+// Property-based fuzzing — the terminal must never panic on any byte
+// sequence a program feeds it, and the grid must stay consistent.
+// ===========================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Assert the structural invariants that must hold after any input:
+    /// every grid row exists at the advertised width and the cursor is in
+    /// bounds (position 0 is permitted for degenerate 0-sized grids).
+    fn assert_grid_consistent(terminal: &Terminal) -> Result<(), TestCaseError> {
+        let (cols, rows) = (terminal.cols(), terminal.rows());
+        for r in 0..rows {
+            let row = terminal.grid.row(r);
+            prop_assert!(row.is_some(), "row {r} missing in {cols}x{rows} grid");
+            if let Some(cells) = row {
+                prop_assert_eq!(
+                    cells.len(),
+                    cols,
+                    "row {} has wrong width in {}x{} grid",
+                    r,
+                    cols,
+                    rows
+                );
+            }
+        }
+        prop_assert!(
+            terminal.grid.cursor.col < cols.max(1),
+            "cursor col {} out of bounds for {} cols",
+            terminal.grid.cursor.col,
+            cols
+        );
+        prop_assert!(
+            terminal.grid.cursor.row < rows.max(1),
+            "cursor row {} out of bounds for {} rows",
+            terminal.grid.cursor.row,
+            rows
+        );
+        Ok(())
+    }
+
+    /// Escape-sequence openers a hostile program might leave dangling in
+    /// front of garbage bytes.
+    fn sequence_prefix() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            Just(b"\x1b[".to_vec()),      // CSI
+            Just(b"\x1b]".to_vec()),      // OSC
+            Just(b"\x1b]0;".to_vec()),    // OSC title
+            Just(b"\x1b]133;".to_vec()),  // OSC shell integration
+            Just(b"\x1bP".to_vec()),      // DCS
+            Just(b"\x1b_".to_vec()),      // APC
+            Just(b"\x1b[38;2;".to_vec()), // SGR truecolor stub
+            Just(b"\x1b[?1049".to_vec()), // private mode stub
+            Just(b"\x1b".to_vec()),       // bare ESC
+            Just(Vec::new()),
+        ]
+    }
+
+    /// Terminal dimensions covering the degenerate, tiny, normal, and
+    /// extreme cases demanded of resize handling.
+    fn dimension() -> impl Strategy<Value = usize> {
+        prop_oneof![
+            3 => Just(0usize),
+            3 => Just(1usize),
+            8 => 2usize..200,
+            1 => Just(10_000usize),
+        ]
+    }
+
+    /// A (cols, rows) pair with the total cell count capped so a 10000-wide
+    /// or 10000-tall grid is exercised without allocating a 10000x10000
+    /// (100-million-cell) grid in the test runner.
+    fn dimension_pair() -> impl Strategy<Value = (usize, usize)> {
+        const MAX_CELLS: usize = 250_000;
+        (dimension(), dimension()).prop_map(|(cols, rows)| {
+            if cols.saturating_mul(rows) > MAX_CELLS {
+                (cols, MAX_CELLS / cols.max(1))
+            } else {
+                (cols, rows)
+            }
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// Arbitrary bytes through the full parser → terminal pipeline:
+        /// no panic, grid stays consistent.
+        #[test]
+        fn terminal_survives_arbitrary_bytes(
+            data in proptest::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let mut terminal = Terminal::new(80, 24);
+            let mut parser = Parser::new();
+            feed(&mut terminal, &mut parser, &data);
+            assert_grid_consistent(&terminal)?;
+        }
+
+        /// Valid escape-sequence prefixes interleaved with garbage bytes:
+        /// no panic, grid stays consistent.
+        #[test]
+        fn terminal_survives_interleaved_prefixes_and_garbage(
+            chunks in proptest::collection::vec(
+                (sequence_prefix(), proptest::collection::vec(any::<u8>(), 0..64)),
+                0..16,
+            ),
+        ) {
+            let mut terminal = Terminal::new(80, 24);
+            let mut parser = Parser::new();
+            for (prefix, garbage) in chunks {
+                feed(&mut terminal, &mut parser, &prefix);
+                feed(&mut terminal, &mut parser, &garbage);
+            }
+            assert_grid_consistent(&terminal)?;
+        }
+
+        /// Hostile CSI parameters (huge values, many params, cursor
+        /// addressing far outside the grid): cursor must stay in bounds.
+        #[test]
+        fn hostile_csi_cursor_stays_in_bounds(
+            row_param in any::<u16>(),
+            col_param in any::<u16>(),
+            final_byte in prop_oneof![
+                Just(b'H'), Just(b'A'), Just(b'B'), Just(b'C'), Just(b'D'),
+                Just(b'G'), Just(b'd'), Just(b'E'), Just(b'F'),
+            ],
+            cols in 1usize..300,
+            rows in 1usize..100,
+        ) {
+            let mut terminal = Terminal::new(cols, rows);
+            let mut parser = Parser::new();
+            let seq = format!("\x1b[{row_param};{col_param}{}", final_byte as char);
+            feed(&mut terminal, &mut parser, seq.as_bytes());
+            assert_grid_consistent(&terminal)?;
+        }
+    }
+
+    // Reflowing a large scrollback at extreme widths (10000 cols) is
+    // expensive per case, so these two run fewer cases in CI. Verified
+    // locally at 256 cases (~4 minutes).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// Arbitrary resizes (including 0, 1, and 10000) interleaved with
+        /// output: no panic, cursor always in bounds afterward.
+        #[test]
+        fn terminal_survives_resize_interleaved_with_output(
+            (initial_cols, initial_rows) in dimension_pair(),
+            steps in proptest::collection::vec(
+                (dimension_pair(), proptest::collection::vec(any::<u8>(), 0..128)),
+                1..6,
+            ),
+        ) {
+            let mut terminal = Terminal::new(initial_cols, initial_rows);
+            let mut parser = Parser::new();
+            assert_grid_consistent(&terminal)?;
+            for ((cols, rows), data) in steps {
+                terminal.resize(cols, rows);
+                prop_assert_eq!(terminal.cols(), cols);
+                prop_assert_eq!(terminal.rows(), rows);
+                assert_grid_consistent(&terminal)?;
+                feed(&mut terminal, &mut parser, &data);
+                assert_grid_consistent(&terminal)?;
+            }
+        }
+
+        /// Alternate-screen switching plus resizes plus garbage: no panic.
+        #[test]
+        fn terminal_survives_alt_screen_resize_storm(
+            steps in proptest::collection::vec(
+                (any::<bool>(), dimension_pair(), proptest::collection::vec(any::<u8>(), 0..64)),
+                1..8,
+            ),
+        ) {
+            let mut terminal = Terminal::new(80, 24);
+            let mut parser = Parser::new();
+            for (alt, (cols, rows), data) in steps {
+                let switch: &[u8] = if alt { b"\x1b[?1049h" } else { b"\x1b[?1049l" };
+                feed(&mut terminal, &mut parser, switch);
+                terminal.resize(cols, rows);
+                feed(&mut terminal, &mut parser, &data);
+                assert_grid_consistent(&terminal)?;
+            }
+        }
+    }
+}

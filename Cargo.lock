@@ -2882,6 +2882,7 @@ dependencies = [
 name = "wixen-search"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "regex",
  "thiserror 2.0.18",
  "tracing",
@@ -2905,6 +2906,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "parking_lot",
+ "proptest",
  "tracing",
  "tracing-subscriber",
  "windows 0.61.3",

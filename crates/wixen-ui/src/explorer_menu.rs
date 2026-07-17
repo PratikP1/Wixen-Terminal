@@ -246,6 +246,31 @@ mod tests {
         }
     }
 
+    /// A path containing spaces must be wrapped in quotes so Explorer cannot be
+    /// tricked into executing a different program (e.g. `C:\Program.exe`).
+    #[test]
+    fn command_value_quotes_exe_path_with_spaces() {
+        let config = ExplorerMenuConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let exe = r"C:\Program Files\Wixen Terminal\wixen.exe";
+        let entries = registry_commands(exe, &config);
+
+        let commands: Vec<_> = entries
+            .iter()
+            .filter(|e| e.key.ends_with(r"\command"))
+            .collect();
+        assert!(!commands.is_empty());
+        for cmd in &commands {
+            assert!(
+                cmd.value.starts_with(&format!(r#""{exe}""#)),
+                "exe path must be quoted to prevent hijacking: {}",
+                cmd.value
+            );
+        }
+    }
+
     #[test]
     fn disabled_config_returns_empty_vec() {
         let config = ExplorerMenuConfig::default(); // enabled: false

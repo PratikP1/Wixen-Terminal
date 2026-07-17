@@ -3,6 +3,7 @@
 //! This tree is built from the terminal grid + shell integration data and
 //! provides the structure that screen readers navigate.
 
+use wixen_core::table_detect::detect_table;
 use wixen_core::url::detect_safe_urls;
 use wixen_shell_integ::{BlockState, CommandBlock};
 
@@ -42,6 +43,9 @@ pub enum A11yNode {
         shell_block_id: u64,
         /// Display name (e.g., "git status (exit 0)")
         name: String,
+        /// Localized landmark label for UIA landmark navigation
+        /// (e.g., "Command 1", "Command 2"), in block order.
+        landmark_label: String,
         /// Children: prompt, input, output regions
         children: Vec<A11yNode>,
         /// Whether the command failed
@@ -71,6 +75,20 @@ pub enum A11yNode {
         /// Politeness level (1=polite, 2=assertive)
         politeness: u32,
     },
+    /// A table detected in command output (column-aligned text).
+    Table {
+        id: NodeId,
+        /// Total row count, including the header row.
+        rows: usize,
+        /// Column count.
+        cols: usize,
+        /// Start row in the terminal grid (absolute).
+        start_row: usize,
+        /// End row in the terminal grid (absolute, inclusive).
+        end_row: usize,
+        /// Cell text, row-major; row 0 is the header row.
+        cell_data: Vec<Vec<String>>,
+    },
     /// A hyperlink detected in command output.
     Hyperlink {
         id: NodeId,
@@ -92,6 +110,7 @@ impl A11yNode {
             A11yNode::CommandBlock { id, .. } => *id,
             A11yNode::TextRegion { id, .. } => *id,
             A11yNode::LiveRegion { id, .. } => *id,
+            A11yNode::Table { id, .. } => *id,
             A11yNode::Hyperlink { id, .. } => *id,
         }
     }
@@ -102,7 +121,19 @@ impl A11yNode {
             A11yNode::CommandBlock { children, .. } => children,
             A11yNode::TextRegion { children, .. } => children,
             A11yNode::LiveRegion { .. } => &[],
+            A11yNode::Table { .. } => &[],
             A11yNode::Hyperlink { .. } => &[],
+        }
+    }
+
+    /// Look up the text of a table cell for screen reader cell navigation.
+    ///
+    /// Row 0 is the header row. Returns None for out-of-bounds coordinates
+    /// or non-Table nodes.
+    pub fn cell_text(&self, row: usize, col: usize) -> Option<&str> {
+        match self {
+            A11yNode::Table { cell_data, .. } => cell_data.get(row)?.get(col).map(String::as_str),
+            _ => None,
         }
     }
 
@@ -131,6 +162,9 @@ impl A11yNode {
                     None
                 }
             }
+            A11yNode::Table {
+                start_row, end_row, ..
+            } => Some((*start_row, *end_row)),
             A11yNode::Hyperlink {
                 start_row, end_row, ..
             } => Some((*start_row, *end_row)),
@@ -175,7 +209,7 @@ impl AccessibilityTree {
     {
         let mut children = Vec::with_capacity(blocks.len() + 1);
 
-        for block in blocks {
+        for (block_index, block) in blocks.iter().enumerate() {
             let block_id = self.alloc_id();
 
             let mut block_children = Vec::new();
@@ -217,11 +251,11 @@ impl AccessibilityTree {
                     let is_error = block.exit_code.is_some_and(|c| c != 0);
 
                     // Scan for URLs in each line of output
-                    let mut hyperlinks = Vec::new();
+                    let mut region_children = Vec::new();
                     for (line_offset, line) in text.lines().enumerate() {
                         let row = output_range.start + line_offset;
                         for url_match in detect_safe_urls(line) {
-                            hyperlinks.push(A11yNode::Hyperlink {
+                            region_children.push(A11yNode::Hyperlink {
                                 id: self.alloc_id(),
                                 url: url_match.url.clone(),
                                 text: url_match.url,
@@ -229,6 +263,11 @@ impl AccessibilityTree {
                                 end_row: row,
                             });
                         }
+                    }
+
+                    // Detect column-aligned tabular output
+                    if let Some(table) = self.detect_table_node(&text, output_range.start) {
+                        region_children.push(table);
                     }
 
                     block_children.push(A11yNode::TextRegion {
@@ -241,7 +280,7 @@ impl AccessibilityTree {
                         },
                         start_row: output_range.start,
                         end_row: output_range.end,
-                        children: hyperlinks,
+                        children: region_children,
                     });
                 }
             }
@@ -268,6 +307,7 @@ impl AccessibilityTree {
                 id: block_id,
                 shell_block_id: block.id,
                 name,
+                landmark_label: format!("Command {}", block_index + 1),
                 children: block_children,
                 is_error,
                 state: block.state,
@@ -278,6 +318,28 @@ impl AccessibilityTree {
             id: NodeId(1),
             children,
         };
+    }
+
+    /// Run table detection on an output region's text and build a Table node
+    /// if column-aligned tabular data is found.
+    fn detect_table_node(&mut self, text: &str, output_start_row: usize) -> Option<A11yNode> {
+        let lines: Vec<&str> = text.lines().collect();
+        let detected = detect_table(&lines, output_start_row)?;
+
+        // Row 0 is the header row; data rows follow.
+        let mut cell_data = Vec::with_capacity(detected.rows.len() + 1);
+        cell_data.push(detected.headers);
+        cell_data.extend(detected.rows);
+
+        let row_count = cell_data.len();
+        Some(A11yNode::Table {
+            id: self.alloc_id(),
+            rows: row_count,
+            cols: detected.col_count,
+            start_row: output_start_row,
+            end_row: output_start_row + row_count.saturating_sub(1),
+            cell_data,
+        })
     }
 
     /// Find a node by its runtime ID.
@@ -386,6 +448,37 @@ mod tests {
         } else {
             panic!("Expected CommandBlock");
         }
+    }
+
+    #[test]
+    fn test_command_blocks_carry_landmark_labels_in_block_order() {
+        let make_block = |id: u64, row: usize| CommandBlock {
+            id,
+            prompt: Some(RowRange::new(row, row)),
+            input: None,
+            output: None,
+            exit_code: None,
+            cwd: None,
+            command_text: Some(format!("cmd{}", id)),
+            state: BlockState::Completed,
+            started_at: None,
+            output_line_count: 0,
+        };
+        let blocks = vec![make_block(10, 0), make_block(20, 1), make_block(30, 2)];
+
+        let mut tree = AccessibilityTree::new();
+        tree.rebuild(&blocks, |_, _| "text".to_string());
+
+        let labels: Vec<&str> = tree
+            .root
+            .children()
+            .iter()
+            .map(|node| match node {
+                A11yNode::CommandBlock { landmark_label, .. } => landmark_label.as_str(),
+                _ => panic!("Expected CommandBlock"),
+            })
+            .collect();
+        assert_eq!(labels, vec!["Command 1", "Command 2", "Command 3"]);
     }
 
     #[test]
@@ -537,6 +630,104 @@ mod tests {
         } else {
             panic!("Expected Hyperlink node");
         }
+    }
+
+    /// Command block whose output occupies the given row range.
+    fn block_with_output(output: RowRange) -> CommandBlock {
+        CommandBlock {
+            id: 1,
+            prompt: None,
+            input: None,
+            output: Some(output),
+            exit_code: Some(0),
+            cwd: None,
+            command_text: Some("wsl -l -v".to_string()),
+            state: BlockState::Completed,
+            started_at: None,
+            output_line_count: 0,
+        }
+    }
+
+    const TABULAR_OUTPUT: &str = "A     B     C\n1     2     3\n4     5     6\n7     8     9";
+
+    #[test]
+    fn test_tabular_output_produces_table_node() {
+        let blocks = vec![block_with_output(RowRange::new(2, 5))];
+        let mut tree = AccessibilityTree::new();
+        tree.rebuild(&blocks, |_, _| TABULAR_OUTPUT.to_string());
+
+        let output_region = tree.root.children()[0].children().last().unwrap();
+        let tables: Vec<&A11yNode> = output_region
+            .children()
+            .iter()
+            .filter(|n| matches!(n, A11yNode::Table { .. }))
+            .collect();
+        assert_eq!(tables.len(), 1, "tabular output must yield one Table node");
+
+        if let A11yNode::Table {
+            rows,
+            cols,
+            start_row,
+            end_row,
+            cell_data,
+            ..
+        } = tables[0]
+        {
+            assert_eq!(*rows, 4); // header + 3 data rows
+            assert_eq!(*cols, 3);
+            assert_eq!(*start_row, 2);
+            assert_eq!(*end_row, 5);
+            assert_eq!(cell_data[0], vec!["A", "B", "C"]);
+            assert_eq!(cell_data[3], vec!["7", "8", "9"]);
+        } else {
+            panic!("Expected Table node");
+        }
+    }
+
+    #[test]
+    fn test_plain_output_produces_no_table_node() {
+        let blocks = vec![block_with_output(RowRange::new(2, 5))];
+        let mut tree = AccessibilityTree::new();
+        tree.rebuild(&blocks, |_, _| {
+            "This is a normal paragraph of text.\n\
+             It has no column alignment at all.\n\
+             Each line is just regular prose.\n\
+             Nothing tabular about this output."
+                .to_string()
+        });
+
+        let output_region = tree.root.children()[0].children().last().unwrap();
+        assert!(
+            !output_region
+                .children()
+                .iter()
+                .any(|n| matches!(n, A11yNode::Table { .. })),
+            "plain prose output must not produce a Table node"
+        );
+    }
+
+    #[test]
+    fn test_table_cell_text_lookup() {
+        let blocks = vec![block_with_output(RowRange::new(2, 5))];
+        let mut tree = AccessibilityTree::new();
+        tree.rebuild(&blocks, |_, _| TABULAR_OUTPUT.to_string());
+
+        let output_region = tree.root.children()[0].children().last().unwrap();
+        let table = output_region
+            .children()
+            .iter()
+            .find(|n| matches!(n, A11yNode::Table { .. }))
+            .unwrap();
+
+        assert_eq!(table.cell_text(0, 0), Some("A"));
+        assert_eq!(table.cell_text(0, 2), Some("C"));
+        assert_eq!(table.cell_text(1, 1), Some("2"));
+        assert_eq!(table.cell_text(3, 2), Some("9"));
+        // Out-of-bounds lookups return None
+        assert_eq!(table.cell_text(4, 0), None);
+        assert_eq!(table.cell_text(0, 3), None);
+        // Non-table nodes have no cells
+        assert_eq!(output_region.cell_text(0, 0), None);
     }
 
     #[test]

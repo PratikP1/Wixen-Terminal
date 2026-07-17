@@ -9,6 +9,7 @@ pub mod audio;
 pub mod command_palette;
 pub mod default_terminal;
 pub mod explorer_menu;
+pub mod help;
 pub mod history;
 pub mod jumplist;
 pub mod panes;
