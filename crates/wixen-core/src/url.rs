@@ -259,6 +259,40 @@ mod proptests {
             }
         }
 
+        /// Match ranges must be slice-safe on the original text: byte offsets
+        /// must land on char boundaries even with multibyte UTF-8 around and
+        /// inside URLs, so slicing at the reported indices never panics.
+        #[test]
+        fn match_ranges_are_char_boundary_safe(
+            prefix in "[\\u{00A0}-\\u{FFFF} ]{0,20}",
+            path in "[a-z\\u{00A0}-\\u{FFFF}]{0,20}",
+            suffix in "[\\u{00A0}-\\u{FFFF} ]{0,20}",
+        ) {
+            let text = format!("{prefix}https://ex.com/{path} {suffix}");
+            for m in detect_urls(&text) {
+                prop_assert!(text.is_char_boundary(m.col_start),
+                    "col_start {} not a char boundary in {:?}", m.col_start, text);
+                prop_assert!(text.is_char_boundary(m.col_end),
+                    "col_end {} not a char boundary in {:?}", m.col_end, text);
+                prop_assert_eq!(&text[m.col_start..m.col_end], m.url.as_str());
+            }
+        }
+
+        /// detect_safe_urls and is_safe_url_scheme must never panic, and the
+        /// safe set is exactly the subset of detect_urls with safe schemes.
+        #[test]
+        fn safe_urls_are_safe_scheme_subset(text in ".{0,300}") {
+            let safe = detect_safe_urls(&text);
+            let expected: Vec<_> = detect_urls(&text)
+                .into_iter()
+                .filter(|m| is_safe_url_scheme(&m.url))
+                .collect();
+            prop_assert_eq!(safe.clone(), expected);
+            for m in &safe {
+                prop_assert!(is_safe_url_scheme(&m.url));
+            }
+        }
+
         /// Injecting a known URL into random text must detect it.
         #[test]
         fn injected_url_is_detected(

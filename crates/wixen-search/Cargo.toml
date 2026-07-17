@@ -10,3 +10,6 @@ wixen-core = { path = "../wixen-core" }
 regex.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+proptest = "1.10.0"

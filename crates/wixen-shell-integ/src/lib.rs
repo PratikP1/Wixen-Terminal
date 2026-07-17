@@ -126,11 +126,11 @@ pub fn sanitize_command_text(text: &str) -> String {
         })
         .collect();
 
-    // 3. Truncate to max length
-    if cleaned.len() > MAX_COMMAND_TEXT_LEN {
-        cleaned[..MAX_COMMAND_TEXT_LEN].to_string()
-    } else {
-        cleaned
+    // 3. Truncate to the character cap (byte-slicing could split a
+    //    multibyte character and panic).
+    match cleaned.char_indices().nth(MAX_COMMAND_TEXT_LEN) {
+        Some((cap_byte, _)) => cleaned[..cap_byte].to_string(),
+        None => cleaned,
     }
 }
 
@@ -141,17 +141,23 @@ pub fn sanitize_command_text(text: &str) -> String {
 /// - No command text: `"Command completed: {N} lines"`
 pub fn command_summary(block: &CommandBlock) -> String {
     let n = block.output_line_count;
+    let lines = if block.command_text.is_some() {
+        format!("{n} lines of output")
+    } else {
+        format!("{n} lines")
+    };
+    format!("{}: {lines}", command_outcome(block))
+}
 
+/// The outcome phrase for a completed command, without line counts —
+/// e.g. `"cargo build completed"` or `"cargo test failed (exit 1)"`.
+///
+/// A missing exit code is treated as success (matching `command_summary`).
+pub fn command_outcome(block: &CommandBlock) -> String {
     match (&block.command_text, block.exit_code) {
-        (Some(cmd), Some(code)) if code != 0 => {
-            format!("{cmd} failed (exit {code}): {n} lines of output")
-        }
-        (Some(cmd), _) => {
-            format!("{cmd} completed: {n} lines of output")
-        }
-        (None, _) => {
-            format!("Command completed: {n} lines")
-        }
+        (Some(cmd), Some(code)) if code != 0 => format!("{cmd} failed (exit {code})"),
+        (Some(cmd), _) => format!("{cmd} completed"),
+        (None, _) => "Command completed".to_string(),
     }
 }
 
@@ -772,6 +778,32 @@ mod tests {
         assert_eq!(command_summary(&block), "true completed: 0 lines of output");
     }
 
+    // ── command_outcome tests ──
+
+    #[test]
+    fn test_outcome_success_with_command() {
+        let block = make_block(Some("cargo build"), Some(0), 42);
+        assert_eq!(command_outcome(&block), "cargo build completed");
+    }
+
+    #[test]
+    fn test_outcome_failure_with_command() {
+        let block = make_block(Some("cargo test"), Some(1), 100);
+        assert_eq!(command_outcome(&block), "cargo test failed (exit 1)");
+    }
+
+    #[test]
+    fn test_outcome_no_exit_code_is_success() {
+        let block = make_block(Some("echo hi"), None, 1);
+        assert_eq!(command_outcome(&block), "echo hi completed");
+    }
+
+    #[test]
+    fn test_outcome_no_command_text() {
+        let block = make_block(None, Some(0), 7);
+        assert_eq!(command_outcome(&block), "Command completed");
+    }
+
     #[test]
     fn test_output_line_count_field_initialized() {
         let mut si = ShellIntegration::new();
@@ -809,6 +841,23 @@ mod tests {
         let long = "a".repeat(2000);
         let result = sanitize_command_text(&long);
         assert_eq!(result.len(), 1024);
+    }
+
+    #[test]
+    fn test_sanitize_multibyte_at_cap_boundary_no_panic() {
+        // 1023 ASCII chars + 'é' = 1024 chars but 1025 bytes. The cap is
+        // documented in characters, so nothing should be truncated — and
+        // byte-slicing at 1024 (mid-'é') must not panic.
+        let input = format!("{}\u{e9}", "a".repeat(1023));
+        let result = sanitize_command_text(&input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_sanitize_truncates_multibyte_text_to_char_cap() {
+        let input = "\u{e9}".repeat(2000);
+        let result = sanitize_command_text(&input);
+        assert_eq!(result.chars().count(), 1024);
     }
 
     #[test]
@@ -887,6 +936,35 @@ mod proptests {
             }
             si.prune(max_blocks);
             prop_assert!(si.len() <= max_blocks);
+        }
+
+        /// sanitize_command_text never panics, never lets an ESC byte
+        /// through, and respects the documented character cap — including
+        /// when the cap boundary lands inside a multibyte character.
+        #[test]
+        fn sanitize_output_is_clean_and_capped(text in ".{0,2000}") {
+            let result = sanitize_command_text(&text);
+            prop_assert!(!result.contains('\x1b'), "ESC survived sanitization");
+            prop_assert!(
+                result.chars().count() <= 1024,
+                "cap exceeded: {} chars", result.chars().count()
+            );
+            prop_assert!(
+                result.chars().all(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r')),
+                "control character survived sanitization"
+            );
+        }
+
+        /// Multibyte characters straddling the 1024-char cap must never
+        /// cause a byte-boundary slice panic.
+        #[test]
+        fn sanitize_multibyte_cap_boundary_never_panics(
+            pad in 1000usize..1050,
+            filler in "[é漢字🎉]{1,30}",
+        ) {
+            let text = format!("{}{}", "a".repeat(pad), filler);
+            let result = sanitize_command_text(&text);
+            prop_assert!(result.chars().count() <= 1024);
         }
 
         /// Generation counter must increase monotonically with each valid marker.

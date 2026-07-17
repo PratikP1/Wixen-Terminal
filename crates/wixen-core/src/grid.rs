@@ -280,8 +280,8 @@ impl Grid {
                     // Cursor was in this source row at old_cursor_col
                     let char_offset = row_start_in_line + old_cursor_col;
                     // Map to new row/col
-                    if new_cols > 0 {
-                        cursor_new_abs_row = reflowed.len() + char_offset / new_cols;
+                    if let Some(rows_down) = char_offset.checked_div(new_cols) {
+                        cursor_new_abs_row = reflowed.len() + rows_down;
                         cursor_new_col = char_offset % new_cols;
                     }
                 }
@@ -399,8 +399,11 @@ fn break_line_at_width(cells: &[Cell], cols: usize) -> Vec<Row> {
         let cell = &cells[i];
         let w = cell.width.max(1) as usize;
 
-        // Wide char doesn't fit — move to next row
-        if w == 2 && col + 1 >= cols {
+        // Wide char doesn't fit — move to next row. Only worth retrying
+        // when this row already has content: on a fresh row (col == 0) a
+        // wide char that still doesn't fit never will (cols == 1), and
+        // retrying would loop forever.
+        if w == 2 && col + 1 >= cols && col > 0 {
             // Fill remaining with space
             while current_cells.len() < cols {
                 current_cells.push(Cell::default());
@@ -572,6 +575,31 @@ mod tests {
         // Should NOT merge — simple resize just pads
         assert_eq!(row_text(&grid.cells[0]), "ABCDE");
         assert_eq!(row_text(&grid.cells[1]), "FGHIJ");
+    }
+
+    #[test]
+    fn test_reflow_wide_char_to_single_column_terminates() {
+        // A width-2 cell reflowed to a 1-col grid can never fit; the
+        // line breaker must place it anyway instead of retrying forever.
+        let mut scrollback = crate::buffer::ScrollbackBuffer::new();
+        let mut grid = Grid::new(2, 1);
+        grid.cells[0].cells[0] = Cell {
+            content: String::from("\u{6f22}"),
+            attrs: CellAttributes::default(),
+            width: 2,
+        };
+        grid.cells[0].cells[1] = Cell {
+            content: String::new(),
+            attrs: CellAttributes::default(),
+            width: 0,
+        };
+
+        grid.resize_with_reflow(1, 1, &mut scrollback);
+
+        assert_eq!(grid.cols, 1);
+        for row in &grid.cells {
+            assert_eq!(row.cells.len(), 1);
+        }
     }
 
     #[test]

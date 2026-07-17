@@ -95,7 +95,7 @@ impl SearchEngine {
             let pattern = if self.options.case_sensitive {
                 Regex::new(&self.query)
             } else {
-                Regex::new(&format!("(?i){}", &self.query))
+                Regex::new(&format!("(?i){}", self.query))
             };
             match pattern {
                 Ok(re) => self.compiled_regex = Some(re),
@@ -134,8 +134,10 @@ impl SearchEngine {
     /// Find all matches in a single line and append to self.matches.
     fn find_matches_in_line(&mut self, line: &str, abs_row: usize) {
         if let Some(ref re) = self.compiled_regex {
-            // Regex search
-            for mat in re.find_iter(line) {
+            // Regex search. Zero-width matches (e.g. from "$" or "x*") are
+            // skipped: an empty range can be neither highlighted nor
+            // navigated to.
+            for mat in re.find_iter(line).filter(|m| !m.is_empty()) {
                 let col_start = char_col_at_byte(line, mat.start());
                 let col_end = char_col_at_byte(line, mat.end());
                 self.matches.push(SearchMatch {
@@ -145,30 +147,33 @@ impl SearchEngine {
                 });
             }
         } else {
-            // Plain text search
-            let (haystack, needle);
-            if self.options.case_sensitive {
-                haystack = line.to_string();
-                needle = self.query.clone();
+            // Plain text search. Case folding can change byte lengths
+            // (e.g. 'İ' lowercases to "i\u{307}"), so search the folded
+            // haystack and map its byte offsets back to original columns.
+            let fold = !self.options.case_sensitive;
+            let folded = FoldedLine::new(line, fold);
+            let needle = if fold {
+                self.query.to_lowercase()
             } else {
-                haystack = line.to_lowercase();
-                needle = self.query.to_lowercase();
+                self.query.clone()
+            };
+            if needle.is_empty() {
+                return;
             }
 
             let mut start = 0;
-            while let Some(pos) = haystack[start..].find(&needle) {
+            while let Some(pos) = folded.text[start..].find(&needle) {
                 let byte_start = start + pos;
                 let byte_end = byte_start + needle.len();
-                let col_start = char_col_at_byte(line, byte_start);
-                let col_end = char_col_at_byte(line, byte_end);
                 self.matches.push(SearchMatch {
                     row: abs_row,
-                    col_start,
-                    col_end,
+                    col_start: folded.col_at(byte_start),
+                    col_end: folded.col_after(byte_end),
                 });
-                // Advance past this match (by at least one char to avoid infinite loops)
+                // Advance past this match start (by one folded char to avoid
+                // infinite loops on repeated matches).
                 start = byte_start
-                    + line[byte_start..]
+                    + folded.text[byte_start..]
                         .chars()
                         .next()
                         .map_or(1, |c| c.len_utf8());
@@ -334,10 +339,70 @@ fn row_cells_to_string(cells: &[Cell]) -> String {
 
 /// Convert a byte offset in a string to a column (character) index.
 ///
-/// This is needed because terminal columns are character-based but string
-/// searching returns byte offsets.
+/// The offset must lie on a char boundary of `s` (regex match offsets are).
 fn char_col_at_byte(s: &str, byte_offset: usize) -> usize {
     s[..byte_offset].chars().count()
+}
+
+/// A line prepared for plain-text search: optionally case-folded text plus a
+/// map from each folded byte back to the original character column.
+///
+/// Case folding can expand characters (one original char may produce several
+/// folded bytes), so byte offsets found in the folded text are only valid for
+/// the original line via this map.
+struct FoldedLine {
+    /// The (possibly lowercased) text to search in.
+    text: String,
+    /// Original character column for every byte of `text`.
+    col_of_byte: Vec<usize>,
+    /// Total character count of the original line.
+    total_cols: usize,
+}
+
+impl FoldedLine {
+    fn new(line: &str, fold_case: bool) -> Self {
+        let mut text = String::new();
+        let mut col_of_byte = Vec::with_capacity(line.len());
+        let mut total_cols = 0;
+        for (col, ch) in line.chars().enumerate() {
+            total_cols = col + 1;
+            if fold_case {
+                for folded in ch.to_lowercase() {
+                    Self::push_mapped(&mut text, &mut col_of_byte, folded, col);
+                }
+            } else {
+                Self::push_mapped(&mut text, &mut col_of_byte, ch, col);
+            }
+        }
+        Self {
+            text,
+            col_of_byte,
+            total_cols,
+        }
+    }
+
+    fn push_mapped(text: &mut String, col_of_byte: &mut Vec<usize>, ch: char, col: usize) {
+        text.push(ch);
+        col_of_byte.resize(text.len(), col);
+    }
+
+    /// Original column of the character containing folded byte `offset`.
+    fn col_at(&self, offset: usize) -> usize {
+        self.col_of_byte
+            .get(offset)
+            .copied()
+            .unwrap_or(self.total_cols)
+    }
+
+    /// Exclusive original column just past a match ending at folded byte
+    /// `end` — covers the full original character even when the match ends
+    /// partway through its folded expansion.
+    fn col_after(&self, end: usize) -> usize {
+        match end.checked_sub(1) {
+            Some(last) => self.col_at(last).saturating_add(1).min(self.total_cols),
+            None => 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -499,6 +564,39 @@ mod tests {
     }
 
     #[test]
+    fn test_regex_zero_width_matches_are_ignored() {
+        // "$" matches the empty string at end-of-line; an empty range can
+        // be neither highlighted nor navigated to, so it is not a match.
+        let term = make_terminal_with_text(&["abc"]);
+        let mut engine = SearchEngine::new();
+        engine.search(
+            &term,
+            "$",
+            SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(engine.match_count(), 0);
+    }
+
+    #[test]
+    fn test_regex_star_keeps_only_nonempty_matches() {
+        let term = make_terminal_with_text(&["xx yy xx"]);
+        let mut engine = SearchEngine::new();
+        engine.search(
+            &term,
+            "x*",
+            SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(engine.match_count(), 2);
+        assert!(engine.all_matches().iter().all(|m| m.col_start < m.col_end));
+    }
+
+    #[test]
     fn test_invalid_regex() {
         let term = make_terminal_with_text(&["hello"]);
         let mut engine = SearchEngine::new();
@@ -538,6 +636,30 @@ mod tests {
     }
 
     #[test]
+    fn test_case_insensitive_search_survives_length_changing_lowercase() {
+        // 'İ' (U+0130, 2 bytes) lowercases to "i\u{307}" (3 bytes) — byte
+        // offsets found in the lowercased haystack must not be applied to
+        // the original line, or slicing panics / runs out of bounds.
+        let term = make_terminal_with_text(&["\u{130}abc"]);
+        let mut engine = SearchEngine::new();
+        engine.search(&term, "i", SearchOptions::default());
+        for m in engine.all_matches() {
+            assert!(m.col_start < m.col_end);
+            assert!(m.col_end <= 4, "cols must stay within the 4-char line");
+        }
+    }
+
+    #[test]
+    fn test_case_insensitive_repeated_dotted_capital_i_no_panic() {
+        // Repeated 'İ' forces the byte-advance loop onto non-boundary
+        // offsets of the lowercased haystack.
+        let term = make_terminal_with_text(&["\u{130}\u{130}\u{130}"]);
+        let mut engine = SearchEngine::new();
+        engine.search(&term, "i", SearchOptions::default());
+        assert_eq!(engine.match_count(), 3);
+    }
+
+    #[test]
     fn test_status_text() {
         let term = make_terminal_with_text(&["hello world hello"]);
         let mut engine = SearchEngine::new();
@@ -555,5 +677,148 @@ mod tests {
         // No results
         engine.search(&term, "zzz", SearchOptions::default());
         assert_eq!(engine.status_text(), "No results");
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use wixen_core::Terminal;
+
+    /// Build a terminal whose grid holds the given lines of text.
+    fn terminal_with_lines(lines: &[String]) -> Terminal {
+        let cols = lines
+            .iter()
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(10);
+        let mut term = Terminal::new(cols, lines.len().max(1));
+        for (row, line) in lines.iter().enumerate() {
+            for (col, ch) in line.chars().enumerate() {
+                if let Some(cell) = term.grid.cell_mut(col, row) {
+                    cell.content.clear();
+                    cell.content.push(ch);
+                }
+            }
+        }
+        term
+    }
+
+    /// Assert every match points at a valid character range of its row.
+    fn assert_matches_in_bounds(
+        engine: &SearchEngine,
+        lines: &[String],
+        scrollback_len: usize,
+    ) -> Result<(), TestCaseError> {
+        for m in engine.all_matches() {
+            prop_assert!(m.col_start < m.col_end, "empty match range: {m:?}");
+            let row = m.row.checked_sub(scrollback_len).unwrap_or(m.row);
+            if let Some(line) = lines.get(row) {
+                prop_assert!(
+                    m.col_end <= line.chars().count().max(1) + line.chars().count(),
+                    "match {m:?} beyond line {line:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// Plain-text search never panics for arbitrary unicode needle and
+        /// haystack, in both case modes, and matches stay within row bounds.
+        #[test]
+        fn plain_search_never_panics(
+            lines in proptest::collection::vec(".{0,60}", 1..8),
+            query in ".{0,20}",
+            case_sensitive in any::<bool>(),
+        ) {
+            let term = terminal_with_lines(&lines);
+            let mut engine = SearchEngine::new();
+            engine.search(&term, &query, SearchOptions {
+                case_sensitive,
+                ..Default::default()
+            });
+            assert_matches_in_bounds(&engine, &lines, 0)?;
+        }
+
+        /// Case-fold length changes ('İ', 'ß'-adjacent, Cherokee, etc.) must
+        /// never push match columns out of the original line.
+        #[test]
+        fn case_fold_search_stays_in_char_bounds(
+            lines in proptest::collection::vec("[İIıiẞßÅaÆ漢 ]{0,30}", 1..6),
+            query in "[İıiẞßåaæ漢]{1,5}",
+        ) {
+            let term = terminal_with_lines(&lines);
+            let mut engine = SearchEngine::new();
+            engine.search(&term, &query, SearchOptions::default());
+            for m in engine.all_matches() {
+                let line = &lines[m.row];
+                prop_assert!(
+                    m.col_end <= line.chars().count(),
+                    "match {m:?} beyond {}-char line {line:?}",
+                    line.chars().count()
+                );
+            }
+        }
+
+        /// Regex search: invalid patterns (unbalanced parens and friends)
+        /// must yield zero matches, never a panic.
+        #[test]
+        fn regex_search_never_panics(
+            lines in proptest::collection::vec(".{0,60}", 1..6),
+            query in ".{0,20}",
+            case_sensitive in any::<bool>(),
+        ) {
+            let term = terminal_with_lines(&lines);
+            let mut engine = SearchEngine::new();
+            engine.search(&term, &query, SearchOptions {
+                regex: true,
+                case_sensitive,
+                ..Default::default()
+            });
+            assert_matches_in_bounds(&engine, &lines, 0)?;
+        }
+
+        /// Hostile regex patterns: unbalanced groups are an error (no panic);
+        /// nested-quantifier patterns like (a+)+$ must complete quickly
+        /// against adversarial input because the regex crate is linear-time.
+        #[test]
+        fn hostile_regex_patterns_no_panic_no_hang(pattern_pick in 0usize..6) {
+            let patterns = ["(((((", "(a+)+$", "([a-z]+)*$", "a{100000}", "(?P<", "\\"];
+            let pattern = patterns[pattern_pick];
+            let line = format!("{}b", "a".repeat(2000));
+            let term = terminal_with_lines(&[line]);
+            let mut engine = SearchEngine::new();
+            engine.search(&term, pattern, SearchOptions {
+                regex: true,
+                ..Default::default()
+            });
+        }
+
+        /// Navigation over arbitrary match sets never panics and always
+        /// lands on a valid match when matches exist.
+        #[test]
+        fn navigation_never_panics(
+            lines in proptest::collection::vec("[ab ]{0,30}", 1..6),
+            query in "[ab]{1,3}",
+            wrap_around in any::<bool>(),
+            steps in proptest::collection::vec(any::<bool>(), 0..20),
+        ) {
+            let term = terminal_with_lines(&lines);
+            let mut engine = SearchEngine::new();
+            engine.search(&term, &query, SearchOptions {
+                wrap_around,
+                ..Default::default()
+            });
+            for forward in steps {
+                let dir = if forward { SearchDirection::Forward } else { SearchDirection::Backward };
+                let stepped = engine.next_match(dir).is_some();
+                prop_assert_eq!(stepped, engine.match_count() > 0);
+            }
+        }
     }
 }

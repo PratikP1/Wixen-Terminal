@@ -283,3 +283,53 @@ mod tests {
         assert_eq!(distros[0].name, "Debian");
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// parse_wsl_list_output must never panic on arbitrary text,
+        /// including null bytes, BOMs, and multibyte characters.
+        #[test]
+        fn parse_never_panics(output in ".{0,500}") {
+            let _ = parse_wsl_list_output(&output);
+        }
+
+        /// Every parsed distro has a non-empty name and a version of 1 or 2.
+        #[test]
+        fn parsed_distros_are_well_formed(output in "[a-zA-Z0-9*é漢 \n\t\u{0}]{0,500}") {
+            for distro in parse_wsl_list_output(&output) {
+                prop_assert!(!distro.name.is_empty());
+                prop_assert!(distro.version == 1 || distro.version == 2);
+            }
+        }
+
+        /// decode_utf16le_or_utf8 must never panic on arbitrary bytes.
+        #[test]
+        fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..400)) {
+            let _ = decode_utf16le_or_utf8(&bytes);
+        }
+
+        /// A well-formed distro line round-trips through the parser.
+        #[test]
+        fn well_formed_line_roundtrips(
+            name in "[A-Za-z][A-Za-z0-9._-]{0,20}",
+            default in any::<bool>(),
+            version in 1u8..=2,
+        ) {
+            let marker = if default { "*" } else { " " };
+            let output = format!(
+                "  NAME  STATE  VERSION\n{marker} {name}  Running  {version}\n"
+            );
+            let distros = parse_wsl_list_output(&output);
+            prop_assert_eq!(distros.len(), 1);
+            prop_assert_eq!(&distros[0].name, &name);
+            prop_assert_eq!(distros[0].default, default);
+            prop_assert_eq!(distros[0].version, version);
+        }
+    }
+}

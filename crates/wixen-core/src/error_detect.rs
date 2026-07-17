@@ -149,30 +149,34 @@ pub fn detect_progress(line: &str) -> Option<u8> {
     }
 
     // Try fraction in parentheses: (5/10)
-    if let Some(caps) = FRACTION_PAREN.captures(line) {
-        let num: u32 = caps[1].parse().ok()?;
-        let den: u32 = caps[2].parse().ok()?;
-        if den > 0 {
-            let pct = (num * 100) / den;
-            if pct <= 100 {
-                return Some(pct as u8);
-            }
-        }
+    if let Some(pct) = FRACTION_PAREN
+        .captures(line)
+        .and_then(|caps| fraction_percent(&caps[1], &caps[2]))
+    {
+        return Some(pct);
     }
 
     // Try "N of M"
-    if let Some(caps) = FRACTION_OF.captures(line) {
-        let num: u32 = caps[1].parse().ok()?;
-        let den: u32 = caps[2].parse().ok()?;
-        if den > 0 {
-            let pct = (num * 100) / den;
-            if pct <= 100 {
-                return Some(pct as u8);
-            }
-        }
+    if let Some(pct) = FRACTION_OF
+        .captures(line)
+        .and_then(|caps| fraction_percent(&caps[1], &caps[2]))
+    {
+        return Some(pct);
     }
 
     None
+}
+
+/// Compute `num/den` as a percentage, if it parses and lands in `0..=100`.
+///
+/// Uses u64 arithmetic so hostile numerators (e.g. `(42949673/1)`) cannot
+/// overflow. Unparseable or out-of-range fractions yield `None` so other
+/// progress patterns on the same line still get a chance.
+fn fraction_percent(num_str: &str, den_str: &str) -> Option<u8> {
+    let num: u64 = num_str.parse().ok()?;
+    let den: u64 = den_str.parse().ok()?;
+    let pct = num.checked_mul(100)?.checked_div(den)?;
+    (pct <= 100).then_some(pct as u8)
 }
 
 #[cfg(test)]
@@ -494,7 +498,77 @@ mod tests {
     }
 
     #[test]
+    fn test_progress_huge_fraction_does_not_overflow() {
+        // 42_949_673 * 100 overflows u32 — must not panic, and the
+        // resulting percentage is far over 100 so no progress is reported.
+        assert_eq!(detect_progress("(42949673/1)"), None);
+    }
+
+    #[test]
+    fn test_progress_unparseable_fraction_falls_through_to_of_pattern() {
+        // A fraction too large to parse must not abort detection of the
+        // later "N of M" pattern on the same line.
+        assert_eq!(
+            detect_progress("(99999999999999999999/2) 5 of 10"),
+            Some(50)
+        );
+    }
+
+    #[test]
     fn test_progress_fraction_with_context() {
         assert_eq!(detect_progress("Installing packages (3 of 12)"), Some(25));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// classify_output_line must never panic on arbitrary input.
+        #[test]
+        fn classify_never_panics(line in ".{0,300}") {
+            let _ = classify_output_line(&line);
+        }
+
+        /// count_errors_warnings never panics and never counts more than
+        /// the number of input lines.
+        #[test]
+        fn counts_bounded_by_line_count(
+            lines in proptest::collection::vec(".{0,100}", 0..40),
+        ) {
+            let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+            let (errors, warnings) = count_errors_warnings(&refs);
+            prop_assert!(errors + warnings <= refs.len());
+        }
+
+        /// detect_progress never panics and any reported progress is <= 100.
+        #[test]
+        fn progress_never_panics_and_stays_in_range(line in ".{0,300}") {
+            if let Some(pct) = detect_progress(&line) {
+                prop_assert!(pct <= 100, "progress {pct} out of range for {line:?}");
+            }
+        }
+
+        /// Hostile numeric progress inputs — huge percentages and fractions —
+        /// never panic (overflow) and never report > 100.
+        #[test]
+        fn progress_hostile_numbers_stay_in_range(
+            num in any::<u64>(),
+            den in any::<u64>(),
+            style in 0u8..3,
+        ) {
+            let line = match style {
+                0 => format!("{num}%"),
+                1 => format!("({num}/{den})"),
+                _ => format!("{num} of {den}"),
+            };
+            if let Some(pct) = detect_progress(&line) {
+                prop_assert!(pct <= 100, "progress {pct} out of range for {line:?}");
+            }
+        }
     }
 }

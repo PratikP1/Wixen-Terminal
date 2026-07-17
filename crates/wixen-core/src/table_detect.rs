@@ -76,27 +76,21 @@ pub fn detect_table(lines: &[&str], start_row: usize) -> Option<DetectedTable> {
     boundaries.sort();
     boundaries.dedup();
 
-    // Split each line by the detected boundaries
+    // Split each line by the detected boundaries. Boundaries are byte
+    // positions voted across *all* lines, so in any particular line they can
+    // land inside a multibyte character — clamp to the nearest char boundary
+    // at or below before slicing.
     let mut all_rows: Vec<Vec<String>> = Vec::new();
     for line in lines {
         let mut cols = Vec::new();
         for i in 0..boundaries.len() {
-            let start = boundaries[i];
+            let start = floor_char_boundary(line, boundaries[i]);
             let end = if i + 1 < boundaries.len() {
-                boundaries[i + 1]
+                floor_char_boundary(line, boundaries[i + 1])
             } else {
                 line.len()
             };
-            if start <= line.len() {
-                let segment = if end <= line.len() {
-                    &line[start..end]
-                } else {
-                    &line[start..]
-                };
-                cols.push(segment.trim().to_string());
-            } else {
-                cols.push(String::new());
-            }
+            cols.push(line[start..end.max(start)].trim().to_string());
         }
         all_rows.push(cols);
     }
@@ -124,6 +118,15 @@ pub fn detect_table(lines: &[&str], start_row: usize) -> Option<DetectedTable> {
         start_row,
         col_count,
     })
+}
+
+/// Largest index `<= at` that is a valid char boundary in `s`.
+fn floor_char_boundary(s: &str, at: usize) -> usize {
+    let mut idx = at.min(s.len());
+    while !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
 
 /// Quick check: does this block of text look tabular?
@@ -264,6 +267,15 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_table_multibyte_boundary_no_panic() {
+        // The boundary at byte 4 (voted by the first two lines) falls in the
+        // middle of the second 'é' in the third line — slicing there must not
+        // panic on the non-char-boundary.
+        let lines = vec!["aa  b", "aa  b", "a\u{e9}\u{e9} b"];
+        let _ = detect_table(&lines, 0);
+    }
+
+    #[test]
     fn test_table_row_count() {
         let lines = vec![
             "A     B     C",
@@ -273,5 +285,66 @@ mod tests {
         ];
         let result = detect_table(&lines, 0).unwrap();
         assert_eq!(result.rows.len(), 3); // header is separate
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Lines that resemble columnar output: words (ASCII or unicode)
+    /// separated by variable-width space runs.
+    fn column_like_line() -> impl Strategy<Value = String> {
+        proptest::collection::vec(("[a-zA-Z0-9é漢字À-ÿ]{1,8}", 1usize..5), 1..6).prop_map(|parts| {
+            parts
+                .into_iter()
+                .map(|(word, gap)| format!("{word}{}", " ".repeat(gap)))
+                .collect()
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// detect_table must never panic on arbitrary multi-line input,
+        /// including multibyte characters near boundary positions.
+        #[test]
+        fn detect_table_never_panics(
+            lines in proptest::collection::vec(".{0,120}", 0..20),
+            start_row in 0usize..1000,
+        ) {
+            let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+            let _ = detect_table(&refs, start_row);
+        }
+
+        /// Column-like unicode input must never panic, and any detected
+        /// table must be dimensionally consistent: headers and every row
+        /// carry exactly col_count values.
+        #[test]
+        fn detected_table_dimensions_are_consistent(
+            lines in proptest::collection::vec(column_like_line(), 3..15),
+            start_row in 0usize..100,
+        ) {
+            let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+            if let Some(table) = detect_table(&refs, start_row) {
+                prop_assert_eq!(table.headers.len(), table.col_count);
+                for row in &table.rows {
+                    prop_assert_eq!(row.len(), table.col_count);
+                }
+                prop_assert_eq!(table.column_boundaries.len(), table.col_count);
+                prop_assert_eq!(table.rows.len() + 1, refs.len());
+                prop_assert_eq!(table.start_row, start_row);
+            }
+        }
+
+        /// looks_tabular must never panic on arbitrary input.
+        #[test]
+        fn looks_tabular_never_panics(
+            lines in proptest::collection::vec(".{0,120}", 0..20),
+        ) {
+            let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+            let _ = looks_tabular(&refs);
+        }
     }
 }
