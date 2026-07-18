@@ -22,8 +22,8 @@ pub mod window;
 
 pub use command_palette::{CommandPalette, PaletteEntry, PaletteMode, PaletteResult};
 pub use default_terminal::{
-    RegistrationError, TerminalHandler, check_default_terminal_status, restore_default_terminal,
-    set_as_default_terminal,
+    RegistrationError, TerminalHandler, check_default_terminal_status, register_default_terminal,
+    restore_default_terminal, set_as_default_terminal, unregister_default_terminal,
 };
 pub use handoff::{
     HandoffError, HandoffRequest, HandoffStartupInfo, is_handoff_launch, register_handoff_server,
