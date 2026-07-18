@@ -1,5 +1,6 @@
 //! Raw Win32 window creation and message loop.
 
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tracing::{info, warn};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::*;
@@ -95,9 +96,142 @@ pub enum ContextMenuAction {
     Settings,
 }
 
+/// Stable process-unique identifier for a top-level window.
+///
+/// Allocated at window creation and never reused, so the application can key
+/// per-window state (panes, tabs, renderer) by it across tab tear-off moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowId(u64);
+
+impl WindowId {
+    /// Allocate the next process-unique window id.
+    pub fn allocate() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Raw numeric value, for logging and diagnostics.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// A [`WindowEvent`] paired with the window it originated from.
+#[derive(Debug)]
+pub struct TaggedWindowEvent {
+    pub window_id: WindowId,
+    pub event: WindowEvent,
+}
+
+/// Merges per-window event channels into a single stream of tagged events.
+///
+/// Each [`Window`] delivers its events on its own channel; the mux polls every
+/// attached channel round-robin so one busy window cannot starve the others.
+#[derive(Debug, Default)]
+pub struct WindowEventMux {
+    sources: Vec<(WindowId, crossbeam_channel::Receiver<WindowEvent>)>,
+    cursor: usize,
+}
+
+impl WindowEventMux {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Attach a window's event channel under its id.
+    pub fn attach(&mut self, id: WindowId, events: crossbeam_channel::Receiver<WindowEvent>) {
+        self.sources.push((id, events));
+    }
+
+    /// Attach a [`Window`]'s own event channel under its own id.
+    pub fn attach_window(&mut self, window: &Window) {
+        self.attach(window.id(), window.events().clone());
+    }
+
+    /// Detach a window's channel. Events still queued on it are dropped.
+    pub fn detach(&mut self, id: WindowId) {
+        self.sources.retain(|(source_id, _)| *source_id != id);
+        self.cursor = 0;
+    }
+
+    /// Poll for the next available event from any attached window.
+    pub fn try_next(&mut self) -> Option<TaggedWindowEvent> {
+        let len = self.sources.len();
+        for offset in 0..len {
+            let index = (self.cursor + offset) % len;
+            let (window_id, events) = &self.sources[index];
+            if let Ok(event) = events.try_recv() {
+                let window_id = *window_id;
+                self.cursor = (index + 1) % len;
+                return Some(TaggedWindowEvent { window_id, event });
+            }
+        }
+        None
+    }
+}
+
+/// Tracks which windows are open and decides when the process should exit.
+///
+/// Pure bookkeeping — no Win32 calls — so the quit decision is unit-testable.
+/// [`Self::should_quit`] is `true` only once at least one window has been
+/// registered and every registered window has since closed.
+#[derive(Debug, Default)]
+pub struct WindowRegistry {
+    open: Vec<WindowId>,
+    ever_registered: bool,
+}
+
+impl WindowRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a window as open. Registering the same id twice is a no-op.
+    pub fn register(&mut self, id: WindowId) {
+        if !self.open.contains(&id) {
+            self.open.push(id);
+            self.ever_registered = true;
+        }
+    }
+
+    /// Record a window as closed. Returns `false` if the id was not open.
+    pub fn close(&mut self, id: WindowId) -> bool {
+        match self.open.iter().position(|&open_id| open_id == id) {
+            Some(index) => {
+                self.open.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the given window is currently open.
+    pub fn is_open(&self, id: WindowId) -> bool {
+        self.open.contains(&id)
+    }
+
+    /// Number of currently open windows.
+    pub fn open_count(&self) -> usize {
+        self.open.len()
+    }
+
+    /// Ids of the currently open windows, in registration order.
+    pub fn open_ids(&self) -> &[WindowId] {
+        &self.open
+    }
+
+    /// Whether the last open window has closed and the process should exit.
+    pub fn should_quit(&self) -> bool {
+        self.ever_registered && self.open.is_empty()
+    }
+}
+
 /// Opaque handle to the Win32 window.
 pub struct Window {
     hwnd: HWND,
+    id: WindowId,
+    /// Whether [`Self::close`] has destroyed the underlying HWND.
+    closed: bool,
     event_rx: crossbeam_channel::Receiver<WindowEvent>,
     fullscreen: bool,
     saved_placement: WINDOWPLACEMENT,
@@ -114,10 +248,69 @@ struct WindowState {
     uia_provider: parking_lot::RwLock<Option<IRawElementProviderSimple>>,
 }
 
+/// Shared window class name for every top-level Wixen window.
+const WINDOW_CLASS_NAME: PCWSTR = w!("WixenTerminalWindow");
+
+/// Windows currently alive in this process (state stored in GWLP_USERDATA).
+///
+/// Incremented on `WM_CREATE`, decremented on `WM_DESTROY`; the message loop
+/// only receives `WM_QUIT` once the count reaches zero, so closing one window
+/// never ends the process while others remain open. UI-thread only, so the
+/// relaxed ordering is sufficient.
+static LIVE_WINDOWS: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether a `RegisterClassExW` outcome means the class is usable.
+///
+/// The second registration attempt returns atom 0 with
+/// `ERROR_CLASS_ALREADY_EXISTS`; the class is there to create windows against,
+/// so that counts as success.
+fn class_registration_succeeded(atom: u16, last_error: WIN32_ERROR) -> bool {
+    atom != 0 || last_error == ERROR_CLASS_ALREADY_EXISTS
+}
+
+/// Whether destroying a window while `previous_live` windows were alive means
+/// the last window is now gone (and the message loop should quit).
+fn last_window_destroyed(previous_live: usize) -> bool {
+    previous_live <= 1
+}
+
+/// Register the shared window class. Idempotent: repeat registration (for a
+/// second window) finds the class already present and succeeds.
+fn ensure_window_class(hinstance: HINSTANCE) -> Result<()> {
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
+        lpfnWndProc: Some(wnd_proc),
+        hInstance: hinstance,
+        hCursor: unsafe { LoadCursorW(None, IDC_IBEAM)? },
+        lpszClassName: WINDOW_CLASS_NAME,
+        hbrBackground: HBRUSH(std::ptr::null_mut()),
+        ..Default::default()
+    };
+
+    let atom = unsafe { RegisterClassExW(&wc) };
+    let last_error = unsafe { GetLastError() };
+    if class_registration_succeeded(atom, last_error) {
+        Ok(())
+    } else {
+        Err(Error::from_win32())
+    }
+}
+
 impl Window {
-    /// Create a new Win32 window.
+    /// Create a new Win32 window at the system-default position.
     pub fn new(title: &str, width: u32, height: u32) -> Result<Self> {
-        // Enable per-monitor DPI awareness
+        Self::create(title, width, height, None)
+    }
+
+    /// Create a new Win32 window with its top-left corner at the given screen
+    /// coordinates — e.g. near the drop point of a torn-off tab.
+    pub fn new_at(title: &str, width: u32, height: u32, x: i32, y: i32) -> Result<Self> {
+        Self::create(title, width, height, Some((x, y)))
+    }
+
+    fn create(title: &str, width: u32, height: u32, position: Option<(i32, i32)>) -> Result<Self> {
+        // Enable per-monitor DPI awareness (no-op after the first call)
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
@@ -127,23 +320,7 @@ impl Window {
         let hmodule: HMODULE = unsafe { GetModuleHandleW(None)? };
         let hinstance = HINSTANCE(hmodule.0);
 
-        let class_name = w!("WixenTerminalWindow");
-
-        let wc = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
-            lpfnWndProc: Some(wnd_proc),
-            hInstance: hinstance,
-            hCursor: unsafe { LoadCursorW(None, IDC_IBEAM)? },
-            lpszClassName: class_name,
-            hbrBackground: HBRUSH(std::ptr::null_mut()),
-            ..Default::default()
-        };
-
-        let atom = unsafe { RegisterClassExW(&wc) };
-        if atom == 0 {
-            return Err(Error::from_win32());
-        }
+        ensure_window_class(hinstance)?;
 
         // Adjust window size to account for non-client area
         let mut rect = RECT {
@@ -161,21 +338,24 @@ impl Window {
 
         let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
 
-        // Allocate state on heap, pass as LPARAM
+        // Allocate state on heap, pass as LPARAM. Each window owns its own
+        // state, freed by WM_DESTROY.
         let state = Box::new(WindowState {
             event_tx,
             uia_provider: parking_lot::RwLock::new(None),
         });
         let state_ptr = Box::into_raw(state);
 
+        let (x, y) = position.unwrap_or((CW_USEDEFAULT, CW_USEDEFAULT));
+
         let hwnd = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
-                class_name,
+                WINDOW_CLASS_NAME,
                 PCWSTR(title_wide.as_ptr()),
                 WS_OVERLAPPEDWINDOW,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                x,
+                y,
                 adjusted_width,
                 adjusted_height,
                 None,
@@ -185,7 +365,8 @@ impl Window {
             )?
         };
 
-        info!(?hwnd, width, height, "Win32 window created");
+        let id = WindowId::allocate();
+        info!(?hwnd, id = id.raw(), width, height, "Win32 window created");
 
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOW);
@@ -196,6 +377,8 @@ impl Window {
 
         Ok(Self {
             hwnd,
+            id,
+            closed: false,
             event_rx,
             fullscreen: false,
             saved_placement: WINDOWPLACEMENT {
@@ -211,6 +394,30 @@ impl Window {
     /// Get the raw HWND handle.
     pub fn hwnd(&self) -> HWND {
         self.hwnd
+    }
+
+    /// Stable identifier for this window, for keying per-window state.
+    pub fn id(&self) -> WindowId {
+        self.id
+    }
+
+    /// Destroy this window without ending the process.
+    ///
+    /// The message loop keeps serving the remaining windows; `WM_QUIT` is only
+    /// posted once the last live window is destroyed. A second call is a no-op.
+    pub fn close(&mut self) {
+        if !self.closed {
+            unsafe {
+                let _ = DestroyWindow(self.hwnd);
+            }
+            self.closed = true;
+            info!(id = self.id.raw(), "Window closed");
+        }
+    }
+
+    /// Whether [`Self::close`] has destroyed this window.
+    pub fn is_closed(&self) -> bool {
+        self.closed
     }
 
     /// Get the event receiver for window events.
@@ -540,19 +747,30 @@ impl Window {
     }
 
     /// Pump the Win32 message queue. Returns false if WM_QUIT was received.
+    ///
+    /// Delegates to [`pump_thread_messages`]: the queue is per-thread, so one
+    /// pump serves every window on this thread, not just `self`.
     pub fn pump_messages(&self) -> bool {
-        unsafe {
-            let mut msg = MSG::default();
-            while PeekMessageW(&mut msg as *mut _, None, 0, 0, PM_REMOVE).as_bool() {
-                if msg.message == WM_QUIT {
-                    return false;
-                }
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
+        pump_thread_messages()
+    }
+}
+
+/// Pump the calling thread's Win32 message queue, dispatching each message to
+/// its target window's procedure. One pump serves every window created on this
+/// thread. Returns `false` once `WM_QUIT` is received — which happens only
+/// after the last live window has been destroyed.
+pub fn pump_thread_messages() -> bool {
+    unsafe {
+        let mut msg = MSG::default();
+        while PeekMessageW(&mut msg as *mut _, None, 0, 0, PM_REMOVE).as_bool() {
+            if msg.message == WM_QUIT {
+                return false;
             }
-            true
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
     }
+    true
 }
 
 /// Apply window chrome settings: opacity, dark title bar, and backdrop material.
@@ -671,6 +889,7 @@ unsafe extern "system" fn wnd_proc(
                 unsafe {
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, cs.lpCreateParams as isize);
                 }
+                LIVE_WINDOWS.fetch_add(1, Ordering::Relaxed);
                 tracing::info!("WM_CREATE: state pointer stored in GWLP_USERDATA");
             } else {
                 tracing::warn!("WM_CREATE: lpCreateParams is NULL — no state stored");
@@ -684,8 +903,13 @@ unsafe extern "system" fn wnd_proc(
                     let _ = Box::from_raw(ptr as *mut WindowState);
                     SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 }
+                // Quit the message loop only when the LAST window is gone —
+                // closing one torn-off window must not end the process.
+                let previous_live = LIVE_WINDOWS.fetch_sub(1, Ordering::Relaxed);
+                if last_window_destroyed(previous_live) {
+                    unsafe { PostQuitMessage(0) };
+                }
             }
-            unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
         _ => {
@@ -1223,6 +1447,202 @@ mod tests {
     fn test_window_state_path_portable() {
         let path = window_state_path(true);
         assert_eq!(path.file_name().unwrap(), "window_state.json");
+    }
+
+    #[test]
+    fn test_window_id_allocation_unique() {
+        let a = WindowId::allocate();
+        let b = WindowId::allocate();
+        let c = WindowId::allocate();
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn test_window_id_equality_and_copy() {
+        let a = WindowId::allocate();
+        let copy = a;
+        assert_eq!(a, copy);
+    }
+
+    #[test]
+    fn test_window_id_usable_as_hash_key() {
+        let mut map = std::collections::HashMap::new();
+        let a = WindowId::allocate();
+        let b = WindowId::allocate();
+        map.insert(a, "first");
+        map.insert(b, "second");
+        assert_eq!(map[&a], "first");
+        assert_eq!(map[&b], "second");
+    }
+
+    #[test]
+    fn test_class_registration_first_call_succeeds() {
+        assert!(class_registration_succeeded(42, WIN32_ERROR(0)));
+    }
+
+    #[test]
+    fn test_class_registration_already_exists_is_success() {
+        assert!(class_registration_succeeded(0, ERROR_CLASS_ALREADY_EXISTS));
+    }
+
+    #[test]
+    fn test_class_registration_other_error_fails() {
+        assert!(!class_registration_succeeded(0, WIN32_ERROR(8))); // ERROR_NOT_ENOUGH_MEMORY
+    }
+
+    #[test]
+    fn test_last_window_destroyed_only_at_zero_remaining() {
+        assert!(last_window_destroyed(1));
+        assert!(!last_window_destroyed(2));
+        assert!(!last_window_destroyed(10));
+    }
+
+    #[test]
+    fn test_registry_new_should_not_quit() {
+        let registry = WindowRegistry::new();
+        assert!(!registry.should_quit());
+        assert_eq!(registry.open_count(), 0);
+    }
+
+    #[test]
+    fn test_registry_single_window_lifecycle() {
+        let mut registry = WindowRegistry::new();
+        let id = WindowId::allocate();
+        registry.register(id);
+        assert!(registry.is_open(id));
+        assert!(!registry.should_quit());
+        assert!(registry.close(id));
+        assert!(!registry.is_open(id));
+        assert!(registry.should_quit());
+    }
+
+    #[test]
+    fn test_registry_close_first_of_two_does_not_quit() {
+        let mut registry = WindowRegistry::new();
+        let a = WindowId::allocate();
+        let b = WindowId::allocate();
+        registry.register(a);
+        registry.register(b);
+        assert!(registry.close(a));
+        assert!(!registry.should_quit());
+        assert!(registry.close(b));
+        assert!(registry.should_quit());
+    }
+
+    #[test]
+    fn test_registry_close_unknown_id_returns_false() {
+        let mut registry = WindowRegistry::new();
+        registry.register(WindowId::allocate());
+        assert!(!registry.close(WindowId::allocate()));
+        assert!(!registry.should_quit());
+    }
+
+    #[test]
+    fn test_registry_duplicate_register_ignored() {
+        let mut registry = WindowRegistry::new();
+        let id = WindowId::allocate();
+        registry.register(id);
+        registry.register(id);
+        assert_eq!(registry.open_count(), 1);
+        assert!(registry.close(id));
+        assert!(registry.should_quit());
+    }
+
+    #[test]
+    fn test_registry_reopen_after_all_closed_resets_quit() {
+        let mut registry = WindowRegistry::new();
+        let first = WindowId::allocate();
+        registry.register(first);
+        registry.close(first);
+        assert!(registry.should_quit());
+
+        let torn_off = WindowId::allocate();
+        registry.register(torn_off);
+        assert!(!registry.should_quit());
+    }
+
+    #[test]
+    fn test_registry_open_ids_lists_open_windows() {
+        let mut registry = WindowRegistry::new();
+        let a = WindowId::allocate();
+        let b = WindowId::allocate();
+        registry.register(a);
+        registry.register(b);
+        assert_eq!(registry.open_ids(), &[a, b]);
+        registry.close(a);
+        assert_eq!(registry.open_ids(), &[b]);
+    }
+
+    #[test]
+    fn test_mux_tags_events_with_window_id() {
+        let mut mux = WindowEventMux::new();
+        let id = WindowId::allocate();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        mux.attach(id, rx);
+
+        tx.send(WindowEvent::CloseRequested).unwrap();
+        let tagged = mux.try_next().unwrap();
+        assert_eq!(tagged.window_id, id);
+        assert!(matches!(tagged.event, WindowEvent::CloseRequested));
+    }
+
+    #[test]
+    fn test_mux_empty_returns_none() {
+        let mut mux = WindowEventMux::new();
+        assert!(mux.try_next().is_none());
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        mux.attach(WindowId::allocate(), rx);
+        assert!(mux.try_next().is_none());
+        drop(tx);
+    }
+
+    #[test]
+    fn test_mux_detach_stops_delivery() {
+        let mut mux = WindowEventMux::new();
+        let id = WindowId::allocate();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        mux.attach(id, rx);
+        tx.send(WindowEvent::CloseRequested).unwrap();
+
+        mux.detach(id);
+        assert!(mux.try_next().is_none());
+    }
+
+    #[test]
+    fn test_mux_round_robin_across_windows() {
+        let mut mux = WindowEventMux::new();
+        let a = WindowId::allocate();
+        let b = WindowId::allocate();
+        let (tx_a, rx_a) = crossbeam_channel::unbounded();
+        let (tx_b, rx_b) = crossbeam_channel::unbounded();
+        mux.attach(a, rx_a);
+        mux.attach(b, rx_b);
+
+        tx_a.send(WindowEvent::FocusGained).unwrap();
+        tx_a.send(WindowEvent::FocusLost).unwrap();
+        tx_b.send(WindowEvent::FocusGained).unwrap();
+        tx_b.send(WindowEvent::FocusLost).unwrap();
+
+        let order: Vec<WindowId> = std::iter::from_fn(|| mux.try_next())
+            .map(|tagged| tagged.window_id)
+            .collect();
+        assert_eq!(order, vec![a, b, a, b]);
+    }
+
+    #[test]
+    fn test_mux_delivers_events_queued_before_attach() {
+        let id = WindowId::allocate();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        tx.send(WindowEvent::QuakeToggle).unwrap();
+
+        let mut mux = WindowEventMux::new();
+        mux.attach(id, rx);
+        let tagged = mux.try_next().unwrap();
+        assert_eq!(tagged.window_id, id);
+        assert!(matches!(tagged.event, WindowEvent::QuakeToggle));
     }
 
     #[test]

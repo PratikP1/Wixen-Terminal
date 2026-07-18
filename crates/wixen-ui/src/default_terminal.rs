@@ -1,7 +1,28 @@
-//! Check and report whether Wixen is registered as the default terminal on Windows.
+//! Check, register, and restore whether Wixen is the default terminal on Windows.
 //!
-//! Windows 11 allows third-party terminals to register as the default via a
-//! CLSID stored in `HKCU\Console\%%Startup` under the `DelegationTerminal` value.
+//! Windows 11 allows third-party terminals to register as the default via
+//! CLSIDs stored in `HKCU\Console\%%Startup` under the `DelegationConsole` and
+//! `DelegationTerminal` values.
+//!
+//! # Scope of the registry writer vs. the COM handoff server
+//!
+//! [`set_as_default_terminal`] writes the delegation CLSIDs. That is only *half*
+//! of what being the default terminal requires. When a console application
+//! launches, Windows reads `DelegationTerminal`, `CoCreateInstance`s that CLSID,
+//! and calls the console-handoff COM interface (`ITerminalHandoff` /
+//! `ITerminalHandoff2` / `ITerminalHandoff3`) to pass the new ConPTY connection
+//! to the chosen terminal.
+//!
+//! This module does **not** implement that COM server. Writing the registry
+//! keys makes Windows *try* to hand off to [`WIXEN_TERMINAL_CLSID`]; if no COM
+//! class factory is registered for that CLSID and no `ITerminalHandoff`
+//! implementation is running, the `CoCreateInstance` fails and the console
+//! launch fails with it. Therefore [`set_as_default_terminal`] must not be
+//! exposed to users until the handoff server is implemented and its class
+//! factory registered — otherwise it breaks console launches. Until then the
+//! action should stay gated (e.g. behind a build flag or hidden in the UI).
+//! [`restore_default_terminal`] is always safe to expose: it hands the choice
+//! back to Windows.
 
 /// Wixen Terminal's COM CLSID for default terminal delegation.
 ///
@@ -9,9 +30,108 @@
 /// deciding which terminal to launch for console applications.
 pub const WIXEN_TERMINAL_CLSID: &str = "{7b3ed7a4-e02b-4742-9e23-1d9d2a50c5a1}";
 
+/// The built-in Windows Console Host (`conhost.exe`) delegation CLSID.
+///
+/// Windows writes this to both `DelegationConsole` and `DelegationTerminal`
+/// when the user picks "Windows Console Host" as their default terminal.
+pub const CONHOST_CLSID: &str = "{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}";
+
+/// Windows Terminal's `DelegationTerminal` CLSID.
+///
+/// Present when Windows Terminal is the default terminal handler. (Windows
+/// Terminal registers a distinct `DelegationConsole` CLSID; this is the value
+/// that lands in `DelegationTerminal`, which is what the reader inspects.)
+pub const WINDOWS_TERMINAL_CLSID: &str = "{E12CFF52-A866-4C77-9A90-F570A7AA2C6B}";
+
+/// The null CLSID meaning "let Windows decide" which terminal to launch.
+///
+/// This is the pristine, out-of-box Windows 11 value for both delegation
+/// values. Restoring to it hands the choice back to Windows, which always
+/// falls back to the built-in console host, so console launches never break.
+pub const WINDOWS_DECIDE_CLSID: &str = "{00000000-0000-0000-0000-000000000000}";
+
+/// Registry subkey under `HKEY_CURRENT_USER` holding the console startup
+/// delegation values.
+const CONSOLE_STARTUP_SUBKEY: &str = r"Console\%%Startup";
+
+/// Value naming the COM handler Windows delegates the terminal UI to.
+const DELEGATION_TERMINAL_VALUE: &str = "DelegationTerminal";
+
+/// Value naming the COM handler Windows delegates the console host to.
+const DELEGATION_CONSOLE_VALUE: &str = "DelegationConsole";
+
 /// Returns Wixen Terminal's CLSID constant for default terminal registration.
 pub fn default_terminal_clsid() -> &'static str {
     WIXEN_TERMINAL_CLSID
+}
+
+/// The terminal handler a `DelegationTerminal` CLSID refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalHandler {
+    /// Wixen Terminal — Wixen is the default.
+    Wixen,
+    /// The built-in Windows Console Host (`conhost.exe`).
+    Conhost,
+    /// Windows Terminal.
+    WindowsTerminal,
+    /// The null CLSID — "let Windows decide".
+    WindowsDecide,
+    /// A CLSID we do not recognise (some other third-party terminal).
+    Other,
+}
+
+/// Classify a `DelegationTerminal` CLSID string into a known [`TerminalHandler`].
+///
+/// Comparison ignores surrounding whitespace and ASCII case, matching how the
+/// registry reader normalises values.
+pub fn classify_delegation_terminal(clsid: &str) -> TerminalHandler {
+    let clsid = clsid.trim();
+    if clsid.eq_ignore_ascii_case(WIXEN_TERMINAL_CLSID) {
+        TerminalHandler::Wixen
+    } else if clsid.eq_ignore_ascii_case(CONHOST_CLSID) {
+        TerminalHandler::Conhost
+    } else if clsid.eq_ignore_ascii_case(WINDOWS_TERMINAL_CLSID) {
+        TerminalHandler::WindowsTerminal
+    } else if clsid.eq_ignore_ascii_case(WINDOWS_DECIDE_CLSID) {
+        TerminalHandler::WindowsDecide
+    } else {
+        TerminalHandler::Other
+    }
+}
+
+/// Encode a string as a null-terminated UTF-16LE byte buffer for a `REG_SZ`
+/// value. The trailing null terminator is included in the returned bytes, as
+/// `RegSetValueExW` expects for string values.
+fn encode_reg_sz(value: &str) -> Vec<u8> {
+    value
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+/// An error writing the default-terminal delegation values to the registry.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RegistrationError {
+    /// Opening or creating the `Console\%%Startup` key failed.
+    #[error("failed to open registry key HKCU\\{subkey}: Win32 error {code}")]
+    OpenKey {
+        /// The subkey path under `HKEY_CURRENT_USER`.
+        subkey: String,
+        /// The Win32 error code returned by the registry API.
+        code: u32,
+    },
+    /// Writing one of the delegation values failed.
+    #[error("failed to write registry value {value_name}: Win32 error {code}")]
+    SetValue {
+        /// The registry value name that failed to write.
+        value_name: &'static str,
+        /// The Win32 error code returned by the registry API.
+        code: u32,
+    },
+    /// Registration is only meaningful on Windows.
+    #[error("default terminal registration is only supported on Windows")]
+    Unsupported,
 }
 
 /// Status of the default terminal registration.
@@ -52,8 +172,8 @@ pub fn check_default_terminal_status() -> DefaultTerminalStatus {
     };
     use windows::core::HSTRING;
 
-    let subkey = HSTRING::from(r"Console\%%Startup");
-    let value_name = HSTRING::from("DelegationTerminal");
+    let subkey = HSTRING::from(CONSOLE_STARTUP_SUBKEY);
+    let value_name = HSTRING::from(DELEGATION_TERMINAL_VALUE);
 
     let mut hkey = HKEY::default();
 
@@ -125,7 +245,7 @@ pub fn check_default_terminal_status() -> DefaultTerminalStatus {
         .trim_end_matches('\0')
         .to_string();
 
-    let is_default = clsid.eq_ignore_ascii_case(WIXEN_TERMINAL_CLSID);
+    let is_default = classify_delegation_terminal(&clsid) == TerminalHandler::Wixen;
 
     DefaultTerminalStatus {
         is_default,
@@ -140,6 +260,120 @@ pub fn check_default_terminal_status() -> DefaultTerminalStatus {
         is_default: false,
         current_handler: None,
     }
+}
+
+/// Register Wixen as the Windows default terminal.
+///
+/// Writes [`WIXEN_TERMINAL_CLSID`] to both `DelegationConsole` and
+/// `DelegationTerminal` under `HKCU\Console\%%Startup`. After this succeeds,
+/// [`check_default_terminal_status`] reports `is_default == true`.
+///
+/// # Important
+///
+/// Writing these values only tells Windows to *try* to hand console launches
+/// off to [`WIXEN_TERMINAL_CLSID`]. It does **not** implement the console
+/// handoff COM server. Do not call this in a build that has not registered a
+/// working `ITerminalHandoff` class factory for that CLSID — see the module
+/// documentation — or console applications may fail to launch.
+#[cfg(windows)]
+pub fn set_as_default_terminal() -> Result<(), RegistrationError> {
+    write_delegation_values(WIXEN_TERMINAL_CLSID, WIXEN_TERMINAL_CLSID)
+}
+
+/// Non-Windows stub: registration is only supported on Windows.
+#[cfg(not(windows))]
+pub fn set_as_default_terminal() -> Result<(), RegistrationError> {
+    Err(RegistrationError::Unsupported)
+}
+
+/// Restore the default terminal to the pristine "let Windows decide" state.
+///
+/// Writes [`WINDOWS_DECIDE_CLSID`] (the null CLSID) to both `DelegationConsole`
+/// and `DelegationTerminal`. This is the out-of-box Windows 11 default: Windows
+/// resumes choosing the handler itself and always falls back to the built-in
+/// console host, so console launches keep working. After this succeeds,
+/// [`check_default_terminal_status`] reports `is_default == false`.
+#[cfg(windows)]
+pub fn restore_default_terminal() -> Result<(), RegistrationError> {
+    write_delegation_values(WINDOWS_DECIDE_CLSID, WINDOWS_DECIDE_CLSID)
+}
+
+/// Non-Windows stub: registration is only supported on Windows.
+#[cfg(not(windows))]
+pub fn restore_default_terminal() -> Result<(), RegistrationError> {
+    Err(RegistrationError::Unsupported)
+}
+
+/// Write both delegation values under `HKCU\Console\%%Startup`, creating the
+/// key if it does not exist. This is the single Win32 side-effecting wrapper;
+/// the value bytes it writes come from the pure [`encode_reg_sz`] helper.
+#[cfg(windows)]
+fn write_delegation_values(
+    terminal_clsid: &str,
+    console_clsid: &str,
+) -> Result<(), RegistrationError> {
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, RegCloseKey,
+        RegCreateKeyExW,
+    };
+    use windows::core::{HSTRING, PWSTR};
+
+    let subkey = HSTRING::from(CONSOLE_STARTUP_SUBKEY);
+    let mut hkey = HKEY::default();
+
+    let create_result = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            &subkey,
+            Some(0),
+            PWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut hkey,
+            None,
+        )
+    };
+
+    if create_result.is_err() {
+        return Err(RegistrationError::OpenKey {
+            subkey: CONSOLE_STARTUP_SUBKEY.to_string(),
+            code: create_result.0,
+        });
+    }
+
+    let write_result = set_reg_sz(hkey, DELEGATION_TERMINAL_VALUE, terminal_clsid)
+        .and_then(|()| set_reg_sz(hkey, DELEGATION_CONSOLE_VALUE, console_clsid));
+
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    }
+
+    write_result
+}
+
+/// Write a single `REG_SZ` value into an already-open key.
+#[cfg(windows)]
+fn set_reg_sz(
+    hkey: windows::Win32::System::Registry::HKEY,
+    value_name: &'static str,
+    value: &str,
+) -> Result<(), RegistrationError> {
+    use windows::Win32::System::Registry::{REG_SZ, RegSetValueExW};
+    use windows::core::HSTRING;
+
+    let name = HSTRING::from(value_name);
+    let data = encode_reg_sz(value);
+
+    let status = unsafe { RegSetValueExW(hkey, &name, Some(0), REG_SZ, Some(&data)) };
+
+    if status.is_err() {
+        return Err(RegistrationError::SetValue {
+            value_name,
+            code: status.0,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -227,5 +461,155 @@ mod tests {
         // Verify Debug is implemented (would fail to compile otherwise).
         let debug_str = format!("{status:?}");
         assert!(debug_str.contains("is_default: true"));
+    }
+
+    // --- Registry path / value-name constants ------------------------------
+
+    #[test]
+    fn console_startup_subkey_is_stable() {
+        assert_eq!(CONSOLE_STARTUP_SUBKEY, r"Console\%%Startup");
+    }
+
+    #[test]
+    fn delegation_value_names_are_stable() {
+        assert_eq!(DELEGATION_TERMINAL_VALUE, "DelegationTerminal");
+        assert_eq!(DELEGATION_CONSOLE_VALUE, "DelegationConsole");
+    }
+
+    // --- Well-known CLSIDs are valid GUIDs ---------------------------------
+
+    #[test]
+    fn well_known_clsids_are_valid_guids() {
+        for clsid in [CONHOST_CLSID, WINDOWS_TERMINAL_CLSID, WINDOWS_DECIDE_CLSID] {
+            assert_guid_shape(clsid);
+        }
+    }
+
+    // --- DelegationTerminal classification ---------------------------------
+
+    #[test]
+    fn classify_recognizes_wixen() {
+        assert_eq!(
+            classify_delegation_terminal(WIXEN_TERMINAL_CLSID),
+            TerminalHandler::Wixen
+        );
+    }
+
+    #[test]
+    fn classify_is_case_insensitive() {
+        assert_eq!(
+            classify_delegation_terminal(&WIXEN_TERMINAL_CLSID.to_uppercase()),
+            TerminalHandler::Wixen
+        );
+    }
+
+    #[test]
+    fn classify_trims_surrounding_whitespace() {
+        let padded = format!("  {WIXEN_TERMINAL_CLSID}\n");
+        assert_eq!(
+            classify_delegation_terminal(&padded),
+            TerminalHandler::Wixen
+        );
+    }
+
+    #[test]
+    fn classify_recognizes_conhost() {
+        assert_eq!(
+            classify_delegation_terminal(CONHOST_CLSID),
+            TerminalHandler::Conhost
+        );
+    }
+
+    #[test]
+    fn classify_recognizes_windows_terminal() {
+        assert_eq!(
+            classify_delegation_terminal(WINDOWS_TERMINAL_CLSID),
+            TerminalHandler::WindowsTerminal
+        );
+    }
+
+    #[test]
+    fn classify_recognizes_windows_decide_null_guid() {
+        assert_eq!(
+            classify_delegation_terminal(WINDOWS_DECIDE_CLSID),
+            TerminalHandler::WindowsDecide
+        );
+    }
+
+    #[test]
+    fn classify_falls_back_to_other() {
+        let unknown = "{2EACA947-7F5F-4CFA-BA87-8F7FBEEFBE69}";
+        assert_eq!(
+            classify_delegation_terminal(unknown),
+            TerminalHandler::Other
+        );
+    }
+
+    // --- REG_SZ encoding ---------------------------------------------------
+
+    #[test]
+    fn encode_reg_sz_appends_null_terminator() {
+        // 'A' == U+0041 -> LE bytes 0x41 0x00, then the UTF-16 null 0x00 0x00.
+        assert_eq!(encode_reg_sz("A"), vec![0x41, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn encode_reg_sz_empty_string_is_just_terminator() {
+        assert_eq!(encode_reg_sz(""), vec![0x00, 0x00]);
+    }
+
+    #[test]
+    fn encode_reg_sz_byte_length_covers_terminator() {
+        // Each UTF-16 code unit is 2 bytes; the CLSID plus a null terminator.
+        let expected_bytes = (WIXEN_TERMINAL_CLSID.chars().count() + 1) * 2;
+        assert_eq!(encode_reg_sz(WIXEN_TERMINAL_CLSID).len(), expected_bytes);
+    }
+
+    // --- Error construction ------------------------------------------------
+
+    #[test]
+    fn set_value_error_reports_value_name_and_code() {
+        let error = RegistrationError::SetValue {
+            value_name: DELEGATION_TERMINAL_VALUE,
+            code: 5,
+        };
+        let message = error.to_string();
+        assert!(message.contains("DelegationTerminal"));
+        assert!(message.contains('5'));
+    }
+
+    #[test]
+    fn open_key_error_reports_subkey_and_code() {
+        let error = RegistrationError::OpenKey {
+            subkey: CONSOLE_STARTUP_SUBKEY.to_string(),
+            code: 5,
+        };
+        let message = error.to_string();
+        assert!(message.contains(r"Console\%%Startup"));
+        assert!(message.contains('5'));
+    }
+
+    // --- Restore-to-default value is not Wixen -----------------------------
+
+    #[test]
+    fn restore_target_is_not_wixen() {
+        // Whatever we restore to must classify as "not the default terminal",
+        // so check_default_terminal_status reports is_default == false afterwards.
+        assert_ne!(
+            classify_delegation_terminal(WINDOWS_DECIDE_CLSID),
+            TerminalHandler::Wixen
+        );
+    }
+
+    /// Assert a string has the canonical `{8-4-4-4-12}` hex GUID shape.
+    fn assert_guid_shape(clsid: &str) {
+        assert!(clsid.starts_with('{') && clsid.ends_with('}'), "{clsid}");
+        let inner = &clsid[1..clsid.len() - 1];
+        let groups: Vec<&str> = inner.split('-').collect();
+        assert_eq!(groups.len(), 5, "{clsid}");
+        for (group, expected_len) in groups.iter().zip([8, 4, 4, 4, 12]) {
+            assert_eq!(group.len(), expected_len, "{clsid}");
+            assert!(group.chars().all(|c| c.is_ascii_hexdigit()), "{clsid}");
+        }
     }
 }

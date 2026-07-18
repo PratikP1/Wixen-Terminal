@@ -21,6 +21,7 @@ use windows_core::ComObjectInterface;
 
 use crate::fragment::ChildFragmentProvider;
 use crate::grid_provider::{GridSnapshot, TerminalGridProvider};
+use crate::history_provider::{HistoryPanelProvider, HistorySnapshot};
 use crate::palette_provider::{PalettePanelProvider, PaletteSnapshot};
 use crate::settings_provider::{SettingsPanelProvider, SettingsSnapshot};
 use crate::text_provider::TerminalTextProvider;
@@ -45,6 +46,8 @@ pub struct TerminalA11yState {
     pub settings_snapshot: Option<SettingsSnapshot>,
     /// Command palette state snapshot for UIA (None when palette is closed).
     pub palette_snapshot: Option<PaletteSnapshot>,
+    /// Command history browser snapshot for UIA (None when the browser is closed).
+    pub history_snapshot: Option<HistorySnapshot>,
 
     // --- Cursor position (set by main loop each frame) ---
     /// Cursor row (0-based, relative to viewport top).
@@ -76,6 +79,7 @@ impl TerminalA11yState {
             alt_screen_active: false,
             settings_snapshot: None,
             palette_snapshot: None,
+            history_snapshot: None,
             cursor_row: 0,
             cursor_col: 0,
             cell_width: 0.0,
@@ -259,12 +263,13 @@ impl IRawElementProviderFragment_Impl for TerminalProvider_Impl {
         match direction {
             NavigateDirection_Parent => Err(Error::empty()),
             NavigateDirection_FirstChild | NavigateDirection_LastChild => {
-                // When palette is visible, it takes priority as the first child
-                let (palette_visible, settings_visible) = {
+                // When an overlay is visible, it takes priority as the first child
+                let (palette_visible, history_visible, settings_visible) = {
                     let state = self.state.read();
                     let pv = state.palette_snapshot.as_ref().is_some_and(|s| s.visible);
+                    let hv = state.history_snapshot.as_ref().is_some_and(|s| s.visible);
                     let sv = state.settings_snapshot.as_ref().is_some_and(|s| s.visible);
-                    (pv, sv)
+                    (pv, hv, sv)
                 };
 
                 if palette_visible {
@@ -274,6 +279,17 @@ impl IRawElementProviderFragment_Impl for TerminalProvider_Impl {
                         )
                         .to_owned();
                     let panel = PalettePanelProvider::new(self.hwnd, Arc::clone(&self.state), root);
+                    let frag: IRawElementProviderFragment = panel.into();
+                    return Ok(frag);
+                }
+
+                if history_visible {
+                    let root =
+                        ComObjectInterface::<IRawElementProviderFragmentRoot>::as_interface_ref(
+                            self,
+                        )
+                        .to_owned();
+                    let panel = HistoryPanelProvider::new(self.hwnd, Arc::clone(&self.state), root);
                     let frag: IRawElementProviderFragment = panel.into();
                     return Ok(frag);
                 }
@@ -397,6 +413,31 @@ impl IRawElementProviderFragmentRoot_Impl for TerminalProvider_Impl {
             use crate::palette_provider::PaletteSearchProvider;
             let sp = PaletteSearchProvider::new(self.hwnd, Arc::clone(&self.state), root);
             let frag: IRawElementProviderFragment = sp.into();
+            return Ok(frag);
+        }
+
+        // When the history browser is visible, return the selected entry
+        // provider (or the list container while the history is empty)
+        let history_focus = {
+            let state = self.state.read();
+            state
+                .history_snapshot
+                .as_ref()
+                .filter(|s| s.visible)
+                .map(|s| s.exposed_entries().get(s.selected_index).map(|e| e.index))
+        };
+        if let Some(selected_entry) = history_focus {
+            let root =
+                ComObjectInterface::<IRawElementProviderFragmentRoot>::as_interface_ref(self)
+                    .to_owned();
+            use crate::history_provider::HistoryEntryProvider;
+            let frag: IRawElementProviderFragment = match selected_entry {
+                Some(index) => {
+                    HistoryEntryProvider::new(index, self.hwnd, Arc::clone(&self.state), root)
+                        .into()
+                }
+                None => HistoryPanelProvider::new(self.hwnd, Arc::clone(&self.state), root).into(),
+            };
             return Ok(frag);
         }
 

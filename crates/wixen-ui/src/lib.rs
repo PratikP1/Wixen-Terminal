@@ -25,4 +25,10 @@ pub use panes::{PaneId, PaneRect, PaneTree, SplitDirection};
 pub use plugin_bridge::PluginBridge;
 pub use settings::{SettingsField, SettingsTab, SettingsUI};
 pub use tabs::{Tab, TabColor, TabId, TabManager, tab_color_presets};
-pub use window::Window;
+pub use default_terminal::{
+    RegistrationError, TerminalHandler, check_default_terminal_status, restore_default_terminal,
+    set_as_default_terminal,
+};
+pub use window::{
+    TaggedWindowEvent, Window, WindowEventMux, WindowId, WindowRegistry, pump_thread_messages,
+};

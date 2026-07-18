@@ -8,6 +8,7 @@
 pub mod events;
 pub mod fragment;
 pub mod grid_provider;
+pub mod history_provider;
 pub mod palette_provider;
 pub mod provider;
 pub mod settings_provider;
@@ -17,6 +18,7 @@ pub mod tree;
 pub use events::{EventThrottler, strip_vt_escapes};
 pub use fragment::ChildFragmentProvider;
 pub use grid_provider::{GridSnapshot, TableGridProvider, TerminalGridProvider};
+pub use history_provider::{HistoryEntrySnapshot, HistorySnapshot};
 pub use palette_provider::{PaletteEntrySnapshot, PaletteSnapshot};
 pub use provider::{TerminalA11yState, TerminalProvider};
 pub use settings_provider::{FieldSnapshot, FieldType, SettingsSnapshot, SubFieldSnapshot};
