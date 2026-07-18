@@ -47,9 +47,6 @@ pub struct PaneRect {
 pub struct PaneState {
     /// Pane is in read-only mode — input is blocked.
     pub read_only: bool,
-    /// Pane is in broadcast-receive mode — input typed in the active pane
-    /// is also sent to all broadcast-enabled panes.
-    pub broadcast: bool,
 }
 
 /// The pane tree for a single tab.
@@ -283,29 +280,6 @@ impl PaneTree {
     /// Check if a pane is read-only.
     pub fn is_read_only(&self, pane: PaneId) -> bool {
         self.states.get(&pane).is_some_and(|s| s.read_only)
-    }
-
-    // --- Broadcast input -----------------------------------------------------
-
-    /// Toggle broadcast mode on a pane. Returns the new state.
-    pub fn toggle_broadcast(&mut self, pane: PaneId) -> bool {
-        let state = self.states.entry(pane).or_default();
-        state.broadcast = !state.broadcast;
-        state.broadcast
-    }
-
-    /// Check if a pane is in broadcast mode.
-    pub fn is_broadcast(&self, pane: PaneId) -> bool {
-        self.states.get(&pane).is_some_and(|s| s.broadcast)
-    }
-
-    /// Get all pane IDs that are in broadcast mode.
-    pub fn broadcast_panes(&self) -> Vec<PaneId> {
-        self.states
-            .iter()
-            .filter(|(_, s)| s.broadcast)
-            .map(|(id, _)| *id)
-            .collect()
     }
 
     /// Get the state for a pane.
@@ -988,45 +962,10 @@ mod tests {
         let p2 = tree.split(p1, SplitDirection::Horizontal).unwrap();
 
         tree.toggle_read_only(p2);
-        tree.toggle_broadcast(p2);
         tree.close(p2);
 
         // State cleaned up
         assert!(tree.pane_state(p2).is_none());
-    }
-
-    // --- Broadcast tests ---
-
-    #[test]
-    fn test_broadcast_default_off() {
-        let (tree, p1) = PaneTree::new();
-        assert!(!tree.is_broadcast(p1));
-        assert!(tree.broadcast_panes().is_empty());
-    }
-
-    #[test]
-    fn test_toggle_broadcast() {
-        let (mut tree, p1) = PaneTree::new();
-        assert!(tree.toggle_broadcast(p1)); // on
-        assert!(tree.is_broadcast(p1));
-        assert!(!tree.toggle_broadcast(p1)); // off
-        assert!(!tree.is_broadcast(p1));
-    }
-
-    #[test]
-    fn test_broadcast_panes_returns_enabled() {
-        let (mut tree, p1) = PaneTree::new();
-        let p2 = tree.split(p1, SplitDirection::Horizontal).unwrap();
-        let p3 = tree.split(p2, SplitDirection::Vertical).unwrap();
-
-        tree.toggle_broadcast(p1);
-        tree.toggle_broadcast(p3);
-
-        let bc = tree.broadcast_panes();
-        assert_eq!(bc.len(), 2);
-        assert!(bc.contains(&p1));
-        assert!(bc.contains(&p3));
-        assert!(!bc.contains(&p2));
     }
 
     #[test]
@@ -1036,7 +975,6 @@ mod tests {
 
         let state = tree.pane_state(p2).unwrap();
         assert!(!state.read_only);
-        assert!(!state.broadcast);
     }
 
     // --- Pane position label tests ---

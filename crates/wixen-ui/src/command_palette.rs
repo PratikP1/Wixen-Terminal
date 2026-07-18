@@ -242,6 +242,21 @@ fn builtin_commands() -> Vec<PaletteEntry> {
             None,
             "System",
         ),
+        // --- Default terminal ---
+        // Note: there is deliberately no "set as default" entry — see the gate
+        // comment in the `default_terminal_status` dispatch handler in main.rs.
+        PaletteEntry::builtin(
+            "default_terminal_status",
+            "Default Terminal: Show Status",
+            None,
+            "System",
+        ),
+        PaletteEntry::builtin(
+            "restore_default_terminal",
+            "Default Terminal: Restore Windows Default",
+            None,
+            "System",
+        ),
         // --- Window / tray ---
         PaletteEntry::builtin("minimize_to_tray", "Minimize to Tray", None, "Window"),
         // --- Tabs: color ---
@@ -262,9 +277,10 @@ fn builtin_commands() -> Vec<PaletteEntry> {
 
 /// Number of built-in commands (for tests).
 ///
-/// 70 fixed entries + `minimize_to_tray` + `clear_tab_color` + one per
-/// [`crate::tabs::tab_color_presets`] entry (8) = 80.
-pub const BUILTIN_COUNT: usize = 80;
+/// 70 fixed entries + `minimize_to_tray` + `clear_tab_color` +
+/// `default_terminal_status` + `restore_default_terminal` + one per
+/// [`crate::tabs::tab_color_presets`] entry (8) = 82.
+pub const BUILTIN_COUNT: usize = 82;
 
 /// The palette can operate in different modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -15,8 +15,9 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::Interface;
 use wixen_a11y::{
-    EventThrottler, FieldSnapshot, FieldType, PaletteEntrySnapshot, PaletteSnapshot,
-    SettingsSnapshot, SubFieldSnapshot, TerminalA11yState, TerminalProvider,
+    EventThrottler, FieldSnapshot, FieldType, HistoryEntrySnapshot, HistorySnapshot,
+    PaletteEntrySnapshot, PaletteSnapshot, SettingsSnapshot, SubFieldSnapshot, TerminalA11yState,
+    TerminalProvider,
 };
 use wixen_config::plugin::{PluginEvent, PluginRegistry};
 use wixen_config::{
@@ -847,7 +848,7 @@ fn main() {
                         if ctrl && shift && !alt && (0x31..=0x39).contains(&vk) {
                             let profile_idx = (vk - 0x31) as usize;
                             if let Some(profile) = config.profile_at(profile_idx) {
-                                let (_tab_id, pane_id) = tab_mgr.add_tab(&profile.name);
+                                let (tab_id, pane_id) = tab_mgr.add_tab(&profile.name);
                                 panes.insert(
                                     pane_id,
                                     spawn_pane(current_cols, current_rows, &config, Some(&profile)),
@@ -859,6 +860,11 @@ fn main() {
                                     profile = %profile.name,
                                     tabs = tab_mgr.tab_count(),
                                     "New tab opened with profile"
+                                );
+                                dispatch_plugin_event(
+                                    &plugin_lua,
+                                    &plugin_registry,
+                                    &PluginEvent::TabCreated { tab_id: tab_id.0 },
                                 );
                             }
                             continue;
@@ -925,6 +931,8 @@ fn main() {
                                                     current_rows,
                                                     &mut window,
                                                     &base_title,
+                                                    &plugin_lua,
+                                                    &plugin_registry,
                                                 );
                                                 if let DispatchResult::ModeToggled {
                                                     mode,
@@ -967,7 +975,7 @@ fn main() {
                                 _ => {}                     // Other keys ignored in palette mode
                             }
                             // Update a11y snapshot + focus
-                            update_palette_a11y(&palette, &a11y_state);
+                            update_overlay_a11y(&palette, &history_browser, &a11y_state);
                             unsafe {
                                 wixen_a11y::events::raise_structure_changed(
                                     &uia_provider,
@@ -1019,6 +1027,9 @@ fn main() {
                                 }
                                 _ => {}
                             }
+                            // Refresh the UIA snapshot so screen readers observe the
+                            // new selection / filtered results (and the closed state).
+                            update_overlay_a11y(&palette, &history_browser, &a11y_state);
                             if let Some(p) = panes.get_mut(&active) {
                                 p.terminal.dirty = true;
                             }
@@ -1191,7 +1202,7 @@ fn main() {
                             // Handle palette/settings toggles directly (need local access)
                             if action == "command_palette" {
                                 palette.toggle();
-                                update_palette_a11y(&palette, &a11y_state);
+                                update_overlay_a11y(&palette, &history_browser, &a11y_state);
                                 unsafe {
                                     wixen_a11y::events::raise_structure_changed(
                                         &uia_provider,
@@ -1268,6 +1279,9 @@ fn main() {
                                 &uia_provider,
                                 config.accessibility.screen_reader_output,
                             ) {
+                                // A local action may have toggled the history
+                                // browser (show_history) — refresh the UIA snapshot.
+                                update_overlay_a11y(&palette, &history_browser, &a11y_state);
                                 let active = tab_mgr.active_tab().active_pane;
                                 if let Some(p) = panes.get_mut(&active) {
                                     p.terminal.dirty = true;
@@ -1285,6 +1299,8 @@ fn main() {
                                 current_rows,
                                 &mut window,
                                 &base_title,
+                                &plugin_lua,
+                                &plugin_registry,
                             );
                             if let DispatchResult::ModeToggled { mode, active } = result {
                                 announce_mode_toggle(
@@ -1377,7 +1393,7 @@ fn main() {
                     if palette.visible {
                         if ch >= ' ' && !ch.is_control() {
                             palette.push_char(ch);
-                            update_palette_a11y(&palette, &a11y_state);
+                            update_overlay_a11y(&palette, &history_browser, &a11y_state);
                             let active = tab_mgr.active_tab().active_pane;
                             if let Some(p) = panes.get_mut(&active) {
                                 p.terminal.dirty = true;
@@ -1492,7 +1508,7 @@ fn main() {
                     if (y as f32) < tbh && tbh > 0.0 {
                         // Double-click in tab bar → rename the clicked tab
                         palette.open_input("Enter new tab name:");
-                        update_palette_a11y(&palette, &a11y_state);
+                        update_overlay_a11y(&palette, &history_browser, &a11y_state);
                         let active = tab_mgr.active_tab().active_pane;
                         if let Some(p) = panes.get_mut(&active) {
                             p.terminal.dirty = true;
@@ -1546,6 +1562,11 @@ fn main() {
                                     if let Some(p) = panes.get_mut(&new_active) {
                                         p.terminal.dirty = true;
                                     }
+                                    dispatch_plugin_event(
+                                        &plugin_lua,
+                                        &plugin_registry,
+                                        &PluginEvent::TabClosed { tab_id: tab_id.0 },
+                                    );
                                 }
                             }
                         } else {
@@ -1846,6 +1867,8 @@ fn main() {
                                 current_rows,
                                 &mut window,
                                 &base_title,
+                                &plugin_lua,
+                                &plugin_registry,
                             );
                             handle_deferred_action(
                                 result,
@@ -2136,12 +2159,19 @@ fn main() {
                     let p = profile
                         .as_ref()
                         .and_then(|name| config.profiles.iter().find(|p| p.name == *name));
-                    let (_, new_pane_id) = tab_mgr.add_tab("New Tab");
+                    let (new_tab_id, new_pane_id) = tab_mgr.add_tab("New Tab");
                     panes.insert(
                         new_pane_id,
                         spawn_pane(current_cols, current_rows, &config, p),
                     );
                     info!("IPC: opened new tab");
+                    dispatch_plugin_event(
+                        &plugin_lua,
+                        &plugin_registry,
+                        &PluginEvent::TabCreated {
+                            tab_id: new_tab_id.0,
+                        },
+                    );
                 }
                 IpcRequest::Shutdown => {
                     info!("IPC: shutdown requested");
@@ -3365,15 +3395,22 @@ fn dispatch_keybinding_action(
     rows: u16,
     window: &mut Window,
     base_title: &str,
+    plugin_lua: &mlua::Lua,
+    plugin_registry: &PluginRegistry,
 ) -> DispatchResult {
     match action {
         "new_tab" => {
-            let (_tab_id, pane_id) = tab_mgr.add_tab("Terminal");
+            let (tab_id, pane_id) = tab_mgr.add_tab("Terminal");
             panes.insert(pane_id, spawn_pane(cols, rows, config, None));
             if let Some(p) = panes.get_mut(&pane_id) {
                 p.terminal.dirty = true;
             }
             info!(tabs = tab_mgr.tab_count(), "New tab opened");
+            dispatch_plugin_event(
+                plugin_lua,
+                plugin_registry,
+                &PluginEvent::TabCreated { tab_id: tab_id.0 },
+            );
             DispatchResult::Handled
         }
         "close_tab" => {
@@ -3386,6 +3423,11 @@ fn dispatch_keybinding_action(
                     p.terminal.dirty = true;
                 }
                 info!(tabs = tab_mgr.tab_count(), "Tab closed");
+                dispatch_plugin_event(
+                    plugin_lua,
+                    plugin_registry,
+                    &PluginEvent::TabClosed { tab_id: tab_id.0 },
+                );
             } else {
                 info!("Last tab closed — exiting");
                 *running = false;
@@ -3521,6 +3563,11 @@ fn dispatch_keybinding_action(
                         p.terminal.dirty = true;
                     }
                     info!("Last pane → tab closed");
+                    dispatch_plugin_event(
+                        plugin_lua,
+                        plugin_registry,
+                        &PluginEvent::TabClosed { tab_id: tab_id.0 },
+                    );
                 } else {
                     *running = false;
                 }
@@ -3845,7 +3892,7 @@ fn dispatch_keybinding_action(
             let cwd = panes
                 .get(&active)
                 .and_then(|p| p.terminal.shell_integ.cwd().map(|s| s.to_string()));
-            let (_tab_id, pane_id) = tab_mgr.add_tab("Terminal");
+            let (tab_id, pane_id) = tab_mgr.add_tab("Terminal");
             let mut new_pane = spawn_pane(cols, rows, config, None);
             // If the current pane has a CWD, send a `cd` to the new shell
             if let Some(dir) = cwd {
@@ -3854,6 +3901,11 @@ fn dispatch_keybinding_action(
             }
             panes.insert(pane_id, new_pane);
             info!(tabs = tab_mgr.tab_count(), "Tab duplicated");
+            dispatch_plugin_event(
+                plugin_lua,
+                plugin_registry,
+                &PluginEvent::TabCreated { tab_id: tab_id.0 },
+            );
             DispatchResult::Handled
         }
         "move_tab_left" => {
@@ -3967,12 +4019,17 @@ fn dispatch_keybinding_action(
                 && let Ok(idx) = idx_str.parse::<usize>()
                 && let Some(profile) = config.profile_at(idx)
             {
-                let (_tab_id, pane_id) = tab_mgr.add_tab(&profile.name);
+                let (tab_id, pane_id) = tab_mgr.add_tab(&profile.name);
                 panes.insert(pane_id, spawn_pane(cols, rows, config, Some(&profile)));
                 if let Some(p) = panes.get_mut(&pane_id) {
                     p.terminal.dirty = true;
                 }
                 info!(profile = %profile.name, "New tab opened with profile");
+                dispatch_plugin_event(
+                    plugin_lua,
+                    plugin_registry,
+                    &PluginEvent::TabCreated { tab_id: tab_id.0 },
+                );
             }
             DispatchResult::Handled
         }
@@ -3984,7 +4041,7 @@ fn dispatch_keybinding_action(
                 } else {
                     target.name.clone()
                 };
-                let (_tab_id, pane_id) = tab_mgr.add_tab(&label);
+                let (tab_id, pane_id) = tab_mgr.add_tab(&label);
                 panes.insert(
                     pane_id,
                     spawn_pane_with_command(cols, rows, config, &program, &args),
@@ -3993,6 +4050,11 @@ fn dispatch_keybinding_action(
                     p.terminal.dirty = true;
                 }
                 info!(ssh_target = %label, "New SSH tab opened");
+                dispatch_plugin_event(
+                    plugin_lua,
+                    plugin_registry,
+                    &PluginEvent::TabCreated { tab_id: tab_id.0 },
+                );
             }
             DispatchResult::Handled
         }
@@ -4315,9 +4377,17 @@ fn update_taskbar_progress(
     }
 }
 
-/// Update the a11y state with the current command palette snapshot.
-fn update_palette_a11y(palette: &CommandPalette, state: &Arc<RwLock<TerminalA11yState>>) {
-    let snapshot = if palette.visible {
+/// Update the a11y state with the current modal-overlay snapshots.
+///
+/// The command palette and the history browser are mutually exclusive modals,
+/// but both are refreshed together under a single write lock so the UIA state
+/// never exposes a stale snapshot for either overlay.
+fn update_overlay_a11y(
+    palette: &CommandPalette,
+    history_browser: &HistoryBrowser,
+    state: &Arc<RwLock<TerminalA11yState>>,
+) {
+    let palette_snapshot = if palette.visible {
         let entries: Vec<PaletteEntrySnapshot> = palette
             .entries()
             .iter()
@@ -4339,8 +4409,27 @@ fn update_palette_a11y(palette: &CommandPalette, state: &Arc<RwLock<TerminalA11y
     } else {
         None
     };
+    let history_snapshot = if history_browser.visible {
+        let entries: Vec<HistoryEntrySnapshot> = history_browser
+            .entries()
+            .iter()
+            .enumerate()
+            .map(|(i, e)| HistoryEntrySnapshot {
+                label: wixen_ui::history::history_entry_label(e),
+                index: i,
+            })
+            .collect();
+        Some(HistorySnapshot {
+            visible: true,
+            entries,
+            selected_index: history_browser.selected,
+        })
+    } else {
+        None
+    };
     if let Some(mut guard) = state.try_write() {
-        guard.palette_snapshot = snapshot;
+        guard.palette_snapshot = palette_snapshot;
+        guard.history_snapshot = history_snapshot;
     }
 }
 
@@ -4861,6 +4950,53 @@ fn handle_local_action(
             tray_icon.show();
             window.hide();
             info!("Minimized to tray");
+            true
+        }
+        "default_terminal_status" => {
+            // SAFETY GATE: we intentionally never call
+            // `wixen_ui::set_as_default_terminal()` here (or anywhere). Writing the
+            // `DelegationConsole`/`DelegationTerminal` CLSIDs would tell Windows to
+            // hand console launches to Wixen's CLSID — but the `ITerminalHandoff`
+            // COM server that CLSID must resolve to is not built yet, so console
+            // apps would fail to launch. Only status-read and restore are wired;
+            // "set as default" stays unexposed until the handoff server ships.
+            let status = wixen_ui::check_default_terminal_status();
+            let msg = if status.is_default {
+                "Wixen is the default terminal".to_string()
+            } else {
+                match status.current_handler {
+                    Some(handler) => {
+                        format!("Wixen is not the default terminal (current handler {handler})")
+                    }
+                    None => "Wixen is not the default terminal (no handler registered)".to_string(),
+                }
+            };
+            info!(
+                is_default = status.is_default,
+                "Default terminal status: {msg}"
+            );
+            unsafe {
+                raise_if_allowed(provider, &msg, "default-terminal", verbosity, "output");
+            }
+            true
+        }
+        "restore_default_terminal" => {
+            match wixen_ui::restore_default_terminal() {
+                Ok(()) => {
+                    let msg = "Default terminal restored to the Windows default";
+                    info!("{msg}");
+                    unsafe {
+                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to restore default terminal");
+                    let msg = "Failed to restore the Windows default terminal";
+                    unsafe {
+                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
+                    }
+                }
+            }
             true
         }
         _ => false,
