@@ -40,8 +40,10 @@ use wixen_search::{SearchDirection, SearchEngine, SearchOptions};
 use wixen_ui::audio::{AudioConfig, AudioEvent, play_event};
 use wixen_ui::history::{CommandHistory, HistoryBrowser, HistoryEntry};
 use wixen_ui::panes::ToggleMode;
-use wixen_ui::window::{Window, WindowEvent};
-use wixen_ui::{CommandPalette, PaneId, SettingsField, SettingsUI, TabManager};
+use wixen_ui::window::{
+    Window, WindowEvent, WindowEventMux, WindowId, WindowRegistry, pump_thread_messages,
+};
+use wixen_ui::{CommandPalette, PaneId, SettingsField, SettingsUI, TabId, TabManager};
 use wixen_vt::{Action, Parser};
 
 // ---------------------------------------------------------------------------
@@ -475,7 +477,7 @@ fn main() {
     }
 
     // Start watching the config file for hot-reload
-    let mut config_watcher = ConfigWatcher::new(cfg_path.clone(), config.clone());
+    let config_watcher = ConfigWatcher::new(cfg_path.clone(), config.clone());
 
     info!(
         font = %config.font.family,
@@ -516,7 +518,7 @@ fn main() {
     if taskbar.is_some() {
         info!("ITaskbarList3 initialized for taskbar progress");
     }
-    let mut last_progress = ProgressState::Hidden;
+    let last_progress = ProgressState::Hidden;
 
     // Create and register the UIA accessibility provider
     let a11y_state = Arc::new(RwLock::new(TerminalA11yState::new()));
@@ -601,10 +603,10 @@ fn main() {
         warn!(cell_height, "Cell height too small, using fallback");
         cell_height = 16.0;
     }
-    let mut current_cols = ((width as f32 - pad_h) / cell_width)
+    let current_cols = ((width as f32 - pad_h) / cell_width)
         .floor()
         .clamp(1.0, 500.0) as u16;
-    let mut current_rows = ((height as f32 - pad_v) / cell_height)
+    let current_rows = ((height as f32 - pad_v) / cell_height)
         .floor()
         .clamp(1.0, 500.0) as u16;
 
@@ -613,7 +615,7 @@ fn main() {
     let mut panes: HashMap<PaneId, PaneState> = HashMap::new();
 
     let session_mode = config.terminal.session_restore.as_str();
-    let mut tab_mgr = if SessionState::should_restore(session_mode)
+    let tab_mgr = if SessionState::should_restore(session_mode)
         && let Some(session) = SessionState::load(&session_path)
     {
         let (mgr, pane_ids) = TabManager::from_session_state(&session);
@@ -644,7 +646,7 @@ fn main() {
     );
 
     // Keybinding dispatch table (chord → action ID)
-    let mut keybinding_map = build_keybinding_map(&config);
+    let keybinding_map = build_keybinding_map(&config);
 
     // Command palette — populate with profile and SSH entries from config
     let mut palette = CommandPalette::new();
@@ -653,7 +655,7 @@ fn main() {
     palette.set_macros(&macro_palette_entries(&macro_store));
 
     // Command history browser overlay (Ctrl+Shift+H).
-    let mut history_browser = HistoryBrowser::new();
+    let history_browser = HistoryBrowser::new();
 
     // Populate Windows Jump List with profile tasks
     let jump_profiles: Vec<wixen_ui::jumplist::JumpListProfile> = config
@@ -667,20 +669,20 @@ fn main() {
     wixen_ui::jumplist::update_jump_list(&jump_profiles);
 
     // Settings UI
-    let mut settings_ui = SettingsUI::from_config(&config);
+    let settings_ui = SettingsUI::from_config(&config);
 
     // Cursor blink state
-    let mut blink_interval_ms = config.terminal.cursor_blink_ms as u128;
-    let mut blink_timer = Instant::now();
-    let mut cursor_blink_on = true;
-    let mut mouse_dragging = false;
-    let mut base_title = config.window.title.clone();
+    let blink_interval_ms = config.terminal.cursor_blink_ms as u128;
+    let blink_timer = Instant::now();
+    let cursor_blink_on = true;
+    let mouse_dragging = false;
+    let base_title = config.window.title.clone();
 
     // Triple-click detection: track last double-click time and position
-    let mut last_dblclick: Option<(Instant, i32, i32)> = None;
+    let last_dblclick: Option<(Instant, i32, i32)> = None;
 
     // Tab drag reorder: (source tab index, start x position)
-    let mut tab_drag: Option<(usize, i32)> = None;
+    let tab_drag: Option<(usize, i32)> = None;
 
     // Start IPC server thread — listen for commands from other instances.
     // Only the first instance (server) starts the listener.
@@ -762,12 +764,12 @@ fn main() {
     }
 
     // Track window focus for long-running command notifications
-    let mut window_focused = true;
-    let mut broadcast_input = false;
+    let window_focused = true;
+    let broadcast_input = false;
 
     // --- Accessibility state ---
-    let mut audio_config = AudioConfig::from_accessibility(&config.accessibility);
-    let mut last_announced_progress: Option<u8> = None;
+    let audio_config = AudioConfig::from_accessibility(&config.accessibility);
+    let last_announced_progress: Option<u8> = None;
 
     // Apply contrast enforcement from config
     renderer.set_min_contrast_ratio(config.accessibility.min_contrast_ratio as f64);
@@ -795,998 +797,1623 @@ fn main() {
     // show a "not responding" dialog during startup.
     window.pump_messages();
 
-    info!("Entering main event loop");
-    let mut running = true;
-    let mut prev_active_pane = tab_mgr.active_tab().active_pane;
-    let mut prev_active_tab_id = tab_mgr.active_tab_id();
-    let mut prev_selection_active = false;
-    while running {
-        // Content padding (pixels from window edge to terminal grid)
-        let pad_left = config.window.padding.left as f32;
-        let pad_top = config.window.padding.top as f32;
+    // -----------------------------------------------------------------------
+    // Bundle per-window state; hold shared globals once.
+    // -----------------------------------------------------------------------
+    let primary_id = window.id();
+    let prev_active_pane = tab_mgr.active_tab().active_pane;
+    let prev_active_tab_id = tab_mgr.active_tab_id();
+    let primary = WindowState {
+        window,
+        renderer,
+        tab_mgr,
+        panes,
+        a11y_state,
+        cursor_offset,
+        uia_provider,
+        palette,
+        history_browser,
+        settings_ui,
+        taskbar,
+        current_cols,
+        current_rows,
+        cell_width,
+        cell_height,
+        last_progress,
+        last_announced_progress,
+        blink_interval_ms,
+        blink_timer,
+        cursor_blink_on,
+        mouse_dragging,
+        base_title,
+        last_dblclick,
+        tab_drag,
+        window_focused,
+        broadcast_input,
+        prev_active_pane,
+        prev_active_tab_id,
+        prev_selection_active: false,
+        close_requested: false,
+    };
+    let mut globals = AppGlobals {
+        config,
+        config_watcher,
+        keybinding_map,
+        macro_store,
+        plugin_registry,
+        plugin_lua,
+        audio_config,
+        tray_icon,
+        cfg_path,
+    };
 
-        // Pump Win32 messages (non-blocking)
-        if !window.pump_messages() {
+    let mut windows: HashMap<WindowId, WindowState> = HashMap::new();
+    windows.insert(primary_id, primary);
+    let mut registry = WindowRegistry::new();
+    registry.register(primary_id);
+    let mut mux = WindowEventMux::new();
+    if let Some(ws) = windows.get(&primary_id) {
+        mux.attach_window(&ws.window);
+    }
+    let mut shutdown_all = false;
+
+    info!("Entering main event loop");
+    loop {
+        // One message pump serves every window on this thread.
+        if !pump_thread_messages() {
             break;
         }
 
-        // Process window events
-        while let Ok(event) = window.events().try_recv() {
-            debug!(?event, "Window event received");
-            match event {
-                WindowEvent::CloseRequested => {
-                    info!("Close requested");
-                    running = false;
+        // Drain window events; dispatch each to the window it addresses.
+        while let Some(tagged) = mux.try_next() {
+            let post = windows
+                .get_mut(&tagged.window_id)
+                .map(|ws| handle_window_event(ws, tagged.event, &mut globals))
+                .unwrap_or(PostAction::None);
+            match post {
+                PostAction::TearOff => tear_off_active_tab(
+                    tagged.window_id,
+                    &mut windows,
+                    &mut registry,
+                    &mut mux,
+                    &globals,
+                ),
+                PostAction::None => {}
+            }
+        }
+
+        // Config hot-reload (applies to all windows + shared globals).
+        apply_config_reload(&mut windows, &mut globals);
+
+        // IPC requests from other instances (targeted at the primary window).
+        if let Some(rx) = ipc_rx.as_ref() {
+            while let Ok(ipc_req) = rx.try_recv() {
+                if handle_ipc_request(ipc_req, primary_id, &mut windows, &globals) {
+                    shutdown_all = true;
                 }
-                WindowEvent::Resized(w, h) => {
-                    renderer.resize(w, h);
-                    let pad_h = config.window.padding.horizontal() as f32;
-                    let pad_v = config.window.padding.vertical() as f32;
-                    current_cols =
-                        ((w as f32 - pad_h) / cell_width).floor().clamp(1.0, 500.0) as u16;
-                    current_rows =
-                        ((h as f32 - pad_v) / cell_height).floor().clamp(1.0, 500.0) as u16;
-                    // Resize ALL panes — they all share the window dimensions
-                    for pane in panes.values_mut() {
-                        pane.terminal
-                            .resize(current_cols as usize, current_rows as usize);
-                        if let Err(e) = pane.pty.resize(current_cols, current_rows) {
-                            error!("PTY resize error: {}", e);
+            }
+        }
+
+        // Per-window frame: PTY output, announcements, rendering.
+        let frame_ids: Vec<WindowId> = registry.open_ids().to_vec();
+        for id in frame_ids {
+            if let Some(ws) = windows.get_mut(&id) {
+                run_window_frame(ws, &mut globals);
+            }
+        }
+
+        // Close any windows flagged during event/frame handling.
+        let to_close: Vec<WindowId> = windows
+            .iter()
+            .filter(|(_, ws)| ws.close_requested)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in to_close {
+            close_window(id, &mut windows, &mut registry, &mut mux);
+        }
+
+        if shutdown_all {
+            let ids: Vec<WindowId> = registry.open_ids().to_vec();
+            for id in ids {
+                close_window(id, &mut windows, &mut registry, &mut mux);
+            }
+        }
+
+        if registry.should_quit() {
+            break;
+        }
+
+        // Yield CPU until a message or PTY data arrives, without blocking the pump.
+        unsafe {
+            use ::windows::Win32::UI::WindowsAndMessaging::{
+                MsgWaitForMultipleObjects, QS_ALLINPUT,
+            };
+            MsgWaitForMultipleObjects(None, false, 1, QS_ALLINPUT);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Shutdown
+    // -----------------------------------------------------------------------
+    globals.tray_icon.hide();
+    if let Some(ws) = windows.get_mut(&primary_id) {
+        ws.window.unregister_quake_hotkey();
+        let placement = ws.window.get_placement();
+        if let Err(e) = wixen_ui::window::save_placement(&placement, &window_state_file) {
+            warn!(error = %e, "Failed to save window placement");
+        }
+        if SessionState::should_save(&globals.config.terminal.session_restore) {
+            let session = ws.tab_mgr.to_session_state();
+            if !session.is_empty()
+                && let Err(e) = session.save(&session_path)
+            {
+                warn!(error = %e, "Failed to save session state");
+            }
+        }
+    }
+
+    info!("Wixen Terminal exiting");
+}
+
+// ---------------------------------------------------------------------------
+// Multi-window state
+// ---------------------------------------------------------------------------
+
+/// Pixels a torn-off window is offset from its source window's top-left.
+const TEAR_OFF_OFFSET_PX: i32 = 40;
+
+/// A follow-up action a window's event handling asks the main loop to perform
+/// once the per-window borrow has ended. Closing and shutdown are signalled via
+/// the `WindowState::close_requested` flag and the IPC path respectively; only
+/// tear-off (which moves state between windows) needs an out-of-band action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostAction {
+    None,
+    TearOff,
+}
+
+/// All state that belongs to a single OS window: its Win32 window, GPU
+/// renderer, tabs, live panes (keyed by process-unique `PaneId`), the UIA
+/// provider bound to this window's HWND, and the per-window overlay UIs.
+struct WindowState {
+    window: Window,
+    renderer: TerminalRenderer,
+    tab_mgr: TabManager,
+    panes: HashMap<PaneId, PaneState>,
+    a11y_state: Arc<RwLock<TerminalA11yState>>,
+    cursor_offset: Arc<std::sync::atomic::AtomicI32>,
+    uia_provider: IRawElementProviderSimple,
+    palette: CommandPalette,
+    history_browser: HistoryBrowser,
+    settings_ui: SettingsUI,
+    taskbar: Option<windows::Win32::UI::Shell::ITaskbarList3>,
+    current_cols: u16,
+    current_rows: u16,
+    cell_width: f32,
+    cell_height: f32,
+    last_progress: ProgressState,
+    last_announced_progress: Option<u8>,
+    blink_interval_ms: u128,
+    blink_timer: Instant,
+    cursor_blink_on: bool,
+    mouse_dragging: bool,
+    base_title: String,
+    last_dblclick: Option<(Instant, i32, i32)>,
+    tab_drag: Option<(usize, i32)>,
+    window_focused: bool,
+    broadcast_input: bool,
+    prev_active_pane: PaneId,
+    prev_active_tab_id: TabId,
+    prev_selection_active: bool,
+    close_requested: bool,
+}
+
+/// Process-wide state owned once and shared across every window.
+struct AppGlobals {
+    config: Config,
+    config_watcher: ConfigWatcher,
+    keybinding_map: HashMap<String, ResolvedAction>,
+    macro_store: wixen_config::MacroStore,
+    plugin_registry: PluginRegistry,
+    plugin_lua: mlua::Lua,
+    audio_config: AudioConfig,
+    tray_icon: wixen_ui::tray::TrayIcon,
+    cfg_path: std::path::PathBuf,
+}
+
+/// Destroy one window and remove it from the registry and event mux. The last
+/// window destroyed makes [`WindowRegistry::should_quit`] return `true`.
+fn close_window(
+    id: WindowId,
+    windows: &mut HashMap<WindowId, WindowState>,
+    registry: &mut WindowRegistry,
+    mux: &mut WindowEventMux,
+) {
+    if let Some(mut ws) = windows.remove(&id) {
+        // Dropping the WindowState tears down its PTYs (ConPTY handles) and GPU
+        // surface; closing the window destroys the HWND without ending the process.
+        ws.window.close();
+    }
+    registry.close(id);
+    mux.detach(id);
+    info!(id = id.raw(), "Window closed");
+}
+
+/// Tear the active tab off `source_id` into a brand-new OS window, moving its
+/// live PTY panes across without respawning them.
+fn tear_off_active_tab(
+    source_id: WindowId,
+    windows: &mut HashMap<WindowId, WindowState>,
+    registry: &mut WindowRegistry,
+    mux: &mut WindowEventMux,
+    g: &AppGlobals,
+) {
+    // Detach the tab and pull its live panes out of the source window.
+    let (tab, moved_panes, seed_w, seed_h, origin_x, origin_y) = {
+        let Some(src) = windows.get_mut(&source_id) else {
+            return;
+        };
+        let active_tab_id = src.tab_mgr.active_tab_id();
+        let Some(tab) = src.tab_mgr.detach_tab(active_tab_id) else {
+            info!("Tear-off ignored: window has only one tab");
+            return;
+        };
+        let pane_ids = tab.pane_tree.pane_ids();
+        let mut moved: Vec<(PaneId, PaneState)> = Vec::with_capacity(pane_ids.len());
+        for pid in pane_ids {
+            if let Some(state) = src.panes.remove(&pid) {
+                moved.push((pid, state));
+            }
+        }
+        let new_active = src.tab_mgr.active_tab().active_pane;
+        if let Some(p) = src.panes.get_mut(&new_active) {
+            p.terminal.dirty = true;
+        }
+        let (sw, sh) = src.window.client_size();
+        let (ox, oy) = src.window.client_to_screen(0, 0);
+        (tab, moved, sw, sh, ox, oy)
+    };
+
+    // Create the new window near the source window's origin.
+    let title = tab.display_title();
+    let width = seed_w.max(200);
+    let height = seed_h.max(150);
+    let new_window = match Window::new_at(
+        &title,
+        width,
+        height,
+        origin_x + TEAR_OFF_OFFSET_PX,
+        origin_y + TEAR_OFF_OFFSET_PX,
+    ) {
+        Ok(win) => win,
+        Err(e) => {
+            error!(error = %e, "Tear-off failed: could not create window");
+            return;
+        }
+    };
+    wixen_ui::window::apply_window_chrome(new_window.hwnd(), &g.config.window);
+
+    // UIA provider bound to the new window's HWND.
+    let a11y_state = Arc::new(RwLock::new(TerminalA11yState::new()));
+    a11y_state.write().title = title.clone();
+    let cursor_offset = Arc::new(std::sync::atomic::AtomicI32::new(0));
+    let provider = TerminalProvider::new(
+        new_window.hwnd(),
+        Arc::clone(&a11y_state),
+        Arc::clone(&cursor_offset),
+    );
+    let uia_provider = provider.into_interface();
+    new_window.set_uia_provider(uia_provider.clone());
+
+    // Build a renderer/surface for the new window.
+    let (client_w, client_h) = new_window.client_size();
+    let dpi = new_window.dpi() as f32;
+    let colors = build_color_scheme(&g.config.colors);
+    let mut renderer = match unsafe {
+        TerminalRenderer::new(
+            &g.config.window.renderer,
+            new_window.hwnd(),
+            client_w,
+            client_h,
+            dpi,
+            &g.config.font.family,
+            g.config.font.size,
+            g.config.font.line_height,
+            colors,
+            &g.config.font.fallback_fonts,
+            g.config.font.ligatures,
+            &g.config.font.font_path,
+        )
+    } {
+        Ok(r) => r,
+        Err(e) => {
+            error!(error = %e, "Tear-off failed: renderer init");
+            return;
+        }
+    };
+    if !g.config.window.background_image.is_empty()
+        && let Ok(data) = std::fs::read(&g.config.window.background_image)
+    {
+        renderer.set_background_image(&data, g.config.window.background_image_opacity);
+    }
+    apply_effects(&mut renderer, &g.config.effects);
+    renderer.set_min_contrast_ratio(g.config.accessibility.min_contrast_ratio as f64);
+
+    let metrics = renderer.font_metrics();
+    let cell_width = if metrics.cell_width < 1.0 {
+        8.0
+    } else {
+        metrics.cell_width
+    };
+    let cell_height = if metrics.cell_height < 1.0 {
+        16.0
+    } else {
+        metrics.cell_height
+    };
+    let pad_h = g.config.window.padding.horizontal() as f32;
+    let pad_v = g.config.window.padding.vertical() as f32;
+    let current_cols = ((client_w as f32 - pad_h) / cell_width)
+        .floor()
+        .clamp(1.0, 500.0) as u16;
+    let current_rows = ((client_h as f32 - pad_v) / cell_height)
+        .floor()
+        .clamp(1.0, 500.0) as u16;
+
+    // Move the live panes into the new window, resizing them to the new grid.
+    let mut new_panes: HashMap<PaneId, PaneState> = HashMap::new();
+    for (pid, mut state) in moved_panes {
+        state
+            .terminal
+            .resize(current_cols as usize, current_rows as usize);
+        let _ = state.pty.resize(current_cols, current_rows);
+        state.terminal.dirty = true;
+        new_panes.insert(pid, state);
+    }
+
+    let tab_mgr = TabManager::from_detached_tab(tab);
+    let prev_active_pane = tab_mgr.active_tab().active_pane;
+    let prev_active_tab_id = tab_mgr.active_tab_id();
+
+    let mut palette = CommandPalette::new();
+    palette.set_profiles(&build_profile_entries(&g.config));
+    palette.load_ssh_targets(&g.config.ssh);
+    palette.set_macros(&macro_palette_entries(&g.macro_store));
+
+    let taskbar: Option<windows::Win32::UI::Shell::ITaskbarList3> = unsafe {
+        windows::Win32::System::Com::CoCreateInstance(
+            &windows::Win32::UI::Shell::TaskbarList,
+            None,
+            windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+        )
+        .ok()
+    };
+
+    let new_id = new_window.id();
+    let state = WindowState {
+        window: new_window,
+        renderer,
+        tab_mgr,
+        panes: new_panes,
+        a11y_state,
+        cursor_offset,
+        uia_provider,
+        palette,
+        history_browser: HistoryBrowser::new(),
+        settings_ui: SettingsUI::from_config(&g.config),
+        taskbar,
+        current_cols,
+        current_rows,
+        cell_width,
+        cell_height,
+        last_progress: ProgressState::Hidden,
+        last_announced_progress: None,
+        blink_interval_ms: g.config.terminal.cursor_blink_ms as u128,
+        blink_timer: Instant::now(),
+        cursor_blink_on: true,
+        mouse_dragging: false,
+        base_title: title,
+        last_dblclick: None,
+        tab_drag: None,
+        window_focused: true,
+        broadcast_input: false,
+        prev_active_pane,
+        prev_active_tab_id,
+        prev_selection_active: false,
+        close_requested: false,
+    };
+    windows.insert(new_id, state);
+    registry.register(new_id);
+    if let Some(ws) = windows.get(&new_id) {
+        mux.attach_window(&ws.window);
+    }
+    info!(
+        source = source_id.raw(),
+        new = new_id.raw(),
+        "Tab torn off into new window"
+    );
+}
+
+/// Handle one IPC request. Returns `true` if the process should shut down.
+fn handle_ipc_request(
+    req: IpcRequest,
+    primary_id: WindowId,
+    windows: &mut HashMap<WindowId, WindowState>,
+    g: &AppGlobals,
+) -> bool {
+    match req {
+        IpcRequest::NewWindow => {
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe).arg("--standalone").spawn();
+                info!("IPC: spawned new window process");
+            }
+            false
+        }
+        IpcRequest::NewTab { profile } => {
+            if let Some(ws) = windows.get_mut(&primary_id) {
+                let p = profile
+                    .as_ref()
+                    .and_then(|name| g.config.profiles.iter().find(|p| p.name == *name));
+                let (new_tab_id, new_pane_id) = ws.tab_mgr.add_tab("New Tab");
+                ws.panes.insert(
+                    new_pane_id,
+                    spawn_pane(ws.current_cols, ws.current_rows, &g.config, p),
+                );
+                info!("IPC: opened new tab");
+                dispatch_plugin_event(
+                    &g.plugin_lua,
+                    &g.plugin_registry,
+                    &PluginEvent::TabCreated {
+                        tab_id: new_tab_id.0,
+                    },
+                );
+            }
+            false
+        }
+        IpcRequest::Shutdown => {
+            info!("IPC: shutdown requested");
+            true
+        }
+        IpcRequest::Ping | IpcRequest::ListSessions | IpcRequest::FocusWindow { .. } => false,
+    }
+}
+
+/// Apply a hot-reloaded config to every window and the shared globals.
+fn apply_config_reload(windows: &mut HashMap<WindowId, WindowState>, g: &mut AppGlobals) {
+    let Some(delta) = g.config_watcher.poll() else {
+        return;
+    };
+    for ws in windows.values_mut() {
+        apply_config_delta_to_window(ws, &delta, &g.config, &g.macro_store);
+    }
+    if delta.keybindings_changed {
+        g.keybinding_map = build_keybinding_map(&delta.config);
+        info!(
+            "Keybinding map rebuilt ({} bindings)",
+            g.keybinding_map.len()
+        );
+    }
+    g.config = delta.config;
+    g.audio_config = AudioConfig::from_accessibility(&g.config.accessibility);
+    dispatch_plugin_event(
+        &g.plugin_lua,
+        &g.plugin_registry,
+        &PluginEvent::ConfigReloaded,
+    );
+}
+
+/// Apply the per-window portion of a config delta (colors, font, cursor,
+/// chrome, palette entries) to one window. `old_config` is the still-current
+/// config, used to detect background-image changes.
+fn apply_config_delta_to_window(
+    ws: &mut WindowState,
+    delta: &wixen_config::ConfigDelta,
+    old_config: &Config,
+    macro_store: &wixen_config::MacroStore,
+) {
+    if delta.colors_changed {
+        let new_colors = build_color_scheme(&delta.config.colors);
+        ws.renderer.update_colors(new_colors);
+        ws.renderer
+            .set_min_contrast_ratio(delta.config.accessibility.min_contrast_ratio as f64);
+        for pane in ws.panes.values_mut() {
+            pane.terminal.dirty = true;
+        }
+    }
+
+    if delta.font_changed {
+        let dpi = ws.window.dpi() as f32;
+        if let Err(e) = ws.renderer.rebuild_font(
+            &delta.config.font.family,
+            delta.config.font.size,
+            dpi,
+            delta.config.font.line_height,
+            &delta.config.font.fallback_fonts,
+            delta.config.font.ligatures,
+            &delta.config.font.font_path,
+        ) {
+            error!("Font rebuild failed on config reload: {e}");
+        } else {
+            let metrics = ws.renderer.font_metrics();
+            let (w, h) = ws.window.client_size();
+            ws.cell_width = metrics.cell_width;
+            ws.cell_height = metrics.cell_height;
+            let pad_h = delta.config.window.padding.horizontal() as f32;
+            let pad_v = delta.config.window.padding.vertical() as f32;
+            ws.current_cols = ((w as f32 - pad_h) / ws.cell_width)
+                .floor()
+                .clamp(1.0, 500.0) as u16;
+            ws.current_rows = ((h as f32 - pad_v) / ws.cell_height)
+                .floor()
+                .clamp(1.0, 500.0) as u16;
+            for pane in ws.panes.values_mut() {
+                pane.terminal
+                    .resize(ws.current_cols as usize, ws.current_rows as usize);
+                if let Err(e) = pane.pty.resize(ws.current_cols, ws.current_rows) {
+                    error!("PTY resize error on font change: {}", e);
+                }
+                pane.terminal.dirty = true;
+            }
+        }
+    }
+
+    if delta.terminal_changed {
+        let new_shape = parse_cursor_style(&delta.config.terminal.cursor_style);
+        let reduce_motion = wixen_config::should_reduce_motion(
+            &delta.config.accessibility.reduced_motion,
+            wixen_ui::window::system_reduced_motion(),
+        );
+        for pane in ws.panes.values_mut() {
+            pane.terminal.grid.cursor.shape = new_shape;
+            pane.terminal.grid.cursor.blinking =
+                delta.config.terminal.cursor_blink && !reduce_motion;
+            pane.terminal.dirty = true;
+        }
+        ws.blink_interval_ms = delta.config.terminal.cursor_blink_ms as u128;
+    }
+
+    if delta.window_changed {
+        set_window_title(ws.window.hwnd(), &delta.config.window.title);
+        ws.base_title = delta.config.window.title.clone();
+        wixen_ui::window::apply_window_chrome(ws.window.hwnd(), &delta.config.window);
+
+        if delta.config.window.background_image != old_config.window.background_image
+            || (delta.config.window.background_image_opacity
+                - old_config.window.background_image_opacity)
+                .abs()
+                > f32::EPSILON
+        {
+            if delta.config.window.background_image.is_empty() {
+                ws.renderer.clear_background_image();
+            } else if let Ok(data) = std::fs::read(&delta.config.window.background_image) {
+                ws.renderer
+                    .set_background_image(&data, delta.config.window.background_image_opacity);
+            }
+            for pane in ws.panes.values_mut() {
+                pane.terminal.dirty = true;
+            }
+        }
+    }
+
+    ws.palette
+        .set_profiles(&build_profile_entries(&delta.config));
+    ws.palette.load_ssh_targets(&delta.config.ssh);
+    ws.palette.set_macros(&macro_palette_entries(macro_store));
+
+    if delta.config.effects != old_config.effects {
+        apply_effects(&mut ws.renderer, &delta.config.effects);
+    }
+
+    for pane in ws.panes.values_mut() {
+        pane.event_throttler
+            .set_debounce_ms(delta.config.accessibility.output_debounce_ms);
+    }
+}
+
+/// Handle a single window event for one window. Returns a follow-up action for
+/// the main loop (tear-off / close / shutdown) once the borrow has ended.
+fn handle_window_event(ws: &mut WindowState, event: WindowEvent, g: &mut AppGlobals) -> PostAction {
+    let pad_left = g.config.window.padding.left as f32;
+    let pad_top = g.config.window.padding.top as f32;
+    let _ = (pad_left, pad_top);
+    match event {
+        WindowEvent::CloseRequested => {
+            info!("Close requested");
+            ws.close_requested = true;
+        }
+        WindowEvent::Resized(w, h) => {
+            ws.renderer.resize(w, h);
+            let pad_h = g.config.window.padding.horizontal() as f32;
+            let pad_v = g.config.window.padding.vertical() as f32;
+            ws.current_cols = ((w as f32 - pad_h) / ws.cell_width)
+                .floor()
+                .clamp(1.0, 500.0) as u16;
+            ws.current_rows = ((h as f32 - pad_v) / ws.cell_height)
+                .floor()
+                .clamp(1.0, 500.0) as u16;
+            // Resize ALL panes — they all share the window dimensions
+            for pane in ws.panes.values_mut() {
+                pane.terminal
+                    .resize(ws.current_cols as usize, ws.current_rows as usize);
+                if let Err(e) = pane.pty.resize(ws.current_cols, ws.current_rows) {
+                    error!("PTY resize error: {}", e);
+                }
+            }
+        }
+        WindowEvent::KeyInput {
+            vk,
+            down,
+            ctrl,
+            shift,
+            alt,
+            ..
+        } => {
+            if down {
+                // ---- Profile shortcuts: Ctrl+Shift+1..9 (positional, not configurable) ----
+                if ctrl && shift && !alt && (0x31..=0x39).contains(&vk) {
+                    let profile_idx = (vk - 0x31) as usize;
+                    if let Some(profile) = g.config.profile_at(profile_idx) {
+                        let (tab_id, pane_id) = ws.tab_mgr.add_tab(&profile.name);
+                        ws.panes.insert(
+                            pane_id,
+                            spawn_pane(ws.current_cols, ws.current_rows, &g.config, Some(&profile)),
+                        );
+                        if let Some(p) = ws.panes.get_mut(&pane_id) {
+                            p.terminal.dirty = true;
                         }
+                        info!(
+                            profile = %profile.name,
+                            tabs = ws.tab_mgr.tab_count(),
+                            "New tab opened with profile"
+                        );
+                        dispatch_plugin_event(
+                            &g.plugin_lua,
+                            &g.plugin_registry,
+                            &PluginEvent::TabCreated { tab_id: tab_id.0 },
+                        );
                     }
+                    return PostAction::None;
                 }
-                WindowEvent::KeyInput {
-                    vk,
-                    down,
-                    ctrl,
-                    shift,
-                    alt,
-                    ..
-                } => {
-                    if down {
-                        // ---- Profile shortcuts: Ctrl+Shift+1..9 (positional, not configurable) ----
-                        if ctrl && shift && !alt && (0x31..=0x39).contains(&vk) {
-                            let profile_idx = (vk - 0x31) as usize;
-                            if let Some(profile) = config.profile_at(profile_idx) {
-                                let (tab_id, pane_id) = tab_mgr.add_tab(&profile.name);
-                                panes.insert(
-                                    pane_id,
-                                    spawn_pane(current_cols, current_rows, &config, Some(&profile)),
-                                );
-                                if let Some(p) = panes.get_mut(&pane_id) {
-                                    p.terminal.dirty = true;
-                                }
-                                info!(
-                                    profile = %profile.name,
-                                    tabs = tab_mgr.tab_count(),
-                                    "New tab opened with profile"
-                                );
-                                dispatch_plugin_event(
-                                    &plugin_lua,
-                                    &plugin_registry,
-                                    &PluginEvent::TabCreated { tab_id: tab_id.0 },
-                                );
-                            }
-                            continue;
-                        }
 
-                        // ---- Command palette keys (modal) ----
-                        if palette.visible {
-                            match vk {
-                                0x1B => palette.close(),       // Escape
-                                0x26 => palette.select_prev(), // Up
-                                0x28 => palette.select_next(), // Down
-                                0x0D => {
-                                    // Enter — confirm selection, dispatch action
-                                    if let Some(result) = palette.confirm() {
-                                        match result {
-                                            wixen_ui::PaletteResult::Action(ref action_id)
-                                                if action_id == "rename_tab" =>
-                                            {
-                                                palette.open_input("Enter new tab name:");
-                                            }
-                                            wixen_ui::PaletteResult::Action(ref action_id)
-                                                if action_id == "toggle_broadcast_input" =>
-                                            {
-                                                broadcast_input = !broadcast_input;
-                                                info!(
-                                                    broadcast = broadcast_input,
-                                                    "Broadcast input toggled via palette"
-                                                );
-                                                announce_mode_toggle(
-                                                    ToggleMode::BroadcastInput,
-                                                    broadcast_input,
-                                                    &uia_provider,
-                                                    config.accessibility.screen_reader_output,
-                                                    &audio_config,
-                                                );
-                                            }
-                                            wixen_ui::PaletteResult::Action(action_id)
-                                                if handle_local_action(
-                                                    &action_id,
-                                                    None,
-                                                    &macro_store,
-                                                    &mut history_browser,
-                                                    &tab_mgr,
-                                                    &mut panes,
-                                                    &mut window,
-                                                    &mut tray_icon,
-                                                    &uia_provider,
-                                                    config.accessibility.screen_reader_output,
-                                                ) =>
-                                            {
-                                                let active = tab_mgr.active_tab().active_pane;
-                                                if let Some(p) = panes.get_mut(&active) {
-                                                    p.terminal.dirty = true;
-                                                }
-                                            }
-                                            wixen_ui::PaletteResult::Action(action_id) => {
-                                                let result = dispatch_keybinding_action(
-                                                    &action_id,
-                                                    &mut tab_mgr,
-                                                    &mut panes,
-                                                    &config,
-                                                    &mut running,
-                                                    current_cols,
-                                                    current_rows,
-                                                    &mut window,
-                                                    &base_title,
-                                                    &plugin_lua,
-                                                    &plugin_registry,
-                                                );
-                                                if let DispatchResult::ModeToggled {
-                                                    mode,
-                                                    active,
-                                                } = result
-                                                {
-                                                    announce_mode_toggle(
-                                                        mode,
-                                                        active,
-                                                        &uia_provider,
-                                                        config.accessibility.screen_reader_output,
-                                                        &audio_config,
-                                                    );
-                                                }
-                                                handle_deferred_action(
-                                                    result,
-                                                    &mut config,
-                                                    &mut renderer,
-                                                    &window,
-                                                    &mut cell_width,
-                                                    &mut cell_height,
-                                                    &mut current_cols,
-                                                    &mut current_rows,
-                                                    &mut panes,
-                                                    &mut config_watcher,
-                                                    &cfg_path,
-                                                );
-                                            }
-                                            wixen_ui::PaletteResult::Input(text) => {
-                                                tab_mgr.rename_active_tab(&text);
-                                                let active = tab_mgr.active_tab().active_pane;
-                                                if let Some(p) = panes.get_mut(&active) {
-                                                    p.terminal.dirty = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                0x08 => palette.pop_char(), // Backspace
-                                _ => {}                     // Other keys ignored in palette mode
-                            }
-                            // Update a11y snapshot + focus
-                            update_overlay_a11y(&palette, &history_browser, &a11y_state);
-                            unsafe {
-                                wixen_a11y::events::raise_structure_changed(
-                                    &uia_provider,
-                                    &mut [0i32],
-                                );
-                                if palette.visible {
-                                    let root: IRawElementProviderFragmentRoot =
-                                        uia_provider.cast().unwrap();
-                                    let panel =
-                                        wixen_a11y::palette_provider::PalettePanelProvider::new(
-                                            window.hwnd(),
-                                            Arc::clone(&a11y_state),
-                                            root,
-                                        );
-                                    let frag: IRawElementProviderSimple = panel.into();
-                                    wixen_a11y::events::raise_focus_changed(&frag);
-                                } else {
-                                    wixen_a11y::events::raise_focus_changed(&uia_provider);
-                                }
-                            }
-                            // Mark dirty to re-render overlay
-                            let active = tab_mgr.active_tab().active_pane;
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
-                            }
-                            continue;
-                        }
-
-                        // ---- Command history browser keys (modal) ----
-                        if history_browser.visible {
-                            let active = tab_mgr.active_tab().active_pane;
-                            match vk {
-                                0x1B => history_browser.close(),       // Escape
-                                0x26 => history_browser.select_prev(), // Up
-                                0x28 => history_browser.select_next(), // Down
-                                0x0D => {
-                                    // Enter — write the selected command to the PTY
-                                    if let Some(cmd) = history_browser.confirm()
-                                        && let Some(pane) = panes.get_mut(&active)
+                // ---- Command palette keys (modal) ----
+                if ws.palette.visible {
+                    match vk {
+                        0x1B => ws.palette.close(),       // Escape
+                        0x26 => ws.palette.select_prev(), // Up
+                        0x28 => ws.palette.select_next(), // Down
+                        0x0D => {
+                            // Enter — confirm selection, dispatch action
+                            if let Some(result) = ws.palette.confirm() {
+                                match result {
+                                    wixen_ui::PaletteResult::Action(ref action_id)
+                                        if action_id == "tear_off_tab" =>
                                     {
-                                        let _ = pane.pty.write(cmd.as_bytes());
+                                        ws.palette.close();
+                                        return PostAction::TearOff;
                                     }
-                                }
-                                0x08 => {
-                                    // Backspace — refine the query
-                                    if let Some(pane) = panes.get(&active) {
-                                        history_browser.pop_char(&pane.command_history);
+                                    wixen_ui::PaletteResult::Action(ref action_id)
+                                        if action_id == "rename_tab" =>
+                                    {
+                                        ws.palette.open_input("Enter new tab name:");
                                     }
-                                }
-                                _ => {}
-                            }
-                            // Refresh the UIA snapshot so screen readers observe the
-                            // new selection / filtered results (and the closed state).
-                            update_overlay_a11y(&palette, &history_browser, &a11y_state);
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
-                            }
-                            continue;
-                        }
-
-                        // ---- Settings UI keys (modal) ----
-                        if settings_ui.visible {
-                            match vk {
-                                0x1B => settings_ui.close(), // Escape
-                                0x09 => {
-                                    // Tab/Shift+Tab — field or sub-field navigation
-                                    if settings_ui.is_keybinding_editing() {
-                                        if shift {
-                                            settings_ui.keybinding_prev_sub();
-                                        } else {
-                                            settings_ui.keybinding_next_sub();
+                                    wixen_ui::PaletteResult::Action(ref action_id)
+                                        if action_id == "toggle_broadcast_input" =>
+                                    {
+                                        ws.broadcast_input = !ws.broadcast_input;
+                                        info!(
+                                            broadcast = ws.broadcast_input,
+                                            "Broadcast input toggled via palette"
+                                        );
+                                        announce_mode_toggle(
+                                            ToggleMode::BroadcastInput,
+                                            ws.broadcast_input,
+                                            &ws.uia_provider,
+                                            g.config.accessibility.screen_reader_output,
+                                            &g.audio_config,
+                                        );
+                                    }
+                                    wixen_ui::PaletteResult::Action(action_id)
+                                        if handle_local_action(
+                                            &action_id,
+                                            None,
+                                            &g.macro_store,
+                                            &mut ws.history_browser,
+                                            &ws.tab_mgr,
+                                            &mut ws.panes,
+                                            &mut ws.window,
+                                            &mut g.tray_icon,
+                                            &ws.uia_provider,
+                                            g.config.accessibility.screen_reader_output,
+                                        ) =>
+                                    {
+                                        let active = ws.tab_mgr.active_tab().active_pane;
+                                        if let Some(p) = ws.panes.get_mut(&active) {
+                                            p.terminal.dirty = true;
                                         }
-                                    } else if shift {
-                                        settings_ui.prev_field();
-                                    } else {
-                                        settings_ui.next_field();
                                     }
-                                }
-                                0x0D => settings_ui.start_edit(), // Enter — activate field
-                                0x26 => {
-                                    // Up — cycle dropdown backward or prev field
-                                    settings_ui.prev_field();
-                                }
-                                0x28 => {
-                                    // Down — cycle dropdown forward or next field
-                                    settings_ui.next_field();
-                                }
-                                0x25 => settings_ui.prev_tab(), // Left — prev tab
-                                0x27 => settings_ui.next_tab(), // Right — next tab
-                                0x20 => {
-                                    // Space — toggle or modifier checkbox
-                                    if settings_ui.is_keybinding_editing() {
-                                        settings_ui.keybinding_toggle_modifier();
-                                    } else {
-                                        settings_ui.start_edit();
-                                    }
-                                }
-                                0x08 => settings_ui.pop_char(), // Backspace
-                                // Ctrl+S — save settings
-                                _ if ctrl && !shift && !alt && vk == 0x53 => {
-                                    let new_config = settings_ui.save();
-                                    if let Err(e) = new_config.save(&cfg_path) {
-                                        error!("Failed to save config: {}", e);
-                                    } else {
-                                        info!("Settings saved");
-                                    }
-                                    settings_ui.close();
-                                }
-                                _ => {}
-                            }
-                            // Update a11y snapshot + focus management
-                            update_settings_a11y(&settings_ui, &a11y_state);
-                            if !settings_ui.visible {
-                                // Settings was closed (Escape or Ctrl+S) — return focus
-                                unsafe {
-                                    wixen_a11y::events::raise_structure_changed(
-                                        &uia_provider,
-                                        &mut [0i32],
-                                    );
-                                    wixen_a11y::events::raise_focus_changed(&uia_provider);
-                                }
-                            }
-                            // Mark dirty to re-render overlay
-                            let active = tab_mgr.active_tab().active_pane;
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
-                            }
-                            continue;
-                        }
-
-                        // ---- Search-mode keys (modal, not user-configurable) ----
-                        let active = tab_mgr.active_tab().active_pane;
-                        let in_search = panes.get(&active).is_some_and(|p| p.search_mode);
-
-                        if in_search {
-                            let Some(pane) = panes.get_mut(&active) else {
-                                continue;
-                            };
-
-                            // Escape — close search
-                            if vk == 0x1B {
-                                pane.search_mode = false;
-                                pane.search_engine.clear();
-                                pane.search_buffer.clear();
-                                set_window_title(window.hwnd(), &base_title);
-                                pane.terminal.dirty = true;
-                                continue;
-                            }
-
-                            // F3 / Shift+F3 — next/prev match
-                            if vk == 0x72 {
-                                let dir = if shift {
-                                    SearchDirection::Backward
-                                } else {
-                                    SearchDirection::Forward
-                                };
-                                pane.search_engine.next_match(dir);
-                                update_search_title(
-                                    window.hwnd(),
-                                    &base_title,
-                                    &pane.search_buffer,
-                                    &pane.search_engine,
-                                );
-                                pane.terminal.dirty = true;
-                                continue;
-                            }
-
-                            // Backspace — delete last search char
-                            if vk == 0x08 {
-                                pane.search_buffer.pop();
-                                pane.search_engine.search(
-                                    &pane.terminal,
-                                    &pane.search_buffer,
-                                    SearchOptions::default(),
-                                );
-                                update_search_title(
-                                    window.hwnd(),
-                                    &base_title,
-                                    &pane.search_buffer,
-                                    &pane.search_engine,
-                                );
-                                pane.terminal.dirty = true;
-                                continue;
-                            }
-                        }
-
-                        // ---- Configurable keybinding dispatch ----
-                        let chord = vk_to_chord(vk, ctrl, shift, alt);
-                        if vk == 0xBC {
-                            info!(vk, ctrl, shift, alt, %chord, "Comma key pressed");
-                        }
-                        debug!(vk, ctrl, shift, alt, %chord, "Key event");
-                        if let Some(resolved) = keybinding_map.get(&chord) {
-                            info!(%chord, action = %resolved.action, "Keybinding matched");
-                            let action = resolved.action.clone();
-                            let args = resolved.args.clone();
-
-                            // Handle broadcast toggle directly
-                            if action == "toggle_broadcast_input" {
-                                broadcast_input = !broadcast_input;
-                                info!(broadcast = broadcast_input, "Broadcast input toggled");
-                                announce_mode_toggle(
-                                    ToggleMode::BroadcastInput,
-                                    broadcast_input,
-                                    &uia_provider,
-                                    config.accessibility.screen_reader_output,
-                                    &audio_config,
-                                );
-                                continue;
-                            }
-
-                            // Handle send_text directly (needs PTY access + args)
-                            if action == "send_text" {
-                                if let Some(text) = &args {
-                                    let active = tab_mgr.active_tab().active_pane;
-                                    if let Some(pane) = panes.get_mut(&active) {
-                                        let bytes = unescape_send_text(text);
-                                        let _ = pane.pty.write(&bytes);
-                                    }
-                                }
-                                continue;
-                            }
-
-                            // Handle palette/settings toggles directly (need local access)
-                            if action == "command_palette" {
-                                palette.toggle();
-                                update_overlay_a11y(&palette, &history_browser, &a11y_state);
-                                unsafe {
-                                    wixen_a11y::events::raise_structure_changed(
-                                        &uia_provider,
-                                        &mut [0i32],
-                                    );
-                                    if palette.visible {
-                                        let root: IRawElementProviderFragmentRoot =
-                                            uia_provider.cast().unwrap();
-                                        let panel =
-                                            wixen_a11y::palette_provider::PalettePanelProvider::new(
-                                                window.hwnd(),
-                                                Arc::clone(&a11y_state),
-                                                root,
+                                    wixen_ui::PaletteResult::Action(action_id) => {
+                                        let result = dispatch_keybinding_action(
+                                            &action_id,
+                                            &mut ws.tab_mgr,
+                                            &mut ws.panes,
+                                            &g.config,
+                                            &mut ws.close_requested,
+                                            ws.current_cols,
+                                            ws.current_rows,
+                                            &mut ws.window,
+                                            &ws.base_title,
+                                            &g.plugin_lua,
+                                            &g.plugin_registry,
+                                        );
+                                        if let DispatchResult::ModeToggled { mode, active } = result
+                                        {
+                                            announce_mode_toggle(
+                                                mode,
+                                                active,
+                                                &ws.uia_provider,
+                                                g.config.accessibility.screen_reader_output,
+                                                &g.audio_config,
                                             );
-                                        let frag: IRawElementProviderSimple = panel.into();
-                                        wixen_a11y::events::raise_focus_changed(&frag);
-                                    } else {
-                                        wixen_a11y::events::raise_focus_changed(&uia_provider);
+                                        }
+                                        handle_deferred_action(
+                                            result,
+                                            &mut g.config,
+                                            &mut ws.renderer,
+                                            &ws.window,
+                                            &mut ws.cell_width,
+                                            &mut ws.cell_height,
+                                            &mut ws.current_cols,
+                                            &mut ws.current_rows,
+                                            &mut ws.panes,
+                                            &mut g.config_watcher,
+                                            &g.cfg_path,
+                                        );
+                                    }
+                                    wixen_ui::PaletteResult::Input(text) => {
+                                        ws.tab_mgr.rename_active_tab(&text);
+                                        let active = ws.tab_mgr.active_tab().active_pane;
+                                        if let Some(p) = ws.panes.get_mut(&active) {
+                                            p.terminal.dirty = true;
+                                        }
                                     }
                                 }
-                                let active = tab_mgr.active_tab().active_pane;
-                                if let Some(p) = panes.get_mut(&active) {
-                                    p.terminal.dirty = true;
-                                }
-                                continue;
-                            }
-                            if action == "settings" || action == "open_settings" {
-                                settings_ui.toggle();
-                                update_settings_a11y(&settings_ui, &a11y_state);
-                                // Fire structure changed so NVDA re-queries the tree,
-                                // then fire focus on the settings panel (or terminal
-                                // root when closing).
-                                unsafe {
-                                    wixen_a11y::events::raise_structure_changed(
-                                        &uia_provider,
-                                        &mut [0i32],
-                                    );
-                                    if settings_ui.visible {
-                                        // Create a settings panel provider and fire focus
-                                        let root: IRawElementProviderFragmentRoot =
-                                            uia_provider.cast().unwrap();
-                                        let panel =
-                                            wixen_a11y::settings_provider::SettingsPanelProvider::new(
-                                                window.hwnd(),
-                                                Arc::clone(&a11y_state),
-                                                root,
-                                            );
-                                        let frag: IRawElementProviderSimple = panel.into();
-                                        wixen_a11y::events::raise_focus_changed(&frag);
-                                    } else {
-                                        // Return focus to terminal
-                                        wixen_a11y::events::raise_focus_changed(&uia_provider);
-                                    }
-                                }
-                                let active = tab_mgr.active_tab().active_pane;
-                                if let Some(p) = panes.get_mut(&active) {
-                                    p.terminal.dirty = true;
-                                }
-                                continue;
-                            }
-
-                            // Actions needing loop-local state (macros, history
-                            // overlay, tray) are handled here before the generic
-                            // dispatcher.
-                            if handle_local_action(
-                                &action,
-                                args.as_deref(),
-                                &macro_store,
-                                &mut history_browser,
-                                &tab_mgr,
-                                &mut panes,
-                                &mut window,
-                                &mut tray_icon,
-                                &uia_provider,
-                                config.accessibility.screen_reader_output,
-                            ) {
-                                // A local action may have toggled the history
-                                // browser (show_history) — refresh the UIA snapshot.
-                                update_overlay_a11y(&palette, &history_browser, &a11y_state);
-                                let active = tab_mgr.active_tab().active_pane;
-                                if let Some(p) = panes.get_mut(&active) {
-                                    p.terminal.dirty = true;
-                                }
-                                continue;
-                            }
-
-                            let result = dispatch_keybinding_action(
-                                &action,
-                                &mut tab_mgr,
-                                &mut panes,
-                                &config,
-                                &mut running,
-                                current_cols,
-                                current_rows,
-                                &mut window,
-                                &base_title,
-                                &plugin_lua,
-                                &plugin_registry,
-                            );
-                            if let DispatchResult::ModeToggled { mode, active } = result {
-                                announce_mode_toggle(
-                                    mode,
-                                    active,
-                                    &uia_provider,
-                                    config.accessibility.screen_reader_output,
-                                    &audio_config,
-                                );
-                            }
-                            let deferred_handled = handle_deferred_action(
-                                result,
-                                &mut config,
-                                &mut renderer,
-                                &window,
-                                &mut cell_width,
-                                &mut cell_height,
-                                &mut current_cols,
-                                &mut current_rows,
-                                &mut panes,
-                                &mut config_watcher,
-                                &cfg_path,
-                            );
-                            if deferred_handled {
-                                continue;
                             }
                         }
-
-                        // ---- Normal key sequences → active pane's PTY ----
-                        let active = tab_mgr.active_tab().active_pane;
-                        if let Some(pane) = panes.get_mut(&active)
-                            && !pane.search_mode
-                            && !tab_mgr.active_tab().pane_tree.is_read_only(active)
-                        {
-                            // Track arrow keys for boundary detection.
-                            // Suppress if we already know we're at a boundary.
-                            let nav = match vk {
-                                0x25 if !shift && !ctrl && !alt => Some(NavKey::Left),
-                                0x27 if !shift && !ctrl && !alt => Some(NavKey::Right),
-                                0x26 if !shift && !ctrl && !alt => Some(NavKey::Up),
-                                0x28 if !shift && !ctrl && !alt => Some(NavKey::Down),
-                                _ => None,
-                            };
-
-                            // Suppress at known boundaries
-                            let suppress = match nav {
-                                Some(NavKey::Up) if pane.at_history_start => true,
-                                Some(NavKey::Down) if pane.at_history_end => true,
-                                _ => false,
-                            };
-
-                            if suppress {
-                                play_event(&audio_config, AudioEvent::HistoryBoundary);
-                            } else {
-                                // Record which nav key for frame loop boundary detection
-                                if nav.is_some() {
-                                    pane.last_nav_key = nav;
-                                    pane.prev_cursor_col = pane.terminal.grid.cursor.col;
-                                }
-
-                                // Clear boundary flags on movement in opposite direction
-                                // or on any non-arrow key (typing resets history state)
-                                match nav {
-                                    Some(NavKey::Down) => pane.at_history_start = false,
-                                    Some(NavKey::Up) => pane.at_history_end = false,
-                                    None => {
-                                        pane.at_history_start = false;
-                                        pane.at_history_end = false;
-                                    }
-                                    _ => {}
-                                }
-
-                                if let Some(seq) = wixen_core::keyboard::encode_key_with_kitty(
-                                    vk,
-                                    shift,
-                                    ctrl,
-                                    alt,
-                                    pane.terminal.modes.cursor_keys_application,
-                                    pane.terminal.kitty_keyboard_flags(),
-                                ) && let Err(e) = pane.pty.write(&seq)
-                                {
-                                    error!("PTY write error: {}", e);
-                                }
-                            }
+                        0x08 => ws.palette.pop_char(), // Backspace
+                        _ => {}                        // Other keys ignored in palette mode
+                    }
+                    // Update a11y snapshot + focus
+                    update_overlay_a11y(&ws.palette, &ws.history_browser, &ws.a11y_state);
+                    unsafe {
+                        wixen_a11y::events::raise_structure_changed(&ws.uia_provider, &mut [0i32]);
+                        if ws.palette.visible {
+                            let root: IRawElementProviderFragmentRoot =
+                                ws.uia_provider.cast().unwrap();
+                            let panel = wixen_a11y::palette_provider::PalettePanelProvider::new(
+                                ws.window.hwnd(),
+                                Arc::clone(&ws.a11y_state),
+                                root,
+                            );
+                            let frag: IRawElementProviderSimple = panel.into();
+                            wixen_a11y::events::raise_focus_changed(&frag);
+                        } else {
+                            wixen_a11y::events::raise_focus_changed(&ws.uia_provider);
                         }
                     }
+                    // Mark dirty to re-render overlay
+                    let active = ws.tab_mgr.active_tab().active_pane;
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
+                    return PostAction::None;
                 }
-                WindowEvent::CharInput(ch) => {
-                    // Palette mode: printable chars go to palette query
-                    if palette.visible {
-                        if ch >= ' ' && !ch.is_control() {
-                            palette.push_char(ch);
-                            update_overlay_a11y(&palette, &history_browser, &a11y_state);
-                            let active = tab_mgr.active_tab().active_pane;
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
+
+                // ---- Command history browser keys (modal) ----
+                if ws.history_browser.visible {
+                    let active = ws.tab_mgr.active_tab().active_pane;
+                    match vk {
+                        0x1B => ws.history_browser.close(),       // Escape
+                        0x26 => ws.history_browser.select_prev(), // Up
+                        0x28 => ws.history_browser.select_next(), // Down
+                        0x0D => {
+                            // Enter — write the selected command to the PTY
+                            if let Some(cmd) = ws.history_browser.confirm()
+                                && let Some(pane) = ws.panes.get_mut(&active)
+                            {
+                                let _ = pane.pty.write(cmd.as_bytes());
                             }
                         }
-                        continue;
-                    }
-
-                    // History browser mode: printable chars refine the query
-                    if history_browser.visible {
-                        if ch >= ' ' && !ch.is_control() {
-                            let active = tab_mgr.active_tab().active_pane;
-                            if let Some(pane) = panes.get(&active) {
-                                history_browser.push_char(&pane.command_history, ch);
-                            }
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
+                        0x08 => {
+                            // Backspace — refine the query
+                            if let Some(pane) = ws.panes.get(&active) {
+                                ws.history_browser.pop_char(&pane.command_history);
                             }
                         }
-                        continue;
+                        _ => {}
                     }
+                    // Refresh the UIA snapshot so screen readers observe the
+                    // new selection / filtered results (and the closed state).
+                    update_overlay_a11y(&ws.palette, &ws.history_browser, &ws.a11y_state);
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
+                    return PostAction::None;
+                }
 
-                    // Settings mode: printable chars go to settings field editing
-                    if settings_ui.visible && settings_ui.editing {
-                        if ch >= ' ' && !ch.is_control() {
-                            settings_ui.push_char(ch);
-                            update_settings_a11y(&settings_ui, &a11y_state);
-                            let active = tab_mgr.active_tab().active_pane;
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
+                // ---- Settings UI keys (modal) ----
+                if ws.settings_ui.visible {
+                    match vk {
+                        0x1B => ws.settings_ui.close(), // Escape
+                        0x09 => {
+                            // Tab/Shift+Tab — field or sub-field navigation
+                            if ws.settings_ui.is_keybinding_editing() {
+                                if shift {
+                                    ws.settings_ui.keybinding_prev_sub();
+                                } else {
+                                    ws.settings_ui.keybinding_next_sub();
+                                }
+                            } else if shift {
+                                ws.settings_ui.prev_field();
+                            } else {
+                                ws.settings_ui.next_field();
                             }
                         }
-                        continue;
+                        0x0D => ws.settings_ui.start_edit(), // Enter — activate field
+                        0x26 => {
+                            // Up — cycle dropdown backward or prev field
+                            ws.settings_ui.prev_field();
+                        }
+                        0x28 => {
+                            // Down — cycle dropdown forward or next field
+                            ws.settings_ui.next_field();
+                        }
+                        0x25 => ws.settings_ui.prev_tab(), // Left — prev tab
+                        0x27 => ws.settings_ui.next_tab(), // Right — next tab
+                        0x20 => {
+                            // Space — toggle or modifier checkbox
+                            if ws.settings_ui.is_keybinding_editing() {
+                                ws.settings_ui.keybinding_toggle_modifier();
+                            } else {
+                                ws.settings_ui.start_edit();
+                            }
+                        }
+                        0x08 => ws.settings_ui.pop_char(), // Backspace
+                        // Ctrl+S — save settings
+                        _ if ctrl && !shift && !alt && vk == 0x53 => {
+                            let new_config = ws.settings_ui.save();
+                            if let Err(e) = new_config.save(&g.cfg_path) {
+                                error!("Failed to save config: {}", e);
+                            } else {
+                                info!("Settings saved");
+                            }
+                            ws.settings_ui.close();
+                        }
+                        _ => {}
                     }
+                    // Update a11y snapshot + focus management
+                    update_settings_a11y(&ws.settings_ui, &ws.a11y_state);
+                    if !ws.settings_ui.visible {
+                        // Settings was closed (Escape or Ctrl+S) — return focus
+                        unsafe {
+                            wixen_a11y::events::raise_structure_changed(
+                                &ws.uia_provider,
+                                &mut [0i32],
+                            );
+                            wixen_a11y::events::raise_focus_changed(&ws.uia_provider);
+                        }
+                    }
+                    // Mark dirty to re-render overlay
+                    let active = ws.tab_mgr.active_tab().active_pane;
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
+                    return PostAction::None;
+                }
 
-                    let active = tab_mgr.active_tab().active_pane;
-                    let pane = match panes.get_mut(&active) {
-                        Some(p) => p,
-                        None => continue,
+                // ---- Search-mode keys (modal, not user-configurable) ----
+                let active = ws.tab_mgr.active_tab().active_pane;
+                let in_search = ws.panes.get(&active).is_some_and(|p| p.search_mode);
+
+                if in_search {
+                    let Some(pane) = ws.panes.get_mut(&active) else {
+                        return PostAction::None;
                     };
 
-                    // Search mode: printable chars go to the search buffer
-                    if pane.search_mode {
-                        if ch >= ' ' && !ch.is_control() {
-                            pane.search_buffer.push(ch);
-                            pane.search_engine.search(
-                                &pane.terminal,
-                                &pane.search_buffer,
-                                SearchOptions::default(),
-                            );
-                            update_search_title(
-                                window.hwnd(),
-                                &base_title,
-                                &pane.search_buffer,
-                                &pane.search_engine,
-                            );
-                            pane.terminal.dirty = true;
-                        }
-                        continue;
+                    // Escape — close search
+                    if vk == 0x1B {
+                        pane.search_mode = false;
+                        pane.search_engine.clear();
+                        pane.search_buffer.clear();
+                        set_window_title(ws.window.hwnd(), &ws.base_title);
+                        pane.terminal.dirty = true;
+                        return PostAction::None;
                     }
 
-                    // Ctrl+C copies when there's a selection, otherwise sends to PTY
-                    if ch == '\x03' && pane.terminal.selection.is_some() {
+                    // F3 / Shift+F3 — next/prev match
+                    if vk == 0x72 {
+                        let dir = if shift {
+                            SearchDirection::Backward
+                        } else {
+                            SearchDirection::Forward
+                        };
+                        pane.search_engine.next_match(dir);
+                        update_search_title(
+                            ws.window.hwnd(),
+                            &ws.base_title,
+                            &pane.search_buffer,
+                            &pane.search_engine,
+                        );
+                        pane.terminal.dirty = true;
+                        return PostAction::None;
+                    }
+
+                    // Backspace — delete last search char
+                    if vk == 0x08 {
+                        pane.search_buffer.pop();
+                        pane.search_engine.search(
+                            &pane.terminal,
+                            &pane.search_buffer,
+                            SearchOptions::default(),
+                        );
+                        update_search_title(
+                            ws.window.hwnd(),
+                            &ws.base_title,
+                            &pane.search_buffer,
+                            &pane.search_engine,
+                        );
+                        pane.terminal.dirty = true;
+                        return PostAction::None;
+                    }
+                }
+
+                // ---- Configurable keybinding dispatch ----
+                let chord = vk_to_chord(vk, ctrl, shift, alt);
+                if vk == 0xBC {
+                    info!(vk, ctrl, shift, alt, %chord, "Comma key pressed");
+                }
+                debug!(vk, ctrl, shift, alt, %chord, "Key event");
+                if let Some(resolved) = g.keybinding_map.get(&chord) {
+                    info!(%chord, action = %resolved.action, "Keybinding matched");
+                    let action = resolved.action.clone();
+                    let args = resolved.args.clone();
+
+                    // Tear-off moves live PTYs between windows, so it is
+                    // handled by the main loop, not the per-window dispatch.
+                    if action == "tear_off_tab" {
+                        return PostAction::TearOff;
+                    }
+
+                    // Handle broadcast toggle directly
+                    if action == "toggle_broadcast_input" {
+                        ws.broadcast_input = !ws.broadcast_input;
+                        info!(broadcast = ws.broadcast_input, "Broadcast input toggled");
+                        announce_mode_toggle(
+                            ToggleMode::BroadcastInput,
+                            ws.broadcast_input,
+                            &ws.uia_provider,
+                            g.config.accessibility.screen_reader_output,
+                            &g.audio_config,
+                        );
+                        return PostAction::None;
+                    }
+
+                    // Handle send_text directly (needs PTY access + args)
+                    if action == "send_text" {
+                        if let Some(text) = &args {
+                            let active = ws.tab_mgr.active_tab().active_pane;
+                            if let Some(pane) = ws.panes.get_mut(&active) {
+                                let bytes = unescape_send_text(text);
+                                let _ = pane.pty.write(&bytes);
+                            }
+                        }
+                        return PostAction::None;
+                    }
+
+                    // Handle palette/settings toggles directly (need local access)
+                    if action == "command_palette" {
+                        ws.palette.toggle();
+                        update_overlay_a11y(&ws.palette, &ws.history_browser, &ws.a11y_state);
+                        unsafe {
+                            wixen_a11y::events::raise_structure_changed(
+                                &ws.uia_provider,
+                                &mut [0i32],
+                            );
+                            if ws.palette.visible {
+                                let root: IRawElementProviderFragmentRoot =
+                                    ws.uia_provider.cast().unwrap();
+                                let panel = wixen_a11y::palette_provider::PalettePanelProvider::new(
+                                    ws.window.hwnd(),
+                                    Arc::clone(&ws.a11y_state),
+                                    root,
+                                );
+                                let frag: IRawElementProviderSimple = panel.into();
+                                wixen_a11y::events::raise_focus_changed(&frag);
+                            } else {
+                                wixen_a11y::events::raise_focus_changed(&ws.uia_provider);
+                            }
+                        }
+                        let active = ws.tab_mgr.active_tab().active_pane;
+                        if let Some(p) = ws.panes.get_mut(&active) {
+                            p.terminal.dirty = true;
+                        }
+                        return PostAction::None;
+                    }
+                    if action == "settings" || action == "open_settings" {
+                        ws.settings_ui.toggle();
+                        update_settings_a11y(&ws.settings_ui, &ws.a11y_state);
+                        // Fire structure changed so NVDA re-queries the tree,
+                        // then fire focus on the settings panel (or terminal
+                        // root when closing).
+                        unsafe {
+                            wixen_a11y::events::raise_structure_changed(
+                                &ws.uia_provider,
+                                &mut [0i32],
+                            );
+                            if ws.settings_ui.visible {
+                                // Create a settings panel provider and fire focus
+                                let root: IRawElementProviderFragmentRoot =
+                                    ws.uia_provider.cast().unwrap();
+                                let panel =
+                                    wixen_a11y::settings_provider::SettingsPanelProvider::new(
+                                        ws.window.hwnd(),
+                                        Arc::clone(&ws.a11y_state),
+                                        root,
+                                    );
+                                let frag: IRawElementProviderSimple = panel.into();
+                                wixen_a11y::events::raise_focus_changed(&frag);
+                            } else {
+                                // Return focus to terminal
+                                wixen_a11y::events::raise_focus_changed(&ws.uia_provider);
+                            }
+                        }
+                        let active = ws.tab_mgr.active_tab().active_pane;
+                        if let Some(p) = ws.panes.get_mut(&active) {
+                            p.terminal.dirty = true;
+                        }
+                        return PostAction::None;
+                    }
+
+                    // Actions needing loop-local state (macros, history
+                    // overlay, tray) are handled here before the generic
+                    // dispatcher.
+                    if handle_local_action(
+                        &action,
+                        args.as_deref(),
+                        &g.macro_store,
+                        &mut ws.history_browser,
+                        &ws.tab_mgr,
+                        &mut ws.panes,
+                        &mut ws.window,
+                        &mut g.tray_icon,
+                        &ws.uia_provider,
+                        g.config.accessibility.screen_reader_output,
+                    ) {
+                        // A local action may have toggled the history
+                        // browser (show_history) — refresh the UIA snapshot.
+                        update_overlay_a11y(&ws.palette, &ws.history_browser, &ws.a11y_state);
+                        let active = ws.tab_mgr.active_tab().active_pane;
+                        if let Some(p) = ws.panes.get_mut(&active) {
+                            p.terminal.dirty = true;
+                        }
+                        return PostAction::None;
+                    }
+
+                    let result = dispatch_keybinding_action(
+                        &action,
+                        &mut ws.tab_mgr,
+                        &mut ws.panes,
+                        &g.config,
+                        &mut ws.close_requested,
+                        ws.current_cols,
+                        ws.current_rows,
+                        &mut ws.window,
+                        &ws.base_title,
+                        &g.plugin_lua,
+                        &g.plugin_registry,
+                    );
+                    if let DispatchResult::ModeToggled { mode, active } = result {
+                        announce_mode_toggle(
+                            mode,
+                            active,
+                            &ws.uia_provider,
+                            g.config.accessibility.screen_reader_output,
+                            &g.audio_config,
+                        );
+                    }
+                    let deferred_handled = handle_deferred_action(
+                        result,
+                        &mut g.config,
+                        &mut ws.renderer,
+                        &ws.window,
+                        &mut ws.cell_width,
+                        &mut ws.cell_height,
+                        &mut ws.current_cols,
+                        &mut ws.current_rows,
+                        &mut ws.panes,
+                        &mut g.config_watcher,
+                        &g.cfg_path,
+                    );
+                    if deferred_handled {
+                        return PostAction::None;
+                    }
+                }
+
+                // ---- Normal key sequences → active pane's PTY ----
+                let active = ws.tab_mgr.active_tab().active_pane;
+                if let Some(pane) = ws.panes.get_mut(&active)
+                    && !pane.search_mode
+                    && !ws.tab_mgr.active_tab().pane_tree.is_read_only(active)
+                {
+                    // Track arrow keys for boundary detection.
+                    // Suppress if we already know we're at a boundary.
+                    let nav = match vk {
+                        0x25 if !shift && !ctrl && !alt => Some(NavKey::Left),
+                        0x27 if !shift && !ctrl && !alt => Some(NavKey::Right),
+                        0x26 if !shift && !ctrl && !alt => Some(NavKey::Up),
+                        0x28 if !shift && !ctrl && !alt => Some(NavKey::Down),
+                        _ => None,
+                    };
+
+                    // Suppress at known boundaries
+                    let suppress = match nav {
+                        Some(NavKey::Up) if pane.at_history_start => true,
+                        Some(NavKey::Down) if pane.at_history_end => true,
+                        _ => false,
+                    };
+
+                    if suppress {
+                        play_event(&g.audio_config, AudioEvent::HistoryBoundary);
+                    } else {
+                        // Record which nav key for frame loop boundary detection
+                        if nav.is_some() {
+                            pane.last_nav_key = nav;
+                            pane.prev_cursor_col = pane.terminal.grid.cursor.col;
+                        }
+
+                        // Clear boundary flags on movement in opposite direction
+                        // or on any non-arrow key (typing resets history state)
+                        match nav {
+                            Some(NavKey::Down) => pane.at_history_start = false,
+                            Some(NavKey::Up) => pane.at_history_end = false,
+                            None => {
+                                pane.at_history_start = false;
+                                pane.at_history_end = false;
+                            }
+                            _ => {}
+                        }
+
+                        if let Some(seq) = wixen_core::keyboard::encode_key_with_kitty(
+                            vk,
+                            shift,
+                            ctrl,
+                            alt,
+                            pane.terminal.modes.cursor_keys_application,
+                            pane.terminal.kitty_keyboard_flags(),
+                        ) && let Err(e) = pane.pty.write(&seq)
+                        {
+                            error!("PTY write error: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+        WindowEvent::CharInput(ch) => {
+            // Palette mode: printable chars go to palette query
+            if ws.palette.visible {
+                if ch >= ' ' && !ch.is_control() {
+                    ws.palette.push_char(ch);
+                    update_overlay_a11y(&ws.palette, &ws.history_browser, &ws.a11y_state);
+                    let active = ws.tab_mgr.active_tab().active_pane;
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
+                }
+                return PostAction::None;
+            }
+
+            // History browser mode: printable chars refine the query
+            if ws.history_browser.visible {
+                if ch >= ' ' && !ch.is_control() {
+                    let active = ws.tab_mgr.active_tab().active_pane;
+                    if let Some(pane) = ws.panes.get(&active) {
+                        ws.history_browser.push_char(&pane.command_history, ch);
+                    }
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
+                }
+                return PostAction::None;
+            }
+
+            // Settings mode: printable chars go to settings field editing
+            if ws.settings_ui.visible && ws.settings_ui.editing {
+                if ch >= ' ' && !ch.is_control() {
+                    ws.settings_ui.push_char(ch);
+                    update_settings_a11y(&ws.settings_ui, &ws.a11y_state);
+                    let active = ws.tab_mgr.active_tab().active_pane;
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
+                }
+                return PostAction::None;
+            }
+
+            let active = ws.tab_mgr.active_tab().active_pane;
+            let pane = match ws.panes.get_mut(&active) {
+                Some(p) => p,
+                None => return PostAction::None,
+            };
+
+            // Search mode: printable chars go to the search buffer
+            if pane.search_mode {
+                if ch >= ' ' && !ch.is_control() {
+                    pane.search_buffer.push(ch);
+                    pane.search_engine.search(
+                        &pane.terminal,
+                        &pane.search_buffer,
+                        SearchOptions::default(),
+                    );
+                    update_search_title(
+                        ws.window.hwnd(),
+                        &ws.base_title,
+                        &pane.search_buffer,
+                        &pane.search_engine,
+                    );
+                    pane.terminal.dirty = true;
+                }
+                return PostAction::None;
+            }
+
+            // Ctrl+C copies when there's a selection, otherwise sends to PTY
+            if ch == '\x03' && pane.terminal.selection.is_some() {
+                if let Some(text) = pane.terminal.selected_text() {
+                    clipboard_set(&text);
+                }
+                pane.terminal.clear_selection();
+                return PostAction::None;
+            }
+
+            // Ctrl+V pastes from clipboard
+            if ch == '\x16' {
+                if let Some(text) = clipboard_get() {
+                    if pane.terminal.modes.bracketed_paste {
+                        let _ = pane.pty.write(b"\x1b[200~");
+                        let _ = pane.pty.write(text.as_bytes());
+                        let _ = pane.pty.write(b"\x1b[201~");
+                    } else {
+                        let _ = pane.pty.write(text.as_bytes());
+                    }
+                }
+                return PostAction::None;
+            }
+
+            // Read-only panes block character input to PTY
+            if ws.tab_mgr.active_tab().pane_tree.is_read_only(active) {
+                trace!("Read-only pane — char input blocked");
+                return PostAction::None;
+            }
+
+            let mut buf = [0u8; 4];
+            let s = ch.encode_utf8(&mut buf);
+            if let Err(e) = pane.pty.write(s.as_bytes()) {
+                error!("PTY write error: {}", e);
+            }
+            // Broadcast: send to all other panes too
+            if ws.broadcast_input {
+                let bytes = s.as_bytes().to_vec();
+                let skip = active;
+                // End the borrow on `pane` by shadowing it
+                #[allow(unused_variables)]
+                let pane = ();
+                for (&pid, p) in ws.panes.iter_mut() {
+                    if pid != skip {
+                        let _ = p.pty.write(&bytes);
+                    }
+                }
+            }
+        }
+        WindowEvent::DoubleClick { x, y } => {
+            let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+            if (y as f32) < tbh && tbh > 0.0 {
+                // Double-click in tab bar → rename the clicked tab
+                ws.palette.open_input("Enter new tab name:");
+                update_overlay_a11y(&ws.palette, &ws.history_browser, &ws.a11y_state);
+                let active = ws.tab_mgr.active_tab().active_pane;
+                if let Some(p) = ws.panes.get_mut(&active) {
+                    p.terminal.dirty = true;
+                }
+            } else {
+                // Double-click in terminal → word selection
+                let col = ((x as f32 - pad_left) / ws.cell_width) as usize;
+                let row = ((y as f32 - tbh - pad_top) / ws.cell_height) as usize;
+                let active = ws.tab_mgr.active_tab().active_pane;
+                if let Some(pane) = ws.panes.get_mut(&active) {
+                    pane.terminal.start_selection(col, row, SelectionType::Word);
+                }
+                // Record for triple-click detection
+                ws.last_dblclick = Some((Instant::now(), x, y));
+            }
+        }
+        WindowEvent::MouseDown { button, x, y, mods } => {
+            let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+
+            // Triple-click detection: left-click shortly after double-click
+            // at roughly the same position → line selection
+            if matches!(button, wixen_ui::window::MouseButton::Left) {
+                if let Some((t, dx, dy)) = ws.last_dblclick {
+                    let elapsed = t.elapsed().as_millis();
+                    let near = (x - dx).abs() < 10 && (y - dy).abs() < 10;
+                    if elapsed < 500 && near && (y as f32) >= tbh {
+                        ws.last_dblclick = None;
+                        let col = ((x as f32 - pad_left) / ws.cell_width) as usize;
+                        let row = ((y as f32 - tbh - pad_top) / ws.cell_height) as usize;
+                        let active = ws.tab_mgr.active_tab().active_pane;
+                        if let Some(pane) = ws.panes.get_mut(&active) {
+                            pane.terminal.start_selection(col, row, SelectionType::Line);
+                        }
+                        return PostAction::None;
+                    }
+                }
+                ws.last_dblclick = None;
+            }
+            if (y as f32) < tbh && tbh > 0.0 {
+                // Middle-click in tab bar → close the clicked tab
+                if matches!(button, wixen_ui::window::MouseButton::Middle) {
+                    let tab_items = ws.tab_mgr.tab_bar_items();
+                    let tab_width = ws.renderer.font_metrics().cell_width * ws.current_cols as f32
+                        / tab_items.len().max(1) as f32;
+                    let clicked_idx = (x as f32 / tab_width).floor() as usize;
+                    if let Some((tab_id, _, _, _, _)) = tab_items.get(clicked_idx) {
+                        let tab_id = *tab_id;
+                        if ws.tab_mgr.close_tab(tab_id) {
+                            let new_active = ws.tab_mgr.active_tab().active_pane;
+                            if let Some(p) = ws.panes.get_mut(&new_active) {
+                                p.terminal.dirty = true;
+                            }
+                            dispatch_plugin_event(
+                                &g.plugin_lua,
+                                &g.plugin_registry,
+                                &PluginEvent::TabClosed { tab_id: tab_id.0 },
+                            );
+                        }
+                    }
+                } else {
+                    // Left-click in tab bar — select the clicked tab + start drag
+                    let tab_items = ws.tab_mgr.tab_bar_items();
+                    let tab_width = ws.renderer.font_metrics().cell_width * ws.current_cols as f32
+                        / tab_items.len().max(1) as f32;
+                    let clicked_idx = (x as f32 / tab_width).floor() as usize;
+                    if let Some((tab_id, _, _, _, _)) = tab_items.get(clicked_idx) {
+                        let tab_id = *tab_id;
+                        ws.tab_mgr.select_tab(tab_id);
+                        ws.tab_drag = Some((clicked_idx, x));
+                        let new_active = ws.tab_mgr.active_tab().active_pane;
+                        if let Some(p) = ws.panes.get_mut(&new_active) {
+                            p.terminal.dirty = true;
+                        }
+                    }
+                }
+            } else {
+                // Hit-test against pane layout to find the target pane
+                let content_w = {
+                    let (ww, _) = ws.window.client_size();
+                    ww as f32 - pad_left - g.config.window.padding.right as f32
+                };
+                let content_h = {
+                    let (_, wh) = ws.window.client_size();
+                    wh as f32 - tbh - pad_top - g.config.window.padding.bottom as f32
+                };
+                let norm_x = (x as f32 - pad_left) / content_w.max(1.0);
+                let norm_y = (y as f32 - tbh - pad_top) / content_h.max(1.0);
+                let hit_pane = ws
+                    .tab_mgr
+                    .active_tab()
+                    .pane_tree
+                    .pane_at_point(norm_x, norm_y);
+                let target_pane_id = hit_pane.unwrap_or(ws.tab_mgr.active_tab().active_pane);
+
+                // Left-click in a non-active pane → switch focus to it
+                if matches!(button, wixen_ui::window::MouseButton::Left)
+                    && target_pane_id != ws.tab_mgr.active_tab().active_pane
+                {
+                    ws.tab_mgr.set_active_pane(target_pane_id);
+                }
+
+                // Compute grid coordinates relative to the hit pane's rect
+                let pane_rects = ws.tab_mgr.active_tab().pane_tree.layout();
+                let pane_rect = pane_rects.iter().find(|r| r.pane_id == target_pane_id);
+                let (pane_px, pane_py) = if let Some(pr) = pane_rect {
+                    (pad_left + pr.x * content_w, pad_top + pr.y * content_h)
+                } else {
+                    (pad_left, pad_top)
+                };
+                let col = ((x as f32 - pane_px) / ws.cell_width).max(0.0) as usize;
+                let row = ((y as f32 - tbh - pane_py) / ws.cell_height).max(0.0) as usize;
+
+                if let Some(pane) = ws.panes.get_mut(&target_pane_id) {
+                    let ctrl = mods & 16 != 0;
+                    let shift = mods & 4 != 0;
+
+                    // Ctrl+click: open hyperlink if present.
+                    if ctrl && matches!(button, wixen_ui::window::MouseButton::Left) {
+                        if let Some(url) = pane.terminal.hyperlink_at(col, row) {
+                            open_url(&url);
+                            // Don't start selection or report to PTY.
+                        } else {
+                            // No URL — fall through to normal handling.
+                        }
+                    } else {
+                        let mouse_mode = pane.terminal.modes.mouse_tracking;
+                        if mouse_mode != MouseMode::None && !shift {
+                            // Report to PTY
+                            let mb = ui_to_mouse_button(button);
+                            let mm = mods_to_mouse_mods(mods);
+                            send_mouse_event(pane, mb, mm, col, row, true);
+                        } else if matches!(button, wixen_ui::window::MouseButton::Right) {
+                            // Right-click → show context menu
+                            let has_sel = pane.terminal.selection.is_some();
+                            ws.window.show_context_menu(x, y, has_sel);
+                        } else {
+                            // UI selection (Alt+click = block/rectangular selection)
+                            let alt = mods & 8 != 0;
+                            let sel_type = if alt {
+                                SelectionType::Block
+                            } else {
+                                SelectionType::Normal
+                            };
+                            ws.mouse_dragging = true;
+                            pane.terminal.start_selection(col, row, sel_type);
+                        }
+                    }
+                }
+            }
+        }
+        WindowEvent::MouseMove { x, y, mods } => {
+            // Tab drag reorder
+            if let Some((from_idx, start_x)) = ws.tab_drag {
+                let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+                if (x - start_x).abs() > 5 && (y as f32) < tbh {
+                    let tab_count = ws.tab_mgr.tab_count();
+                    let tab_width = ws.renderer.font_metrics().cell_width * ws.current_cols as f32
+                        / tab_count.max(1) as f32;
+                    let to_idx = (x as f32 / tab_width)
+                        .floor()
+                        .clamp(0.0, (tab_count - 1) as f32)
+                        as usize;
+                    if to_idx != from_idx {
+                        ws.tab_mgr.move_tab(from_idx, to_idx);
+                        ws.tab_drag = Some((to_idx, x));
+                        let active = ws.tab_mgr.active_tab().active_pane;
+                        if let Some(p) = ws.panes.get_mut(&active) {
+                            p.terminal.dirty = true;
+                        }
+                    }
+                }
+            }
+
+            let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+            let col = ((x as f32 - pad_left) / ws.cell_width).max(0.0) as usize;
+            let row = ((y as f32 - tbh - pad_top) / ws.cell_height).max(0.0) as usize;
+            let active = ws.tab_mgr.active_tab().active_pane;
+            if let Some(pane) = ws.panes.get_mut(&active) {
+                let mouse_mode = pane.terminal.modes.mouse_tracking;
+                let shift = mods & 4 != 0;
+                if mouse_mode != MouseMode::None && !shift {
+                    // Report motion when Button or Any mode
+                    let report_motion = matches!(mouse_mode, MouseMode::Button | MouseMode::Any);
+                    if report_motion {
+                        let mut mm = mods_to_mouse_mods(mods);
+                        mm.motion = true;
+                        send_mouse_event(pane, mouse::MouseButton::Left, mm, col, row, true);
+                    }
+                } else if ws.mouse_dragging {
+                    pane.terminal.update_selection(col, row);
+                }
+            }
+        }
+        WindowEvent::MouseUp { button, x, y, mods } => {
+            let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+            let col = ((x as f32 - pad_left) / ws.cell_width).max(0.0) as usize;
+            let row = ((y as f32 - tbh - pad_top) / ws.cell_height).max(0.0) as usize;
+            let active = ws.tab_mgr.active_tab().active_pane;
+            if let Some(pane) = ws.panes.get_mut(&active) {
+                let shift = mods & 4 != 0;
+                let mouse_mode = pane.terminal.modes.mouse_tracking;
+                if mouse_mode != MouseMode::None && !shift {
+                    let mb = ui_to_mouse_button(button);
+                    let mm = mods_to_mouse_mods(mods);
+                    send_mouse_event(pane, mb, mm, col, row, false);
+                }
+            }
+            ws.mouse_dragging = false;
+            ws.tab_drag = None;
+        }
+        WindowEvent::MouseWheel { delta, x, y, mods } => {
+            let active = ws.tab_mgr.active_tab().active_pane;
+            if let Some(pane) = ws.panes.get_mut(&active) {
+                let shift = mods & 4 != 0;
+                let mouse_mode = pane.terminal.modes.mouse_tracking;
+                if mouse_mode != MouseMode::None && !shift {
+                    let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+                    let col = ((x as f32 - pad_left) / ws.cell_width).max(0.0) as usize;
+                    let row = ((y as f32 - tbh - pad_top) / ws.cell_height).max(0.0) as usize;
+                    let mb = if delta > 0 {
+                        mouse::MouseButton::WheelUp
+                    } else {
+                        mouse::MouseButton::WheelDown
+                    };
+                    let mm = mods_to_mouse_mods(mods);
+                    send_mouse_event(pane, mb, mm, col, row, true);
+                } else if pane.terminal.modes.alternate_screen {
+                    // In alternate screen (vim, less, etc.), translate
+                    // scroll to arrow key presses so the app handles it
+                    let count = delta.unsigned_abs() * 3;
+                    let key = if delta > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                    for _ in 0..count {
+                        let _ = pane.pty.write(key);
+                    }
+                } else {
+                    let lines = delta as i32 * 3;
+                    pane.terminal.scroll_viewport(lines);
+                }
+            }
+        }
+        WindowEvent::FocusGained => {
+            ws.window_focused = true;
+            if let Some(mut s) = ws.a11y_state.try_write() {
+                s.has_focus = true;
+            }
+        }
+        WindowEvent::FocusLost => {
+            ws.window_focused = false;
+            if let Some(mut s) = ws.a11y_state.try_write() {
+                s.has_focus = false;
+            }
+        }
+        WindowEvent::QuakeToggle => {
+            ws.window.toggle_visibility();
+        }
+        WindowEvent::TrayClick(click) => {
+            use wixen_ui::tray::TrayClickEvent;
+            match click {
+                TrayClickEvent::LeftClick | TrayClickEvent::DoubleClick => {
+                    ws.window.toggle_visibility();
+                }
+                TrayClickEvent::RightClick => {
+                    // Context menu is defined but not yet displayed.
+                }
+            }
+        }
+        WindowEvent::FilesDropped(paths) => {
+            // Paste dropped file paths into the active pane.
+            let active = ws.tab_mgr.active_tab().active_pane;
+            if let Some(pane) = ws.panes.get_mut(&active) {
+                let text = wixen_ui::window::format_dropped_paths(&paths);
+                if pane.terminal.modes.bracketed_paste {
+                    let _ = pane.pty.write(b"\x1b[200~");
+                    let _ = pane.pty.write(text.as_bytes());
+                    let _ = pane.pty.write(b"\x1b[201~");
+                } else {
+                    let _ = pane.pty.write(text.as_bytes());
+                }
+            }
+        }
+        WindowEvent::ContextMenu(action) => {
+            use wixen_ui::window::ContextMenuAction;
+            let active = ws.tab_mgr.active_tab().active_pane;
+            match action {
+                ContextMenuAction::Copy => {
+                    if let Some(pane) = ws.panes.get_mut(&active) {
                         if let Some(text) = pane.terminal.selected_text() {
                             clipboard_set(&text);
                         }
                         pane.terminal.clear_selection();
-                        continue;
-                    }
-
-                    // Ctrl+V pastes from clipboard
-                    if ch == '\x16' {
-                        if let Some(text) = clipboard_get() {
-                            if pane.terminal.modes.bracketed_paste {
-                                let _ = pane.pty.write(b"\x1b[200~");
-                                let _ = pane.pty.write(text.as_bytes());
-                                let _ = pane.pty.write(b"\x1b[201~");
-                            } else {
-                                let _ = pane.pty.write(text.as_bytes());
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Read-only panes block character input to PTY
-                    if tab_mgr.active_tab().pane_tree.is_read_only(active) {
-                        trace!("Read-only pane — char input blocked");
-                        continue;
-                    }
-
-                    let mut buf = [0u8; 4];
-                    let s = ch.encode_utf8(&mut buf);
-                    if let Err(e) = pane.pty.write(s.as_bytes()) {
-                        error!("PTY write error: {}", e);
-                    }
-                    // Broadcast: send to all other panes too
-                    if broadcast_input {
-                        let bytes = s.as_bytes().to_vec();
-                        let skip = active;
-                        // End the borrow on `pane` by shadowing it
-                        #[allow(unused_variables)]
-                        let pane = ();
-                        for (&pid, p) in panes.iter_mut() {
-                            if pid != skip {
-                                let _ = p.pty.write(&bytes);
-                            }
-                        }
+                        pane.terminal.dirty = true;
                     }
                 }
-                WindowEvent::DoubleClick { x, y } => {
-                    let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-                    if (y as f32) < tbh && tbh > 0.0 {
-                        // Double-click in tab bar → rename the clicked tab
-                        palette.open_input("Enter new tab name:");
-                        update_overlay_a11y(&palette, &history_browser, &a11y_state);
-                        let active = tab_mgr.active_tab().active_pane;
-                        if let Some(p) = panes.get_mut(&active) {
-                            p.terminal.dirty = true;
-                        }
-                    } else {
-                        // Double-click in terminal → word selection
-                        let col = ((x as f32 - pad_left) / cell_width) as usize;
-                        let row = ((y as f32 - tbh - pad_top) / cell_height) as usize;
-                        let active = tab_mgr.active_tab().active_pane;
-                        if let Some(pane) = panes.get_mut(&active) {
-                            pane.terminal.start_selection(col, row, SelectionType::Word);
-                        }
-                        // Record for triple-click detection
-                        last_dblclick = Some((Instant::now(), x, y));
-                    }
-                }
-                WindowEvent::MouseDown { button, x, y, mods } => {
-                    let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-
-                    // Triple-click detection: left-click shortly after double-click
-                    // at roughly the same position → line selection
-                    if matches!(button, wixen_ui::window::MouseButton::Left) {
-                        if let Some((t, dx, dy)) = last_dblclick {
-                            let elapsed = t.elapsed().as_millis();
-                            let near = (x - dx).abs() < 10 && (y - dy).abs() < 10;
-                            if elapsed < 500 && near && (y as f32) >= tbh {
-                                last_dblclick = None;
-                                let col = ((x as f32 - pad_left) / cell_width) as usize;
-                                let row = ((y as f32 - tbh - pad_top) / cell_height) as usize;
-                                let active = tab_mgr.active_tab().active_pane;
-                                if let Some(pane) = panes.get_mut(&active) {
-                                    pane.terminal.start_selection(col, row, SelectionType::Line);
-                                }
-                                continue;
-                            }
-                        }
-                        last_dblclick = None;
-                    }
-                    if (y as f32) < tbh && tbh > 0.0 {
-                        // Middle-click in tab bar → close the clicked tab
-                        if matches!(button, wixen_ui::window::MouseButton::Middle) {
-                            let tab_items = tab_mgr.tab_bar_items();
-                            let tab_width = renderer.font_metrics().cell_width
-                                * current_cols as f32
-                                / tab_items.len().max(1) as f32;
-                            let clicked_idx = (x as f32 / tab_width).floor() as usize;
-                            if let Some((tab_id, _, _, _, _)) = tab_items.get(clicked_idx) {
-                                let tab_id = *tab_id;
-                                if tab_mgr.close_tab(tab_id) {
-                                    let new_active = tab_mgr.active_tab().active_pane;
-                                    if let Some(p) = panes.get_mut(&new_active) {
-                                        p.terminal.dirty = true;
-                                    }
-                                    dispatch_plugin_event(
-                                        &plugin_lua,
-                                        &plugin_registry,
-                                        &PluginEvent::TabClosed { tab_id: tab_id.0 },
-                                    );
-                                }
-                            }
-                        } else {
-                            // Left-click in tab bar — select the clicked tab + start drag
-                            let tab_items = tab_mgr.tab_bar_items();
-                            let tab_width = renderer.font_metrics().cell_width
-                                * current_cols as f32
-                                / tab_items.len().max(1) as f32;
-                            let clicked_idx = (x as f32 / tab_width).floor() as usize;
-                            if let Some((tab_id, _, _, _, _)) = tab_items.get(clicked_idx) {
-                                let tab_id = *tab_id;
-                                tab_mgr.select_tab(tab_id);
-                                tab_drag = Some((clicked_idx, x));
-                                let new_active = tab_mgr.active_tab().active_pane;
-                                if let Some(p) = panes.get_mut(&new_active) {
-                                    p.terminal.dirty = true;
-                                }
-                            }
-                        }
-                    } else {
-                        // Hit-test against pane layout to find the target pane
-                        let content_w = {
-                            let (ww, _) = window.client_size();
-                            ww as f32 - pad_left - config.window.padding.right as f32
-                        };
-                        let content_h = {
-                            let (_, wh) = window.client_size();
-                            wh as f32 - tbh - pad_top - config.window.padding.bottom as f32
-                        };
-                        let norm_x = (x as f32 - pad_left) / content_w.max(1.0);
-                        let norm_y = (y as f32 - tbh - pad_top) / content_h.max(1.0);
-                        let hit_pane = tab_mgr.active_tab().pane_tree.pane_at_point(norm_x, norm_y);
-                        let target_pane_id = hit_pane.unwrap_or(tab_mgr.active_tab().active_pane);
-
-                        // Left-click in a non-active pane → switch focus to it
-                        if matches!(button, wixen_ui::window::MouseButton::Left)
-                            && target_pane_id != tab_mgr.active_tab().active_pane
-                        {
-                            tab_mgr.set_active_pane(target_pane_id);
-                        }
-
-                        // Compute grid coordinates relative to the hit pane's rect
-                        let pane_rects = tab_mgr.active_tab().pane_tree.layout();
-                        let pane_rect = pane_rects.iter().find(|r| r.pane_id == target_pane_id);
-                        let (pane_px, pane_py) = if let Some(pr) = pane_rect {
-                            (pad_left + pr.x * content_w, pad_top + pr.y * content_h)
-                        } else {
-                            (pad_left, pad_top)
-                        };
-                        let col = ((x as f32 - pane_px) / cell_width).max(0.0) as usize;
-                        let row = ((y as f32 - tbh - pane_py) / cell_height).max(0.0) as usize;
-
-                        if let Some(pane) = panes.get_mut(&target_pane_id) {
-                            let ctrl = mods & 16 != 0;
-                            let shift = mods & 4 != 0;
-
-                            // Ctrl+click: open hyperlink if present.
-                            if ctrl && matches!(button, wixen_ui::window::MouseButton::Left) {
-                                if let Some(url) = pane.terminal.hyperlink_at(col, row) {
-                                    open_url(&url);
-                                    // Don't start selection or report to PTY.
-                                } else {
-                                    // No URL — fall through to normal handling.
-                                }
-                            } else {
-                                let mouse_mode = pane.terminal.modes.mouse_tracking;
-                                if mouse_mode != MouseMode::None && !shift {
-                                    // Report to PTY
-                                    let mb = ui_to_mouse_button(button);
-                                    let mm = mods_to_mouse_mods(mods);
-                                    send_mouse_event(pane, mb, mm, col, row, true);
-                                } else if matches!(button, wixen_ui::window::MouseButton::Right) {
-                                    // Right-click → show context menu
-                                    let has_sel = pane.terminal.selection.is_some();
-                                    window.show_context_menu(x, y, has_sel);
-                                } else {
-                                    // UI selection (Alt+click = block/rectangular selection)
-                                    let alt = mods & 8 != 0;
-                                    let sel_type = if alt {
-                                        SelectionType::Block
-                                    } else {
-                                        SelectionType::Normal
-                                    };
-                                    mouse_dragging = true;
-                                    pane.terminal.start_selection(col, row, sel_type);
-                                }
-                            }
-                        }
-                    }
-                }
-                WindowEvent::MouseMove { x, y, mods } => {
-                    // Tab drag reorder
-                    if let Some((from_idx, start_x)) = tab_drag {
-                        let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-                        if (x - start_x).abs() > 5 && (y as f32) < tbh {
-                            let tab_count = tab_mgr.tab_count();
-                            let tab_width = renderer.font_metrics().cell_width
-                                * current_cols as f32
-                                / tab_count.max(1) as f32;
-                            let to_idx = (x as f32 / tab_width)
-                                .floor()
-                                .clamp(0.0, (tab_count - 1) as f32)
-                                as usize;
-                            if to_idx != from_idx {
-                                tab_mgr.move_tab(from_idx, to_idx);
-                                tab_drag = Some((to_idx, x));
-                                let active = tab_mgr.active_tab().active_pane;
-                                if let Some(p) = panes.get_mut(&active) {
-                                    p.terminal.dirty = true;
-                                }
-                            }
-                        }
-                    }
-
-                    let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-                    let col = ((x as f32 - pad_left) / cell_width).max(0.0) as usize;
-                    let row = ((y as f32 - tbh - pad_top) / cell_height).max(0.0) as usize;
-                    let active = tab_mgr.active_tab().active_pane;
-                    if let Some(pane) = panes.get_mut(&active) {
-                        let mouse_mode = pane.terminal.modes.mouse_tracking;
-                        let shift = mods & 4 != 0;
-                        if mouse_mode != MouseMode::None && !shift {
-                            // Report motion when Button or Any mode
-                            let report_motion =
-                                matches!(mouse_mode, MouseMode::Button | MouseMode::Any);
-                            if report_motion {
-                                let mut mm = mods_to_mouse_mods(mods);
-                                mm.motion = true;
-                                send_mouse_event(
-                                    pane,
-                                    mouse::MouseButton::Left,
-                                    mm,
-                                    col,
-                                    row,
-                                    true,
-                                );
-                            }
-                        } else if mouse_dragging {
-                            pane.terminal.update_selection(col, row);
-                        }
-                    }
-                }
-                WindowEvent::MouseUp { button, x, y, mods } => {
-                    let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-                    let col = ((x as f32 - pad_left) / cell_width).max(0.0) as usize;
-                    let row = ((y as f32 - tbh - pad_top) / cell_height).max(0.0) as usize;
-                    let active = tab_mgr.active_tab().active_pane;
-                    if let Some(pane) = panes.get_mut(&active) {
-                        let shift = mods & 4 != 0;
-                        let mouse_mode = pane.terminal.modes.mouse_tracking;
-                        if mouse_mode != MouseMode::None && !shift {
-                            let mb = ui_to_mouse_button(button);
-                            let mm = mods_to_mouse_mods(mods);
-                            send_mouse_event(pane, mb, mm, col, row, false);
-                        }
-                    }
-                    mouse_dragging = false;
-                    tab_drag = None;
-                }
-                WindowEvent::MouseWheel { delta, x, y, mods } => {
-                    let active = tab_mgr.active_tab().active_pane;
-                    if let Some(pane) = panes.get_mut(&active) {
-                        let shift = mods & 4 != 0;
-                        let mouse_mode = pane.terminal.modes.mouse_tracking;
-                        if mouse_mode != MouseMode::None && !shift {
-                            let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-                            let col = ((x as f32 - pad_left) / cell_width).max(0.0) as usize;
-                            let row = ((y as f32 - tbh - pad_top) / cell_height).max(0.0) as usize;
-                            let mb = if delta > 0 {
-                                mouse::MouseButton::WheelUp
-                            } else {
-                                mouse::MouseButton::WheelDown
-                            };
-                            let mm = mods_to_mouse_mods(mods);
-                            send_mouse_event(pane, mb, mm, col, row, true);
-                        } else if pane.terminal.modes.alternate_screen {
-                            // In alternate screen (vim, less, etc.), translate
-                            // scroll to arrow key presses so the app handles it
-                            let count = delta.unsigned_abs() * 3;
-                            let key = if delta > 0 { b"\x1b[A" } else { b"\x1b[B" };
-                            for _ in 0..count {
-                                let _ = pane.pty.write(key);
-                            }
-                        } else {
-                            let lines = delta as i32 * 3;
-                            pane.terminal.scroll_viewport(lines);
-                        }
-                    }
-                }
-                WindowEvent::FocusGained => {
-                    window_focused = true;
-                    if let Some(mut s) = a11y_state.try_write() {
-                        s.has_focus = true;
-                    }
-                }
-                WindowEvent::FocusLost => {
-                    window_focused = false;
-                    if let Some(mut s) = a11y_state.try_write() {
-                        s.has_focus = false;
-                    }
-                }
-                WindowEvent::QuakeToggle => {
-                    window.toggle_visibility();
-                }
-                WindowEvent::TrayClick(click) => {
-                    use wixen_ui::tray::TrayClickEvent;
-                    match click {
-                        TrayClickEvent::LeftClick | TrayClickEvent::DoubleClick => {
-                            window.toggle_visibility();
-                        }
-                        TrayClickEvent::RightClick => {
-                            // Context menu is defined but not yet displayed.
-                        }
-                    }
-                }
-                WindowEvent::FilesDropped(paths) => {
-                    // Paste dropped file paths into the active pane.
-                    let active = tab_mgr.active_tab().active_pane;
-                    if let Some(pane) = panes.get_mut(&active) {
-                        let text = wixen_ui::window::format_dropped_paths(&paths);
+                ContextMenuAction::Paste => {
+                    if let Some(pane) = ws.panes.get_mut(&active)
+                        && let Some(text) = clipboard_get()
+                    {
                         if pane.terminal.modes.bracketed_paste {
                             let _ = pane.pty.write(b"\x1b[200~");
                             let _ = pane.pty.write(text.as_bytes());
@@ -1796,1059 +2423,874 @@ fn main() {
                         }
                     }
                 }
-                WindowEvent::ContextMenu(action) => {
-                    use wixen_ui::window::ContextMenuAction;
-                    let active = tab_mgr.active_tab().active_pane;
-                    match action {
-                        ContextMenuAction::Copy => {
-                            if let Some(pane) = panes.get_mut(&active) {
-                                if let Some(text) = pane.terminal.selected_text() {
-                                    clipboard_set(&text);
-                                }
-                                pane.terminal.clear_selection();
-                                pane.terminal.dirty = true;
-                            }
-                        }
-                        ContextMenuAction::Paste => {
-                            if let Some(pane) = panes.get_mut(&active)
-                                && let Some(text) = clipboard_get()
-                            {
-                                if pane.terminal.modes.bracketed_paste {
-                                    let _ = pane.pty.write(b"\x1b[200~");
-                                    let _ = pane.pty.write(text.as_bytes());
-                                    let _ = pane.pty.write(b"\x1b[201~");
-                                } else {
-                                    let _ = pane.pty.write(text.as_bytes());
-                                }
-                            }
-                        }
-                        ContextMenuAction::SelectAll => {
-                            if let Some(pane) = panes.get_mut(&active) {
-                                let rows = pane.terminal.grid.rows;
-                                let cols = pane.terminal.grid.cols;
-                                pane.terminal.start_selection(0, 0, SelectionType::Normal);
-                                pane.terminal.update_selection(cols - 1, rows - 1);
-                                pane.terminal.dirty = true;
-                            }
-                        }
-                        ContextMenuAction::Search => {
-                            if let Some(pane) = panes.get_mut(&active) {
-                                pane.search_mode = !pane.search_mode;
-                                if !pane.search_mode {
-                                    pane.search_engine.clear();
-                                    pane.search_buffer.clear();
-                                    set_window_title(window.hwnd(), &base_title);
-                                } else {
-                                    set_window_title(
-                                        window.hwnd(),
-                                        &format!("{} — Search: _", base_title),
-                                    );
-                                }
-                                pane.terminal.dirty = true;
-                            }
-                        }
-                        ContextMenuAction::SplitHorizontal | ContextMenuAction::SplitVertical => {
-                            // Pane splitting is tracked in the data model.
-                            // Full rendering support for split panes is deferred.
-                            info!(?action, "Pane split requested (render not yet wired)");
-                        }
-                        ContextMenuAction::NewTab | ContextMenuAction::CloseTab => {
-                            let name = match action {
-                                ContextMenuAction::NewTab => "new_tab",
-                                _ => "close_tab",
-                            };
-                            let result = dispatch_keybinding_action(
-                                name,
-                                &mut tab_mgr,
-                                &mut panes,
-                                &config,
-                                &mut running,
-                                current_cols,
-                                current_rows,
-                                &mut window,
-                                &base_title,
-                                &plugin_lua,
-                                &plugin_registry,
-                            );
-                            handle_deferred_action(
-                                result,
-                                &mut config,
-                                &mut renderer,
-                                &window,
-                                &mut cell_width,
-                                &mut cell_height,
-                                &mut current_cols,
-                                &mut current_rows,
-                                &mut panes,
-                                &mut config_watcher,
-                                &cfg_path,
-                            );
-                        }
-                        ContextMenuAction::Settings => {
-                            settings_ui.toggle();
-                            update_settings_a11y(&settings_ui, &a11y_state);
-                            unsafe {
-                                wixen_a11y::events::raise_structure_changed(
-                                    &uia_provider,
-                                    &mut [0i32],
-                                );
-                                if settings_ui.visible {
-                                    let root: IRawElementProviderFragmentRoot =
-                                        uia_provider.cast().unwrap();
-                                    let panel =
-                                        wixen_a11y::settings_provider::SettingsPanelProvider::new(
-                                            window.hwnd(),
-                                            Arc::clone(&a11y_state),
-                                            root,
-                                        );
-                                    let frag: IRawElementProviderSimple = panel.into();
-                                    wixen_a11y::events::raise_focus_changed(&frag);
-                                } else {
-                                    wixen_a11y::events::raise_focus_changed(&uia_provider);
-                                }
-                            }
-                            if let Some(p) = panes.get_mut(&active) {
-                                p.terminal.dirty = true;
-                            }
-                        }
-                    }
-                }
-                WindowEvent::DpiChanged(new_dpi) => {
-                    info!(new_dpi, "DPI changed — rebuilding font");
-                    let dpi_f32 = new_dpi as f32;
-                    if let Err(e) = renderer.rebuild_font(
-                        &config.font.family,
-                        config.font.size,
-                        dpi_f32,
-                        config.font.line_height,
-                        &config.font.fallback_fonts,
-                        config.font.ligatures,
-                        &config.font.font_path,
-                    ) {
-                        error!("Font rebuild failed on DPI change: {e}");
-                        continue;
-                    }
-                    let metrics = renderer.font_metrics();
-                    cell_width = metrics.cell_width;
-                    cell_height = metrics.cell_height;
-                    let (w, h) = window.client_size();
-                    let pad_h = config.window.padding.horizontal() as f32;
-                    let pad_v = config.window.padding.vertical() as f32;
-                    current_cols =
-                        ((w as f32 - pad_h) / cell_width).floor().clamp(1.0, 500.0) as u16;
-                    current_rows =
-                        ((h as f32 - pad_v) / cell_height).floor().clamp(1.0, 500.0) as u16;
-                    for pane in panes.values_mut() {
-                        pane.terminal
-                            .resize(current_cols as usize, current_rows as usize);
-                        if let Err(e) = pane.pty.resize(current_cols, current_rows) {
-                            error!("PTY resize error on DPI change: {}", e);
-                        }
+                ContextMenuAction::SelectAll => {
+                    if let Some(pane) = ws.panes.get_mut(&active) {
+                        let rows = pane.terminal.grid.rows;
+                        let cols = pane.terminal.grid.cols;
+                        pane.terminal.start_selection(0, 0, SelectionType::Normal);
+                        pane.terminal.update_selection(cols - 1, rows - 1);
                         pane.terminal.dirty = true;
                     }
                 }
-            }
-        }
-
-        // --- Config hot-reload ---
-        if let Some(delta) = config_watcher.poll() {
-            if delta.colors_changed {
-                let new_colors = build_color_scheme(&delta.config.colors);
-                renderer.update_colors(new_colors);
-                // Feature 7: Update contrast enforcement on config reload
-                renderer
-                    .set_min_contrast_ratio(delta.config.accessibility.min_contrast_ratio as f64);
-                // Mark all panes dirty so they re-render with new colors
-                for pane in panes.values_mut() {
-                    pane.terminal.dirty = true;
-                }
-            }
-
-            if delta.font_changed {
-                let dpi = window.dpi() as f32;
-                if let Err(e) = renderer.rebuild_font(
-                    &delta.config.font.family,
-                    delta.config.font.size,
-                    dpi,
-                    delta.config.font.line_height,
-                    &delta.config.font.fallback_fonts,
-                    delta.config.font.ligatures,
-                    &delta.config.font.font_path,
-                ) {
-                    error!("Font rebuild failed on config reload: {e}");
-                } else {
-                    // Recalculate grid dimensions with new font metrics
-                    let metrics = renderer.font_metrics();
-                    let (w, h) = window.client_size();
-                    cell_width = metrics.cell_width;
-                    cell_height = metrics.cell_height;
-                    let pad_h = config.window.padding.horizontal() as f32;
-                    let pad_v = config.window.padding.vertical() as f32;
-                    current_cols =
-                        ((w as f32 - pad_h) / cell_width).floor().clamp(1.0, 500.0) as u16;
-                    current_rows =
-                        ((h as f32 - pad_v) / cell_height).floor().clamp(1.0, 500.0) as u16;
-
-                    // Resize all panes to the new grid dimensions
-                    for pane in panes.values_mut() {
-                        pane.terminal
-                            .resize(current_cols as usize, current_rows as usize);
-                        if let Err(e) = pane.pty.resize(current_cols, current_rows) {
-                            error!("PTY resize error on font change: {}", e);
-                        }
-                        pane.terminal.dirty = true;
-                    }
-                } // else (font rebuild succeeded)
-            }
-
-            if delta.terminal_changed {
-                let new_shape = parse_cursor_style(&delta.config.terminal.cursor_style);
-                // Feature 8: Reduced motion — override blink setting when applicable
-                let reduce_motion = wixen_config::should_reduce_motion(
-                    &delta.config.accessibility.reduced_motion,
-                    wixen_ui::window::system_reduced_motion(),
-                );
-                for pane in panes.values_mut() {
-                    pane.terminal.grid.cursor.shape = new_shape;
-                    pane.terminal.grid.cursor.blinking =
-                        delta.config.terminal.cursor_blink && !reduce_motion;
-                    pane.terminal.dirty = true;
-                }
-                blink_interval_ms = delta.config.terminal.cursor_blink_ms as u128;
-            }
-
-            if delta.window_changed {
-                set_window_title(window.hwnd(), &delta.config.window.title);
-                base_title = delta.config.window.title.clone();
-                wixen_ui::window::apply_window_chrome(window.hwnd(), &delta.config.window);
-
-                // Reload background image if path changed
-                if delta.config.window.background_image != config.window.background_image
-                    || (delta.config.window.background_image_opacity
-                        - config.window.background_image_opacity)
-                        .abs()
-                        > f32::EPSILON
-                {
-                    if delta.config.window.background_image.is_empty() {
-                        renderer.clear_background_image();
-                    } else if let Ok(data) = std::fs::read(&delta.config.window.background_image) {
-                        renderer.set_background_image(
-                            &data,
-                            delta.config.window.background_image_opacity,
-                        );
-                    }
-                    // Mark panes dirty to redraw with new background
-                    for pane in panes.values_mut() {
-                        pane.terminal.dirty = true;
-                    }
-                }
-            }
-
-            if delta.keybindings_changed {
-                keybinding_map = build_keybinding_map(&delta.config);
-                info!("Keybinding map rebuilt ({} bindings)", keybinding_map.len());
-            }
-
-            // Refresh profile and SSH entries in the command palette on any config
-            // change; re-append macro entries since set_profiles/load_ssh_targets
-            // reset everything after the built-ins.
-            palette.set_profiles(&build_profile_entries(&delta.config));
-            palette.load_ssh_targets(&delta.config.ssh);
-            palette.set_macros(&macro_palette_entries(&macro_store));
-
-            // Apply visual effects when the [effects] section changed.
-            if delta.config.effects != config.effects {
-                apply_effects(&mut renderer, &delta.config.effects);
-            }
-
-            // Apply output debounce to all pane throttlers
-            for pane in panes.values_mut() {
-                pane.event_throttler
-                    .set_debounce_ms(delta.config.accessibility.output_debounce_ms);
-            }
-
-            config = delta.config;
-            audio_config = AudioConfig::from_accessibility(&config.accessibility);
-
-            // Notify plugins that configuration was reloaded.
-            dispatch_plugin_event(&plugin_lua, &plugin_registry, &PluginEvent::ConfigReloaded);
-        }
-
-        // Resolve the active pane after event processing (tab switches may have changed it)
-        let active_pane_id = tab_mgr.active_tab().active_pane;
-        let current_tab_id = tab_mgr.active_tab_id();
-
-        // Feature 5: Announce pane position on switch
-        if active_pane_id != prev_active_pane {
-            let label = wixen_ui::panes::pane_position_label(
-                &tab_mgr.active_tab().pane_tree,
-                active_pane_id,
-            );
-            unsafe {
-                raise_if_allowed(
-                    &uia_provider,
-                    &label,
-                    "pane-switch",
-                    config.accessibility.screen_reader_output,
-                    "output",
-                );
-                // Re-anchor screen reader focus on the terminal root so the
-                // newly active pane's content is what gets read next.
-                wixen_a11y::events::raise_focus_changed(&uia_provider);
-            }
-            play_event(&audio_config, AudioEvent::Navigation);
-            prev_active_pane = active_pane_id;
-        }
-
-        // Feature 6: Announce tab on switch
-        if current_tab_id != prev_active_tab_id {
-            let announcement = wixen_ui::tabs::tab_announcement(&tab_mgr, current_tab_id);
-            if !announcement.is_empty() {
-                unsafe {
-                    raise_if_allowed(
-                        &uia_provider,
-                        &announcement,
-                        "tab-switch",
-                        config.accessibility.screen_reader_output,
-                        "output",
-                    );
-                }
-                play_event(&audio_config, AudioEvent::Navigation);
-            }
-            prev_active_tab_id = current_tab_id;
-        }
-
-        // Feature 9: Announce selection changes
-        {
-            let has_sel = panes
-                .get(&active_pane_id)
-                .is_some_and(|p| p.terminal.selection.is_some());
-            if has_sel != prev_selection_active {
-                prev_selection_active = has_sel;
-                if let Some(pane) = panes.get(&active_pane_id) {
-                    let desc = selection_description(
-                        pane.terminal.selection.as_ref(),
-                        pane.terminal.grid.cols,
-                    );
-                    unsafe {
-                        raise_if_allowed(
-                            &uia_provider,
-                            &desc,
-                            "selection",
-                            config.accessibility.screen_reader_output,
-                            "output",
-                        );
-                    }
-                    play_event(&audio_config, AudioEvent::Selection);
-                }
-            }
-        }
-
-        // --- Process IPC requests from other instances ---
-        while let Some(Ok(ipc_req)) = ipc_rx.as_ref().map(|rx| rx.try_recv()) {
-            match ipc_req {
-                IpcRequest::NewWindow => {
-                    // Spawn a new process (we're the server, so we spawn child windows)
-                    if let Ok(exe) = std::env::current_exe() {
-                        // Pass --no-ipc-claim to prevent the child from stealing the pipe
-                        let _ = std::process::Command::new(exe).arg("--standalone").spawn();
-                        info!("IPC: spawned new window process");
-                    }
-                }
-                IpcRequest::NewTab { profile } => {
-                    let p = profile
-                        .as_ref()
-                        .and_then(|name| config.profiles.iter().find(|p| p.name == *name));
-                    let (new_tab_id, new_pane_id) = tab_mgr.add_tab("New Tab");
-                    panes.insert(
-                        new_pane_id,
-                        spawn_pane(current_cols, current_rows, &config, p),
-                    );
-                    info!("IPC: opened new tab");
-                    dispatch_plugin_event(
-                        &plugin_lua,
-                        &plugin_registry,
-                        &PluginEvent::TabCreated {
-                            tab_id: new_tab_id.0,
-                        },
-                    );
-                }
-                IpcRequest::Shutdown => {
-                    info!("IPC: shutdown requested");
-                    running = false;
-                }
-                IpcRequest::Ping | IpcRequest::ListSessions | IpcRequest::FocusWindow { .. } => {
-                    // Handled by the server thread directly
-                }
-            }
-        }
-
-        // --- Process PTY output for ALL panes ---
-        for (&pane_id, pane) in panes.iter_mut() {
-            while let Ok(event) = pane.pty_rx.try_recv() {
-                match event {
-                    PtyEvent::Output(bytes) => {
-                        // Feed a11y event throttler only for the active pane
-                        if pane_id == active_pane_id
-                            && let Ok(text) = std::str::from_utf8(&bytes)
-                        {
-                            pane.event_throttler.on_output(text);
-                        }
-                        let actions = pane.parser.process(&bytes);
-                        for action in actions {
-                            dispatch_action(&mut pane.terminal, action);
-                        }
-                        // Feature 2 & 3: Scan new output for errors and progress
-                        if pane_id == active_pane_id
-                            && let Ok(text) = std::str::from_utf8(&bytes)
-                        {
-                            for line in text.lines() {
-                                // Feature 2: Error detection
-                                match classify_output_line(line) {
-                                    OutputLineClass::Error => {
-                                        play_event(&audio_config, AudioEvent::CommandError);
-                                        unsafe {
-                                            raise_if_allowed(
-                                                &uia_provider,
-                                                line,
-                                                "error-output",
-                                                config.accessibility.screen_reader_output,
-                                                "error",
-                                            );
-                                        }
-                                    }
-                                    OutputLineClass::Warning => {
-                                        play_event(&audio_config, AudioEvent::OutputWarning);
-                                    }
-                                    _ => {}
-                                }
-                                // Feature 3: Progress detection
-                                if let Some(pct) = detect_progress(line)
-                                    && last_announced_progress != Some(pct)
-                                {
-                                    last_announced_progress = Some(pct);
-                                    let msg = format!("{pct}%");
-                                    unsafe {
-                                        raise_if_allowed(
-                                            &uia_provider,
-                                            &msg,
-                                            "progress",
-                                            config.accessibility.screen_reader_output,
-                                            "output",
-                                        );
-                                    }
-                                    if pct >= 100 {
-                                        play_event(&audio_config, AudioEvent::ProgressComplete);
-                                        last_announced_progress = None;
-                                    } else {
-                                        play_event(&audio_config, AudioEvent::Progress);
-                                    }
-                                }
-                            }
-                        }
-                        // Track command execution for long-running notifications
-                        if let Some(block) = pane.terminal.shell_integ.current_block() {
-                            match block.state {
-                                wixen_shell_integ::BlockState::Executing => {
-                                    if pane.command_started_at.is_none() {
-                                        pane.command_started_at = Some(Instant::now());
-                                    }
-                                }
-                                wixen_shell_integ::BlockState::Completed => {
-                                    if let Some(started) = pane.command_started_at.take() {
-                                        let threshold = config.terminal.command_notify_threshold;
-                                        if threshold > 0
-                                            && started.elapsed().as_secs() >= threshold
-                                            && !window_focused
-                                        {
-                                            let cmd_name =
-                                                block.command_text.as_deref().unwrap_or("command");
-                                            info!(
-                                                cmd = cmd_name,
-                                                elapsed = started.elapsed().as_secs(),
-                                                "Long-running command finished"
-                                            );
-                                            fire_bell(window.hwnd(), wixen_config::BellStyle::Both);
-                                        }
-                                    }
-                                    // Record completed command in pane history
-                                    if let Some(cmd_text) = block.command_text.as_deref() {
-                                        pane.command_history.push(HistoryEntry {
-                                            command: cmd_text.to_string(),
-                                            exit_code: block.exit_code,
-                                            cwd: block.cwd.clone(),
-                                            timestamp: Some(SystemTime::now()),
-                                            block_id: block.id,
-                                        });
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        // Send any pending responses (DSR, DECRQSS) back to the PTY
-                        for response in pane.terminal.drain_responses() {
-                            let _ = pane.pty.write(&response);
-                        }
-                        // OSC 52: clipboard writes → system clipboard
-                        for text in pane.terminal.drain_clipboard_writes() {
-                            clipboard_set(&text);
-                        }
-                        // OSC 52: clipboard read query → inject response
-                        if pane.terminal.clipboard_read_pending {
-                            if let Some(text) = clipboard_get() {
-                                pane.terminal.inject_clipboard_response(&text);
-                                for response in pane.terminal.drain_responses() {
-                                    let _ = pane.pty.write(&response);
-                                }
-                            } else {
-                                pane.terminal.clipboard_read_pending = false;
-                            }
-                        }
-                        // Image placement announcements → a11y events
-                        for ann in pane.terminal.drain_image_announcements() {
-                            let message = ann.message();
-                            info!(pane = pane_id.0, msg = %message, "Image placed");
-                            unsafe {
-                                raise_if_allowed(
-                                    &uia_provider,
-                                    &message,
-                                    "image-placed",
-                                    config.accessibility.screen_reader_output,
-                                    "output",
-                                );
-                            }
-                        }
-                        // Command completion notifications for long-running commands
-                        let notify_threshold = config.terminal.command_notify_threshold;
-                        if notify_threshold > 0 {
-                            let threshold = Duration::from_secs(notify_threshold);
-                            for completion in
-                                pane.terminal.shell_integ.take_completion_if_long(threshold)
-                            {
-                                let cmd_name = completion.command.as_deref().unwrap_or("command");
-                                info!(
-                                    pane = pane_id.0,
-                                    cmd = cmd_name,
-                                    exit_code = ?completion.exit_code,
-                                    duration_secs = completion.duration.as_secs(),
-                                    "Command completion notification"
-                                );
-                                // Dispatch to plugins listening for command completion
-                                let plugin_event = PluginEvent::CommandComplete {
-                                    command: cmd_name.to_string(),
-                                    exit_code: completion.exit_code.unwrap_or(0),
-                                    duration_ms: completion.duration.as_millis() as u64,
-                                };
-                                dispatch_plugin_event(&plugin_lua, &plugin_registry, &plugin_event);
-                                // Feature 1: Announce command summary via UIA
-                                if let Some(block) =
-                                    pane.terminal.shell_integ.block_by_id(completion.block_id)
-                                {
-                                    let output_text = block.output.map(|range| {
-                                        pane.terminal.extract_row_text(range.start, range.end)
-                                    });
-                                    let output_lines: Vec<&str> = output_text
-                                        .as_deref()
-                                        .map_or_else(Vec::new, |text| text.lines().collect());
-                                    let mut summary =
-                                        wixen_core::structured_detect::completion_announcement(
-                                            block,
-                                            &output_lines,
-                                        );
-                                    // Append an error/warning count summary so a
-                                    // screen-reader user hears "N errors, M warnings".
-                                    if let Some(errs) =
-                                        wixen_core::error_detect::error_summary(&output_lines)
-                                    {
-                                        summary.push_str(". ");
-                                        summary.push_str(&errs);
-                                    }
-                                    unsafe {
-                                        raise_if_allowed(
-                                            &uia_provider,
-                                            &summary,
-                                            "command-complete",
-                                            config.accessibility.screen_reader_output,
-                                            "command",
-                                        );
-                                    }
-                                }
-                                // Feature 1: Play audio cue for command result
-                                let audio_event = if completion.exit_code == Some(0)
-                                    || completion.exit_code.is_none()
-                                {
-                                    AudioEvent::CommandSuccess
-                                } else {
-                                    AudioEvent::CommandError
-                                };
-                                play_event(&audio_config, audio_event);
-                            }
+                ContextMenuAction::Search => {
+                    if let Some(pane) = ws.panes.get_mut(&active) {
+                        pane.search_mode = !pane.search_mode;
+                        if !pane.search_mode {
+                            pane.search_engine.clear();
+                            pane.search_buffer.clear();
+                            set_window_title(ws.window.hwnd(), &ws.base_title);
                         } else {
-                            // Discard completions when notifications are disabled
-                            let _ = pane.terminal.shell_integ.drain_completions();
-                        }
-                    }
-                    PtyEvent::Exited(code) => {
-                        info!(pane = pane_id.0, exit_code = ?code, "PTY exited");
-                        pane.status = PaneStatus::Exited(code);
-                        pane.terminal.write_exit_banner(code);
-
-                        // Update the tab's exit status indicator
-                        if let Some(tab) = tab_mgr.tabs().iter().find(|t| t.active_pane == pane_id)
-                        {
-                            let tab_id = tab.id;
-                            tab_mgr.set_exit_status(tab_id, code);
-                        }
-
-                        // Flash taskbar for background tab exits
-                        if pane_id != active_pane_id {
-                            use windows::Win32::UI::WindowsAndMessaging::*;
-                            let info = FLASHWINFO {
-                                cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
-                                hwnd: window.hwnd(),
-                                dwFlags: FLASHW_ALL,
-                                uCount: 3,
-                                dwTimeout: 0,
-                            };
-                            unsafe {
-                                let _ = FlashWindowEx(&info);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Sync terminal title → tab title (OSC 0/2 or OSC 7 CWD)
-            if pane.terminal.title_dirty {
-                pane.terminal.title_dirty = false;
-                let new_title = pane.terminal.effective_title().to_string();
-                if let Some(tab) = tab_mgr.tabs().iter().find(|t| t.active_pane == pane_id) {
-                    let tab_id = tab.id;
-                    tab_mgr.set_title(tab_id, &new_title);
-                }
-                // Also update the Win32 window title for the active tab
-                if pane_id == active_pane_id {
-                    set_window_title(window.hwnd(), &new_title);
-                }
-            }
-
-            // Pump messages after PTY processing — COM calls from NVDA
-            // (GetSelection, GetCaretRange) arrive as Win32 messages via UseComThreading.
-            // Without this pump, they sit queued during the entire PTY/terminal processing
-            // phase and COM can return RPC_E_SERVER_FAULT to the screen reader.
-            window.pump_messages();
-
-            // Shell integration → a11y tree (active pane only)
-            if pane_id == active_pane_id {
-                let current_gen = pane.terminal.shell_integ.generation();
-                // Collect pending output text before taking the write lock
-                let pending_output = if pane.event_throttler.has_pending() {
-                    pane.event_throttler.take_pending()
-                } else {
-                    None
-                };
-
-                let tree_changed = current_gen != pane.last_shell_generation;
-                if tree_changed {
-                    pane.last_shell_generation = current_gen;
-                }
-
-                // Whether the a11y text (state.full_text) is about to be updated —
-                // used to raise UIA TextChanged / LiveRegionChanged below.
-                let a11y_text_changed = tree_changed || pending_output.is_some();
-
-                // Single write lock: update tree, full_text, and cursor atomically
-                let (structure_changed, cursor_moved, _row_changed) = {
-                    let new_row = pane.terminal.grid.cursor.row;
-                    let new_col = pane.terminal.grid.cursor.col;
-                    let needs_text_update = tree_changed || pending_output.is_some();
-
-                    if let Some(mut state) = a11y_state.try_write() {
-                        if tree_changed {
-                            state
-                                .tree
-                                .rebuild(pane.terminal.shell_integ.blocks(), |start, end| {
-                                    pane.terminal.extract_row_text(start, end)
-                                });
-                        }
-                        if needs_text_update {
-                            state.full_text = pane.terminal.visible_text();
-                        }
-                        let moved = state.cursor_row != new_row || state.cursor_col != new_col;
-                        let row_diff = state.cursor_row != new_row;
-                        if moved {
-                            state.cursor_row = new_row;
-                            state.cursor_col = new_col;
-                        }
-                        if moved || needs_text_update {
-                            // Update lock-free atomic so GetSelection/GetCaretRange
-                            // always return the correct offset, even during frame processing
-                            cursor_offset.store(
-                                state.cursor_offset_utf16(),
-                                std::sync::atomic::Ordering::Release,
+                            set_window_title(
+                                ws.window.hwnd(),
+                                &format!("{} — Search: _", ws.base_title),
                             );
                         }
-                        (tree_changed, moved, row_diff)
-                    } else {
-                        (false, false, false)
-                    }
-                };
-
-                // Pump messages so pending COM calls (GetSelection, GetCaretRange)
-                // can be dispatched against the now-consistent state.
-                window.pump_messages();
-
-                // Raise events outside the lock
-                if structure_changed {
-                    unsafe {
-                        wixen_a11y::events::raise_structure_changed(&uia_provider, &mut [0i32]);
-                    }
-                    if let Some(block) = pane.terminal.shell_integ.current_block()
-                        && block.state == wixen_shell_integ::BlockState::Completed
-                        && let Some(exit_code) = block.exit_code
-                    {
-                        let cmd = block.command_text.as_deref().unwrap_or("command");
-                        unsafe {
-                            wixen_a11y::events::raise_command_complete(
-                                &uia_provider,
-                                cmd,
-                                exit_code,
-                            );
-                        }
-                    }
-                    trace!(generation = current_gen, "A11y tree rebuilt");
-                }
-
-                if cursor_moved {
-                    unsafe {
-                        wixen_a11y::events::raise_text_selection_changed(&uia_provider);
+                        pane.terminal.dirty = true;
                     }
                 }
-
-                // New terminal output changed the accessible text — notify UIA so
-                // screen readers re-read the text and observe the live region.
-                if a11y_text_changed {
-                    unsafe {
-                        wixen_a11y::events::raise_text_changed(&uia_provider);
-                        wixen_a11y::events::raise_live_region_changed(&uia_provider);
-                    }
+                ContextMenuAction::SplitHorizontal | ContextMenuAction::SplitVertical => {
+                    // Pane splitting is tracked in the data model.
+                    // Full rendering support for split panes is deferred.
+                    info!(?action, "Pane split requested (render not yet wired)");
                 }
-
-                // UIA live region events for accumulated output.
-                // Feature 10: Verbosity filter — only raise for permitted categories.
-                // Skip short output without newlines — that's keyboard echo.
-                // NVDA's own character/word echo settings should control that,
-                // not our notification events.
-                let has_real_output = if let Some(raw_text) = pending_output {
-                    let text = wixen_a11y::strip_vt_escapes(&raw_text);
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() && trimmed.contains('\n') {
-                        // Multi-line output — real terminal content
-                        unsafe {
-                            raise_if_allowed(
-                                &uia_provider,
-                                &text,
-                                "terminal-output",
-                                config.accessibility.screen_reader_output,
-                                "output",
-                            );
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                // Row-change line reading is handled by NVDA's native caret
-                // tracking via GetSelection + ExpandToEnclosingUnit(Line).
-
-                // NVDA's native caret tracking handles character/line reading
-                // via GetSelection + UIATextInfo. We only need to supplement for
-                // history recall (line replacement) which NVDA can't detect as a
-                // distinct operation.
-                let scrollback_len = pane.terminal.scrollback.len();
-                let abs_row = scrollback_len + pane.terminal.grid.cursor.row;
-                let current_line = pane.terminal.extract_row_text(abs_row, abs_row);
-                if current_line != pane.prev_cursor_line && !has_real_output && !structure_changed {
-                    let prev = &pane.prev_cursor_line;
-                    let cur_trimmed = current_line.trim_end();
-                    let prev_trimmed = prev.trim_end();
-
-                    if !prev.is_empty() && cur_trimmed != prev_trimmed {
-                        let is_append = cur_trimmed.len() > prev_trimmed.len()
-                            && cur_trimmed.starts_with(prev_trimmed);
-                        let is_deletion = cur_trimmed.len() < prev_trimmed.len()
-                            && prev_trimmed.starts_with(cur_trimmed);
-
-                        if !is_append && !is_deletion {
-                            // Line content replaced (up arrow history recall)
-                            // Strip the shell prompt — announce only the command
-                            let text = strip_prompt(cur_trimmed);
-                            if text.is_empty() {
-                                unsafe {
-                                    wixen_a11y::events::raise_notification(
-                                        &uia_provider,
-                                        "line cleared",
-                                        "cursor-line",
-                                        false,
-                                    );
-                                }
-                            } else {
-                                unsafe {
-                                    wixen_a11y::events::raise_notification(
-                                        &uia_provider,
-                                        text,
-                                        "cursor-line",
-                                        false,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                // Boundary detection: consume last_nav_key and check if
-                // the cursor/line didn't change (meaning we're at an edge).
-                if let Some(nav) = pane.last_nav_key.take() {
-                    let new_col = pane.terminal.grid.cursor.col;
-                    match nav {
-                        NavKey::Left if new_col == pane.prev_cursor_col && !cursor_moved => {
-                            play_event(&audio_config, AudioEvent::EditBoundary);
-                        }
-                        NavKey::Right if new_col == pane.prev_cursor_col && !cursor_moved => {
-                            play_event(&audio_config, AudioEvent::EditBoundary);
-                        }
-                        NavKey::Up
-                            if current_line.trim_end() == pane.prev_cursor_line.trim_end() =>
-                        {
-                            pane.at_history_start = true;
-                            play_event(&audio_config, AudioEvent::HistoryBoundary);
-                        }
-                        NavKey::Down
-                            if current_line.trim_end().is_empty()
-                                && !pane.prev_cursor_line.trim_end().is_empty() =>
-                        {
-                            pane.at_history_end = true;
-                            play_event(&audio_config, AudioEvent::HistoryBoundary);
-                        }
-                        _ => {}
-                    }
-                }
-
-                pane.prev_cursor_line = current_line;
-            }
-        }
-
-        // --- Handle bell notifications ---
-        for (&pane_id, pane) in panes.iter_mut() {
-            if pane.terminal.bell_pending {
-                pane.terminal.bell_pending = false;
-                // Feature 8: Suppress visual bell flash when reduced motion is active
-                let bell_style = if wixen_config::should_reduce_motion(
-                    &config.accessibility.reduced_motion,
-                    wixen_ui::window::system_reduced_motion(),
-                ) {
-                    match config.terminal.bell {
-                        BellStyle::Visual => BellStyle::None,
-                        BellStyle::Both => BellStyle::Audible,
-                        other => other,
-                    }
-                } else {
-                    config.terminal.bell
-                };
-                fire_bell(window.hwnd(), bell_style);
-                // Set bell badge on the tab if this is a background tab
-                if pane_id != active_pane_id
-                    && let Some(tab) = tab_mgr.tabs().iter().find(|t| t.active_pane == pane_id)
-                {
-                    let tab_id = tab.id;
-                    tab_mgr.set_bell(tab_id);
-                }
-            }
-        }
-
-        // Feature 4: Echo suppression — check for password prompts
-        {
-            let active = tab_mgr.active_tab().active_pane;
-            if let Some(pane) = panes.get_mut(&active)
-                && pane.terminal.check_echo_timeout()
-            {
-                play_event(&audio_config, AudioEvent::PasswordPrompt);
-                unsafe {
-                    raise_if_allowed(
-                        &uia_provider,
-                        "Text not echoed",
-                        "password-prompt",
-                        config.accessibility.screen_reader_output,
-                        "output",
+                ContextMenuAction::NewTab | ContextMenuAction::CloseTab => {
+                    let name = match action {
+                        ContextMenuAction::NewTab => "new_tab",
+                        _ => "close_tab",
+                    };
+                    let result = dispatch_keybinding_action(
+                        name,
+                        &mut ws.tab_mgr,
+                        &mut ws.panes,
+                        &g.config,
+                        &mut ws.close_requested,
+                        ws.current_cols,
+                        ws.current_rows,
+                        &mut ws.window,
+                        &ws.base_title,
+                        &g.plugin_lua,
+                        &g.plugin_registry,
+                    );
+                    handle_deferred_action(
+                        result,
+                        &mut g.config,
+                        &mut ws.renderer,
+                        &ws.window,
+                        &mut ws.cell_width,
+                        &mut ws.cell_height,
+                        &mut ws.current_cols,
+                        &mut ws.current_rows,
+                        &mut ws.panes,
+                        &mut g.config_watcher,
+                        &g.cfg_path,
                     );
                 }
-            }
-        }
-
-        // (Panes with exited PTY stay around with an exit banner;
-        // the user can restart via "restart_shell" or close the tab.)
-
-        // --- Taskbar progress (OSC 9;4) ---
-        if let Some(ref tb) = taskbar {
-            let active = tab_mgr.active_tab().active_pane;
-            if let Some(pane) = panes.get(&active) {
-                let progress = pane.terminal.progress;
-                if progress != last_progress {
-                    last_progress = progress;
-                    update_taskbar_progress(tb, window.hwnd(), progress);
+                ContextMenuAction::Settings => {
+                    ws.settings_ui.toggle();
+                    update_settings_a11y(&ws.settings_ui, &ws.a11y_state);
+                    unsafe {
+                        wixen_a11y::events::raise_structure_changed(&ws.uia_provider, &mut [0i32]);
+                        if ws.settings_ui.visible {
+                            let root: IRawElementProviderFragmentRoot =
+                                ws.uia_provider.cast().unwrap();
+                            let panel = wixen_a11y::settings_provider::SettingsPanelProvider::new(
+                                ws.window.hwnd(),
+                                Arc::clone(&ws.a11y_state),
+                                root,
+                            );
+                            let frag: IRawElementProviderSimple = panel.into();
+                            wixen_a11y::events::raise_focus_changed(&frag);
+                        } else {
+                            wixen_a11y::events::raise_focus_changed(&ws.uia_provider);
+                        }
+                    }
+                    if let Some(p) = ws.panes.get_mut(&active) {
+                        p.terminal.dirty = true;
+                    }
                 }
             }
         }
-
-        // --- Cursor blink ---
-        let blink_elapsed = blink_timer.elapsed().as_millis();
-        if blink_elapsed >= blink_interval_ms {
-            cursor_blink_on = !cursor_blink_on;
-            blink_timer = Instant::now();
-            let active = tab_mgr.active_tab().active_pane;
-            if let Some(pane) = panes.get_mut(&active)
-                && pane.terminal.grid.cursor.blinking
-            {
+        WindowEvent::DpiChanged(new_dpi) => {
+            info!(new_dpi, "DPI changed — rebuilding font");
+            let dpi_f32 = new_dpi as f32;
+            if let Err(e) = ws.renderer.rebuild_font(
+                &g.config.font.family,
+                g.config.font.size,
+                dpi_f32,
+                g.config.font.line_height,
+                &g.config.font.fallback_fonts,
+                g.config.font.ligatures,
+                &g.config.font.font_path,
+            ) {
+                error!("Font rebuild failed on DPI change: {e}");
+                return PostAction::None;
+            }
+            let metrics = ws.renderer.font_metrics();
+            ws.cell_width = metrics.cell_width;
+            ws.cell_height = metrics.cell_height;
+            let (w, h) = ws.window.client_size();
+            let pad_h = g.config.window.padding.horizontal() as f32;
+            let pad_v = g.config.window.padding.vertical() as f32;
+            ws.current_cols = ((w as f32 - pad_h) / ws.cell_width)
+                .floor()
+                .clamp(1.0, 500.0) as u16;
+            ws.current_rows = ((h as f32 - pad_v) / ws.cell_height)
+                .floor()
+                .clamp(1.0, 500.0) as u16;
+            for pane in ws.panes.values_mut() {
+                pane.terminal
+                    .resize(ws.current_cols as usize, ws.current_rows as usize);
+                if let Err(e) = pane.pty.resize(ws.current_cols, ws.current_rows) {
+                    error!("PTY resize error on DPI change: {}", e);
+                }
                 pane.terminal.dirty = true;
             }
         }
+    }
 
-        // --- Render all visible panes ---
-        let active = tab_mgr.active_tab().active_pane;
-        let any_dirty = {
-            let pane_ids = tab_mgr.active_tab().pane_tree.pane_ids();
-            pane_ids
-                .iter()
-                .any(|id| panes.get(id).is_some_and(|p| p.terminal.dirty))
-        };
+    PostAction::None
+}
 
-        if any_dirty {
-            // Build tab bar items for the renderer
-            let raw_tab_items = tab_mgr.tab_bar_items();
-            let tab_items: Vec<TabBarItem> = raw_tab_items
-                .iter()
-                .map(|(_, title, is_active, has_bell, tab_color)| TabBarItem {
-                    title,
-                    is_active: *is_active,
-                    has_bell: *has_bell,
-                    tab_color: tab_color.map(|c| (c.r, c.g, c.b)),
-                })
-                .collect();
-            let tab_bar_slice: Option<&[TabBarItem]> =
-                if tab_mgr.should_show_tab_bar_with_mode(config.window.tab_bar) {
-                    Some(&tab_items)
-                } else {
-                    None
-                };
+/// Run one frame for a window: announcements, PTY output processing, and
+/// rendering.
+fn run_window_frame(ws: &mut WindowState, g: &mut AppGlobals) {
+    let pad_left = g.config.window.padding.left as f32;
+    let pad_top = g.config.window.padding.top as f32;
+    let _ = (pad_left, pad_top);
+    // Resolve the active pane after event processing (tab switches may have changed it)
+    let active_pane_id = ws.tab_mgr.active_tab().active_pane;
+    let current_tab_id = ws.tab_mgr.active_tab_id();
 
-            let (win_w, win_h) = window.client_size();
-            let wf = win_w as f32;
-            let hf = win_h as f32;
+    // Feature 5: Announce pane position on switch
+    if active_pane_id != ws.prev_active_pane {
+        let label = wixen_ui::panes::pane_position_label(
+            &ws.tab_mgr.active_tab().pane_tree,
+            active_pane_id,
+        );
+        unsafe {
+            raise_if_allowed(
+                &ws.uia_provider,
+                &label,
+                "pane-switch",
+                g.config.accessibility.screen_reader_output,
+                "output",
+            );
+            // Re-anchor screen reader focus on the terminal root so the
+            // newly active pane's content is what gets read next.
+            wixen_a11y::events::raise_focus_changed(&ws.uia_provider);
+        }
+        play_event(&g.audio_config, AudioEvent::Navigation);
+        ws.prev_active_pane = active_pane_id;
+    }
 
-            // Update a11y layout metrics for BoundingRectangle calculations
-            if let Some(mut state) = a11y_state.try_write() {
-                state.cell_width = cell_width as f64;
-                state.cell_height = cell_height as f64;
-                state.tab_bar_height = renderer.tab_bar_height(tab_mgr.tab_count()) as f64;
-                state.window_width = wf as f64;
-                state.window_height = hf as f64;
+    // Feature 6: Announce tab on switch
+    if current_tab_id != ws.prev_active_tab_id {
+        let announcement = wixen_ui::tabs::tab_announcement(&ws.tab_mgr, current_tab_id);
+        if !announcement.is_empty() {
+            unsafe {
+                raise_if_allowed(
+                    &ws.uia_provider,
+                    &announcement,
+                    "tab-switch",
+                    g.config.accessibility.screen_reader_output,
+                    "output",
+                );
             }
+            play_event(&g.audio_config, AudioEvent::Navigation);
+        }
+        ws.prev_active_tab_id = current_tab_id;
+    }
 
-            // Update IME position for the active pane
-            if let Some(active_pane) = panes.get(&active) {
-                let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-                let ime_x =
-                    (active_pane.terminal.grid.cursor.col as f32 * cell_width + pad_left) as i32;
-                let ime_y = (active_pane.terminal.grid.cursor.row as f32 * cell_height
-                    + tbh
-                    + pad_top) as i32;
-                window.set_ime_position(ime_x, ime_y, cell_height as i32);
+    // Feature 9: Announce selection changes
+    {
+        let has_sel = ws
+            .panes
+            .get(&active_pane_id)
+            .is_some_and(|p| p.terminal.selection.is_some());
+        if has_sel != ws.prev_selection_active {
+            ws.prev_selection_active = has_sel;
+            if let Some(pane) = ws.panes.get(&active_pane_id) {
+                let desc = selection_description(
+                    pane.terminal.selection.as_ref(),
+                    pane.terminal.grid.cols,
+                );
+                unsafe {
+                    raise_if_allowed(
+                        &ws.uia_provider,
+                        &desc,
+                        "selection",
+                        g.config.accessibility.screen_reader_output,
+                        "output",
+                    );
+                }
+                play_event(&g.audio_config, AudioEvent::Selection);
             }
+        }
+    }
 
-            // Materialize history overlay lines so the overlay can borrow them.
-            let history_lines: Vec<String> = if history_browser.visible {
-                let header = if history_browser.query.is_empty() {
-                    "> Type to search history...".to_string()
-                } else {
-                    history_browser.query.clone()
-                };
-                let mut lines = Vec::with_capacity(history_browser.entries().len() + 1);
-                lines.push(header);
-                lines.extend(history_browser.overlay_lines());
-                lines
+    // --- Process PTY output for ALL panes ---
+    for (&pane_id, pane) in ws.panes.iter_mut() {
+        while let Ok(event) = pane.pty_rx.try_recv() {
+            match event {
+                PtyEvent::Output(bytes) => {
+                    // Feed a11y event throttler only for the active pane
+                    if pane_id == active_pane_id
+                        && let Ok(text) = std::str::from_utf8(&bytes)
+                    {
+                        pane.event_throttler.on_output(text);
+                    }
+                    let actions = pane.parser.process(&bytes);
+                    for action in actions {
+                        dispatch_action(&mut pane.terminal, action);
+                    }
+                    // Feature 2 & 3: Scan new output for errors and progress
+                    if pane_id == active_pane_id
+                        && let Ok(text) = std::str::from_utf8(&bytes)
+                    {
+                        for line in text.lines() {
+                            // Feature 2: Error detection
+                            match classify_output_line(line) {
+                                OutputLineClass::Error => {
+                                    play_event(&g.audio_config, AudioEvent::CommandError);
+                                    unsafe {
+                                        raise_if_allowed(
+                                            &ws.uia_provider,
+                                            line,
+                                            "error-output",
+                                            g.config.accessibility.screen_reader_output,
+                                            "error",
+                                        );
+                                    }
+                                }
+                                OutputLineClass::Warning => {
+                                    play_event(&g.audio_config, AudioEvent::OutputWarning);
+                                }
+                                _ => {}
+                            }
+                            // Feature 3: Progress detection
+                            if let Some(pct) = detect_progress(line)
+                                && ws.last_announced_progress != Some(pct)
+                            {
+                                ws.last_announced_progress = Some(pct);
+                                let msg = format!("{pct}%");
+                                unsafe {
+                                    raise_if_allowed(
+                                        &ws.uia_provider,
+                                        &msg,
+                                        "progress",
+                                        g.config.accessibility.screen_reader_output,
+                                        "output",
+                                    );
+                                }
+                                if pct >= 100 {
+                                    play_event(&g.audio_config, AudioEvent::ProgressComplete);
+                                    ws.last_announced_progress = None;
+                                } else {
+                                    play_event(&g.audio_config, AudioEvent::Progress);
+                                }
+                            }
+                        }
+                    }
+                    // Track command execution for long-running notifications
+                    if let Some(block) = pane.terminal.shell_integ.current_block() {
+                        match block.state {
+                            wixen_shell_integ::BlockState::Executing => {
+                                if pane.command_started_at.is_none() {
+                                    pane.command_started_at = Some(Instant::now());
+                                }
+                            }
+                            wixen_shell_integ::BlockState::Completed => {
+                                if let Some(started) = pane.command_started_at.take() {
+                                    let threshold = g.config.terminal.command_notify_threshold;
+                                    if threshold > 0
+                                        && started.elapsed().as_secs() >= threshold
+                                        && !ws.window_focused
+                                    {
+                                        let cmd_name =
+                                            block.command_text.as_deref().unwrap_or("command");
+                                        info!(
+                                            cmd = cmd_name,
+                                            elapsed = started.elapsed().as_secs(),
+                                            "Long-running command finished"
+                                        );
+                                        fire_bell(ws.window.hwnd(), wixen_config::BellStyle::Both);
+                                    }
+                                }
+                                // Record completed command in pane history
+                                if let Some(cmd_text) = block.command_text.as_deref() {
+                                    pane.command_history.push(HistoryEntry {
+                                        command: cmd_text.to_string(),
+                                        exit_code: block.exit_code,
+                                        cwd: block.cwd.clone(),
+                                        timestamp: Some(SystemTime::now()),
+                                        block_id: block.id,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Send any pending responses (DSR, DECRQSS) back to the PTY
+                    for response in pane.terminal.drain_responses() {
+                        let _ = pane.pty.write(&response);
+                    }
+                    // OSC 52: clipboard writes → system clipboard
+                    for text in pane.terminal.drain_clipboard_writes() {
+                        clipboard_set(&text);
+                    }
+                    // OSC 52: clipboard read query → inject response
+                    if pane.terminal.clipboard_read_pending {
+                        if let Some(text) = clipboard_get() {
+                            pane.terminal.inject_clipboard_response(&text);
+                            for response in pane.terminal.drain_responses() {
+                                let _ = pane.pty.write(&response);
+                            }
+                        } else {
+                            pane.terminal.clipboard_read_pending = false;
+                        }
+                    }
+                    // Image placement announcements → a11y events
+                    for ann in pane.terminal.drain_image_announcements() {
+                        let message = ann.message();
+                        info!(pane = pane_id.0, msg = %message, "Image placed");
+                        unsafe {
+                            raise_if_allowed(
+                                &ws.uia_provider,
+                                &message,
+                                "image-placed",
+                                g.config.accessibility.screen_reader_output,
+                                "output",
+                            );
+                        }
+                    }
+                    // Command completion notifications for long-running commands
+                    let notify_threshold = g.config.terminal.command_notify_threshold;
+                    if notify_threshold > 0 {
+                        let threshold = Duration::from_secs(notify_threshold);
+                        for completion in
+                            pane.terminal.shell_integ.take_completion_if_long(threshold)
+                        {
+                            let cmd_name = completion.command.as_deref().unwrap_or("command");
+                            info!(
+                                pane = pane_id.0,
+                                cmd = cmd_name,
+                                exit_code = ?completion.exit_code,
+                                duration_secs = completion.duration.as_secs(),
+                                "Command completion notification"
+                            );
+                            // Dispatch to plugins listening for command completion
+                            let plugin_event = PluginEvent::CommandComplete {
+                                command: cmd_name.to_string(),
+                                exit_code: completion.exit_code.unwrap_or(0),
+                                duration_ms: completion.duration.as_millis() as u64,
+                            };
+                            dispatch_plugin_event(&g.plugin_lua, &g.plugin_registry, &plugin_event);
+                            // Feature 1: Announce command summary via UIA
+                            if let Some(block) =
+                                pane.terminal.shell_integ.block_by_id(completion.block_id)
+                            {
+                                let output_text = block.output.map(|range| {
+                                    pane.terminal.extract_row_text(range.start, range.end)
+                                });
+                                let output_lines: Vec<&str> = output_text
+                                    .as_deref()
+                                    .map_or_else(Vec::new, |text| text.lines().collect());
+                                let mut summary =
+                                    wixen_core::structured_detect::completion_announcement(
+                                        block,
+                                        &output_lines,
+                                    );
+                                // Append an error/warning count summary so a
+                                // screen-reader user hears "N errors, M warnings".
+                                if let Some(errs) =
+                                    wixen_core::error_detect::error_summary(&output_lines)
+                                {
+                                    summary.push_str(". ");
+                                    summary.push_str(&errs);
+                                }
+                                unsafe {
+                                    raise_if_allowed(
+                                        &ws.uia_provider,
+                                        &summary,
+                                        "command-complete",
+                                        g.config.accessibility.screen_reader_output,
+                                        "command",
+                                    );
+                                }
+                            }
+                            // Feature 1: Play audio cue for command result
+                            let audio_event = if completion.exit_code == Some(0)
+                                || completion.exit_code.is_none()
+                            {
+                                AudioEvent::CommandSuccess
+                            } else {
+                                AudioEvent::CommandError
+                            };
+                            play_event(&g.audio_config, audio_event);
+                        }
+                    } else {
+                        // Discard completions when notifications are disabled
+                        let _ = pane.terminal.shell_integ.drain_completions();
+                    }
+                }
+                PtyEvent::Exited(code) => {
+                    info!(pane = pane_id.0, exit_code = ?code, "PTY exited");
+                    pane.status = PaneStatus::Exited(code);
+                    pane.terminal.write_exit_banner(code);
+
+                    // Update the tab's exit status indicator
+                    if let Some(tab) = ws.tab_mgr.tabs().iter().find(|t| t.active_pane == pane_id) {
+                        let tab_id = tab.id;
+                        ws.tab_mgr.set_exit_status(tab_id, code);
+                    }
+
+                    // Flash taskbar for background tab exits
+                    if pane_id != active_pane_id {
+                        use windows::Win32::UI::WindowsAndMessaging::*;
+                        let info = FLASHWINFO {
+                            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                            hwnd: ws.window.hwnd(),
+                            dwFlags: FLASHW_ALL,
+                            uCount: 3,
+                            dwTimeout: 0,
+                        };
+                        unsafe {
+                            let _ = FlashWindowEx(&info);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sync terminal title → tab title (OSC 0/2 or OSC 7 CWD)
+        if pane.terminal.title_dirty {
+            pane.terminal.title_dirty = false;
+            let new_title = pane.terminal.effective_title().to_string();
+            if let Some(tab) = ws.tab_mgr.tabs().iter().find(|t| t.active_pane == pane_id) {
+                let tab_id = tab.id;
+                ws.tab_mgr.set_title(tab_id, &new_title);
+            }
+            // Also update the Win32 window title for the active tab
+            if pane_id == active_pane_id {
+                set_window_title(ws.window.hwnd(), &new_title);
+            }
+        }
+
+        // Pump messages after PTY processing — COM calls from NVDA
+        // (GetSelection, GetCaretRange) arrive as Win32 messages via UseComThreading.
+        // Without this pump, they sit queued during the entire PTY/terminal processing
+        // phase and COM can return RPC_E_SERVER_FAULT to the screen reader.
+        ws.window.pump_messages();
+
+        // Shell integration → a11y tree (active pane only)
+        if pane_id == active_pane_id {
+            let current_gen = pane.terminal.shell_integ.generation();
+            // Collect pending output text before taking the write lock
+            let pending_output = if pane.event_throttler.has_pending() {
+                pane.event_throttler.take_pending()
             } else {
-                Vec::new()
+                None
             };
 
-            let mut overlays: Vec<OverlayLayer> = Vec::new();
-            if settings_ui.visible {
-                trace!("Building settings overlay");
-            }
-            if let Some(ol) = build_settings_overlay(&settings_ui, wf, hf, cell_height) {
-                trace!(lines = ol.lines.len(), "Settings overlay built");
-                overlays.push(ol);
-            }
-            if let Some(ol) = build_palette_overlay(&palette, wf, hf, cell_height) {
-                overlays.push(ol);
-            }
-            if let Some(ol) =
-                build_history_overlay(&history_browser, &history_lines, wf, hf, cell_height)
-            {
-                overlays.push(ol);
+            let tree_changed = current_gen != pane.last_shell_generation;
+            if tree_changed {
+                pane.last_shell_generation = current_gen;
             }
 
-            // Compute pane layout and build render infos
-            let pane_rects = tab_mgr.active_tab().pane_tree.layout();
-            let tbh = renderer.tab_bar_height(tab_mgr.tab_count());
-            let content_w = wf - pad_left - config.window.padding.right as f32;
-            let content_h = hf - tbh - pad_top - config.window.padding.bottom as f32;
+            // Whether the a11y text (state.full_text) is about to be updated —
+            // used to raise UIA TextChanged / LiveRegionChanged below.
+            let a11y_text_changed = tree_changed || pending_output.is_some();
 
-            let pane_render_infos: Vec<wixen_render::PaneRenderInfo<'_>> = pane_rects
-                .iter()
-                .filter_map(|pr| {
-                    let pane = panes.get(&pr.pane_id)?;
-                    let show_scrollbar = match config.window.scrollbar {
-                        wixen_config::ScrollbarMode::Always => !pane.terminal.scrollback.is_empty(),
-                        wixen_config::ScrollbarMode::Auto => pane.terminal.viewport_offset > 0,
-                        wixen_config::ScrollbarMode::Never => false,
-                    };
-                    Some(wixen_render::PaneRenderInfo {
-                        terminal: &pane.terminal,
-                        cursor_visible: !pane.terminal.grid.cursor.blinking || cursor_blink_on,
-                        is_active: pr.pane_id == active,
-                        show_scrollbar,
-                        rect: (
-                            pad_left + pr.x * content_w,
-                            pad_top + pr.y * content_h,
-                            pr.width * content_w,
-                            pr.height * content_h,
-                        ),
-                    })
-                })
-                .collect();
+            // Single write lock: update tree, full_text, and cursor atomically
+            let (structure_changed, cursor_moved, _row_changed) = {
+                let new_row = pane.terminal.grid.cursor.row;
+                let new_col = pane.terminal.grid.cursor.col;
+                let needs_text_update = tree_changed || pending_output.is_some();
 
-            if pane_render_infos.len() > 1 {
-                // Multi-pane render
-                let border_color = [0.4, 0.4, 0.4, 1.0]; // Gray border
-                if let Err(e) = renderer.render_panes(
-                    &pane_render_infos,
-                    tab_bar_slice,
-                    &overlays,
-                    border_color,
-                ) {
-                    error!("Multi-pane render error: {}", e);
+                if let Some(mut state) = ws.a11y_state.try_write() {
+                    if tree_changed {
+                        state
+                            .tree
+                            .rebuild(pane.terminal.shell_integ.blocks(), |start, end| {
+                                pane.terminal.extract_row_text(start, end)
+                            });
+                    }
+                    if needs_text_update {
+                        state.full_text = pane.terminal.visible_text();
+                    }
+                    let moved = state.cursor_row != new_row || state.cursor_col != new_col;
+                    let row_diff = state.cursor_row != new_row;
+                    if moved {
+                        state.cursor_row = new_row;
+                        state.cursor_col = new_col;
+                    }
+                    if moved || needs_text_update {
+                        // Update lock-free atomic so GetSelection/GetCaretRange
+                        // always return the correct offset, even during frame processing
+                        ws.cursor_offset.store(
+                            state.cursor_offset_utf16(),
+                            std::sync::atomic::Ordering::Release,
+                        );
+                    }
+                    (tree_changed, moved, row_diff)
+                } else {
+                    (false, false, false)
                 }
-            } else if let Some(active_pane) = panes.get(&active) {
-                // Single pane — use the original render path (with search highlighting)
-                let scrollback_len = active_pane.terminal.scrollback.len();
-                let viewport_offset = active_pane.terminal.viewport_offset;
-                let search_engine = &active_pane.search_engine;
-                let hl_closure;
-                let highlight: Option<&dyn Fn(usize, usize) -> CellHighlight> = if search_engine
-                    .is_active()
+            };
+
+            // Pump messages so pending COM calls (GetSelection, GetCaretRange)
+            // can be dispatched against the now-consistent state.
+            ws.window.pump_messages();
+
+            // Raise events outside the lock
+            if structure_changed {
+                unsafe {
+                    wixen_a11y::events::raise_structure_changed(&ws.uia_provider, &mut [0i32]);
+                }
+                if let Some(block) = pane.terminal.shell_integ.current_block()
+                    && block.state == wixen_shell_integ::BlockState::Completed
+                    && let Some(exit_code) = block.exit_code
                 {
+                    let cmd = block.command_text.as_deref().unwrap_or("command");
+                    unsafe {
+                        wixen_a11y::events::raise_command_complete(
+                            &ws.uia_provider,
+                            cmd,
+                            exit_code,
+                        );
+                    }
+                }
+                trace!(generation = current_gen, "A11y tree rebuilt");
+            }
+
+            if cursor_moved {
+                unsafe {
+                    wixen_a11y::events::raise_text_selection_changed(&ws.uia_provider);
+                }
+            }
+
+            // New terminal output changed the accessible text — notify UIA so
+            // screen readers re-read the text and observe the live region.
+            if a11y_text_changed {
+                unsafe {
+                    wixen_a11y::events::raise_text_changed(&ws.uia_provider);
+                    wixen_a11y::events::raise_live_region_changed(&ws.uia_provider);
+                }
+            }
+
+            // UIA live region events for accumulated output.
+            // Feature 10: Verbosity filter — only raise for permitted categories.
+            // Skip short output without newlines — that's keyboard echo.
+            // NVDA's own character/word echo settings should control that,
+            // not our notification events.
+            let has_real_output = if let Some(raw_text) = pending_output {
+                let text = wixen_a11y::strip_vt_escapes(&raw_text);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() && trimmed.contains('\n') {
+                    // Multi-line output — real terminal content
+                    unsafe {
+                        raise_if_allowed(
+                            &ws.uia_provider,
+                            &text,
+                            "terminal-output",
+                            g.config.accessibility.screen_reader_output,
+                            "output",
+                        );
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // Row-change line reading is handled by NVDA's native caret
+            // tracking via GetSelection + ExpandToEnclosingUnit(Line).
+
+            // NVDA's native caret tracking handles character/line reading
+            // via GetSelection + UIATextInfo. We only need to supplement for
+            // history recall (line replacement) which NVDA can't detect as a
+            // distinct operation.
+            let scrollback_len = pane.terminal.scrollback.len();
+            let abs_row = scrollback_len + pane.terminal.grid.cursor.row;
+            let current_line = pane.terminal.extract_row_text(abs_row, abs_row);
+            if current_line != pane.prev_cursor_line && !has_real_output && !structure_changed {
+                let prev = &pane.prev_cursor_line;
+                let cur_trimmed = current_line.trim_end();
+                let prev_trimmed = prev.trim_end();
+
+                if !prev.is_empty() && cur_trimmed != prev_trimmed {
+                    let is_append = cur_trimmed.len() > prev_trimmed.len()
+                        && cur_trimmed.starts_with(prev_trimmed);
+                    let is_deletion = cur_trimmed.len() < prev_trimmed.len()
+                        && prev_trimmed.starts_with(cur_trimmed);
+
+                    if !is_append && !is_deletion {
+                        // Line content replaced (up arrow history recall)
+                        // Strip the shell prompt — announce only the command
+                        let text = strip_prompt(cur_trimmed);
+                        if text.is_empty() {
+                            unsafe {
+                                wixen_a11y::events::raise_notification(
+                                    &ws.uia_provider,
+                                    "line cleared",
+                                    "cursor-line",
+                                    false,
+                                );
+                            }
+                        } else {
+                            unsafe {
+                                wixen_a11y::events::raise_notification(
+                                    &ws.uia_provider,
+                                    text,
+                                    "cursor-line",
+                                    false,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            // Boundary detection: consume last_nav_key and check if
+            // the cursor/line didn't change (meaning we're at an edge).
+            if let Some(nav) = pane.last_nav_key.take() {
+                let new_col = pane.terminal.grid.cursor.col;
+                match nav {
+                    NavKey::Left if new_col == pane.prev_cursor_col && !cursor_moved => {
+                        play_event(&g.audio_config, AudioEvent::EditBoundary);
+                    }
+                    NavKey::Right if new_col == pane.prev_cursor_col && !cursor_moved => {
+                        play_event(&g.audio_config, AudioEvent::EditBoundary);
+                    }
+                    NavKey::Up if current_line.trim_end() == pane.prev_cursor_line.trim_end() => {
+                        pane.at_history_start = true;
+                        play_event(&g.audio_config, AudioEvent::HistoryBoundary);
+                    }
+                    NavKey::Down
+                        if current_line.trim_end().is_empty()
+                            && !pane.prev_cursor_line.trim_end().is_empty() =>
+                    {
+                        pane.at_history_end = true;
+                        play_event(&g.audio_config, AudioEvent::HistoryBoundary);
+                    }
+                    _ => {}
+                }
+            }
+
+            pane.prev_cursor_line = current_line;
+        }
+    }
+
+    // --- Handle bell notifications ---
+    for (&pane_id, pane) in ws.panes.iter_mut() {
+        if pane.terminal.bell_pending {
+            pane.terminal.bell_pending = false;
+            // Feature 8: Suppress visual bell flash when reduced motion is active
+            let bell_style = if wixen_config::should_reduce_motion(
+                &g.config.accessibility.reduced_motion,
+                wixen_ui::window::system_reduced_motion(),
+            ) {
+                match g.config.terminal.bell {
+                    BellStyle::Visual => BellStyle::None,
+                    BellStyle::Both => BellStyle::Audible,
+                    other => other,
+                }
+            } else {
+                g.config.terminal.bell
+            };
+            fire_bell(ws.window.hwnd(), bell_style);
+            // Set bell badge on the tab if this is a background tab
+            if pane_id != active_pane_id
+                && let Some(tab) = ws.tab_mgr.tabs().iter().find(|t| t.active_pane == pane_id)
+            {
+                let tab_id = tab.id;
+                ws.tab_mgr.set_bell(tab_id);
+            }
+        }
+    }
+
+    // Feature 4: Echo suppression — check for password prompts
+    {
+        let active = ws.tab_mgr.active_tab().active_pane;
+        if let Some(pane) = ws.panes.get_mut(&active)
+            && pane.terminal.check_echo_timeout()
+        {
+            play_event(&g.audio_config, AudioEvent::PasswordPrompt);
+            unsafe {
+                raise_if_allowed(
+                    &ws.uia_provider,
+                    "Text not echoed",
+                    "password-prompt",
+                    g.config.accessibility.screen_reader_output,
+                    "output",
+                );
+            }
+        }
+    }
+
+    // (Panes with exited PTY stay around with an exit banner;
+    // the user can restart via "restart_shell" or close the tab.)
+
+    // --- Taskbar progress (OSC 9;4) ---
+    if let Some(ref tb) = ws.taskbar {
+        let active = ws.tab_mgr.active_tab().active_pane;
+        if let Some(pane) = ws.panes.get(&active) {
+            let progress = pane.terminal.progress;
+            if progress != ws.last_progress {
+                ws.last_progress = progress;
+                update_taskbar_progress(tb, ws.window.hwnd(), progress);
+            }
+        }
+    }
+
+    // --- Cursor blink ---
+    let blink_elapsed = ws.blink_timer.elapsed().as_millis();
+    if blink_elapsed >= ws.blink_interval_ms {
+        ws.cursor_blink_on = !ws.cursor_blink_on;
+        ws.blink_timer = Instant::now();
+        let active = ws.tab_mgr.active_tab().active_pane;
+        if let Some(pane) = ws.panes.get_mut(&active)
+            && pane.terminal.grid.cursor.blinking
+        {
+            pane.terminal.dirty = true;
+        }
+    }
+
+    // --- Render all visible panes ---
+    let active = ws.tab_mgr.active_tab().active_pane;
+    let any_dirty = {
+        let pane_ids = ws.tab_mgr.active_tab().pane_tree.pane_ids();
+        pane_ids
+            .iter()
+            .any(|id| ws.panes.get(id).is_some_and(|p| p.terminal.dirty))
+    };
+
+    if any_dirty {
+        // Build tab bar items for the renderer
+        let raw_tab_items = ws.tab_mgr.tab_bar_items();
+        let tab_items: Vec<TabBarItem> = raw_tab_items
+            .iter()
+            .map(|(_, title, is_active, has_bell, tab_color)| TabBarItem {
+                title,
+                is_active: *is_active,
+                has_bell: *has_bell,
+                tab_color: tab_color.map(|c| (c.r, c.g, c.b)),
+            })
+            .collect();
+        let tab_bar_slice: Option<&[TabBarItem]> = if ws
+            .tab_mgr
+            .should_show_tab_bar_with_mode(g.config.window.tab_bar)
+        {
+            Some(&tab_items)
+        } else {
+            None
+        };
+
+        let (win_w, win_h) = ws.window.client_size();
+        let wf = win_w as f32;
+        let hf = win_h as f32;
+
+        // Update a11y layout metrics for BoundingRectangle calculations
+        if let Some(mut state) = ws.a11y_state.try_write() {
+            state.cell_width = ws.cell_width as f64;
+            state.cell_height = ws.cell_height as f64;
+            state.tab_bar_height = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count()) as f64;
+            state.window_width = wf as f64;
+            state.window_height = hf as f64;
+        }
+
+        // Update IME position for the active pane
+        if let Some(active_pane) = ws.panes.get(&active) {
+            let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+            let ime_x =
+                (active_pane.terminal.grid.cursor.col as f32 * ws.cell_width + pad_left) as i32;
+            let ime_y = (active_pane.terminal.grid.cursor.row as f32 * ws.cell_height
+                + tbh
+                + pad_top) as i32;
+            ws.window
+                .set_ime_position(ime_x, ime_y, ws.cell_height as i32);
+        }
+
+        // Materialize history overlay lines so the overlay can borrow them.
+        let history_lines: Vec<String> = if ws.history_browser.visible {
+            let header = if ws.history_browser.query.is_empty() {
+                "> Type to search history...".to_string()
+            } else {
+                ws.history_browser.query.clone()
+            };
+            let mut lines = Vec::with_capacity(ws.history_browser.entries().len() + 1);
+            lines.push(header);
+            lines.extend(ws.history_browser.overlay_lines());
+            lines
+        } else {
+            Vec::new()
+        };
+
+        let mut overlays: Vec<OverlayLayer> = Vec::new();
+        if ws.settings_ui.visible {
+            trace!("Building settings overlay");
+        }
+        if let Some(ol) = build_settings_overlay(&ws.settings_ui, wf, hf, ws.cell_height) {
+            trace!(lines = ol.lines.len(), "Settings overlay built");
+            overlays.push(ol);
+        }
+        if let Some(ol) = build_palette_overlay(&ws.palette, wf, hf, ws.cell_height) {
+            overlays.push(ol);
+        }
+        if let Some(ol) =
+            build_history_overlay(&ws.history_browser, &history_lines, wf, hf, ws.cell_height)
+        {
+            overlays.push(ol);
+        }
+
+        // Compute pane layout and build render infos
+        let pane_rects = ws.tab_mgr.active_tab().pane_tree.layout();
+        let tbh = ws.renderer.tab_bar_height(ws.tab_mgr.tab_count());
+        let content_w = wf - pad_left - g.config.window.padding.right as f32;
+        let content_h = hf - tbh - pad_top - g.config.window.padding.bottom as f32;
+
+        let pane_render_infos: Vec<wixen_render::PaneRenderInfo<'_>> = pane_rects
+            .iter()
+            .filter_map(|pr| {
+                let pane = ws.panes.get(&pr.pane_id)?;
+                let show_scrollbar = match g.config.window.scrollbar {
+                    wixen_config::ScrollbarMode::Always => !pane.terminal.scrollback.is_empty(),
+                    wixen_config::ScrollbarMode::Auto => pane.terminal.viewport_offset > 0,
+                    wixen_config::ScrollbarMode::Never => false,
+                };
+                Some(wixen_render::PaneRenderInfo {
+                    terminal: &pane.terminal,
+                    cursor_visible: !pane.terminal.grid.cursor.blinking || ws.cursor_blink_on,
+                    is_active: pr.pane_id == active,
+                    show_scrollbar,
+                    rect: (
+                        pad_left + pr.x * content_w,
+                        pad_top + pr.y * content_h,
+                        pr.width * content_w,
+                        pr.height * content_h,
+                    ),
+                })
+            })
+            .collect();
+
+        if pane_render_infos.len() > 1 {
+            // Multi-pane render
+            let border_color = [0.4, 0.4, 0.4, 1.0]; // Gray border
+            if let Err(e) =
+                ws.renderer
+                    .render_panes(&pane_render_infos, tab_bar_slice, &overlays, border_color)
+            {
+                error!("Multi-pane render error: {}", e);
+            }
+        } else if let Some(active_pane) = ws.panes.get(&active) {
+            // Single pane — use the original render path (with search highlighting)
+            let scrollback_len = active_pane.terminal.scrollback.len();
+            let viewport_offset = active_pane.terminal.viewport_offset;
+            let search_engine = &active_pane.search_engine;
+            let hl_closure;
+            let highlight: Option<&dyn Fn(usize, usize) -> CellHighlight> =
+                if search_engine.is_active() {
                     hl_closure = |viewport_row: usize, col: usize| -> CellHighlight {
                         let abs_row = scrollback_len.saturating_sub(viewport_offset) + viewport_row;
                         match search_engine.cell_match_state(abs_row, col) {
@@ -2861,70 +3303,33 @@ fn main() {
                 } else {
                     None
                 };
-                let show_scrollbar = match config.window.scrollbar {
-                    wixen_config::ScrollbarMode::Always => {
-                        !active_pane.terminal.scrollback.is_empty()
-                    }
-                    wixen_config::ScrollbarMode::Auto => active_pane.terminal.viewport_offset > 0,
-                    wixen_config::ScrollbarMode::Never => false,
-                };
-                let pad = (pad_left, pad_top);
-                if let Err(e) = renderer.render(
-                    &active_pane.terminal,
-                    !active_pane.terminal.grid.cursor.blinking || cursor_blink_on,
-                    highlight,
-                    tab_bar_slice,
-                    &overlays,
-                    show_scrollbar,
-                    pad,
-                ) {
-                    error!("Render error: {}", e);
-                }
-            }
-
-            // Clear dirty flags on all visible panes
-            let pane_ids = tab_mgr.active_tab().pane_tree.pane_ids();
-            for id in &pane_ids {
-                if let Some(p) = panes.get_mut(id) {
-                    p.terminal.dirty = false;
-                }
+            let show_scrollbar = match g.config.window.scrollbar {
+                wixen_config::ScrollbarMode::Always => !active_pane.terminal.scrollback.is_empty(),
+                wixen_config::ScrollbarMode::Auto => active_pane.terminal.viewport_offset > 0,
+                wixen_config::ScrollbarMode::Never => false,
+            };
+            let pad = (pad_left, pad_top);
+            if let Err(e) = ws.renderer.render(
+                &active_pane.terminal,
+                !active_pane.terminal.grid.cursor.blinking || ws.cursor_blink_on,
+                highlight,
+                tab_bar_slice,
+                &overlays,
+                show_scrollbar,
+                pad,
+            ) {
+                error!("Render error: {}", e);
             }
         }
 
-        // Yield CPU time
-        // Wait for messages or PTY data, yielding CPU without blocking the message pump.
-        // MsgWaitForMultipleObjects wakes on EITHER a message arrival OR the timeout,
-        // whichever comes first. This ensures the WndProc processes messages promptly
-        // (critical for keyboard input and UIA/screen reader COM calls).
-        unsafe {
-            use windows::Win32::UI::WindowsAndMessaging::{MsgWaitForMultipleObjects, QS_ALLINPUT};
-            MsgWaitForMultipleObjects(None, false, 1, QS_ALLINPUT);
+        // Clear dirty flags on all visible panes
+        let pane_ids = ws.tab_mgr.active_tab().pane_tree.pane_ids();
+        for id in &pane_ids {
+            if let Some(p) = ws.panes.get_mut(id) {
+                p.terminal.dirty = false;
+            }
         }
     }
-
-    // Clean up system tray icon
-    tray_icon.hide();
-
-    // Clean up quake hotkey
-    window.unregister_quake_hotkey();
-
-    // Save window placement (position, size, maximized)
-    let placement = window.get_placement();
-    if let Err(e) = wixen_ui::window::save_placement(&placement, &window_state_file) {
-        warn!(error = %e, "Failed to save window placement");
-    }
-
-    // Save session state for next launch (respects session_restore config)
-    if SessionState::should_save(&config.terminal.session_restore) {
-        let session = tab_mgr.to_session_state();
-        if !session.is_empty()
-            && let Err(e) = session.save(&session_path)
-        {
-            warn!(error = %e, "Failed to save session state");
-        }
-    }
-
-    info!("Wixen Terminal exiting");
 }
 
 // ---------------------------------------------------------------------------
@@ -3390,7 +3795,7 @@ fn dispatch_keybinding_action(
     tab_mgr: &mut TabManager,
     panes: &mut HashMap<PaneId, PaneState>,
     config: &Config,
-    running: &mut bool,
+    close_window: &mut bool,
     cols: u16,
     rows: u16,
     window: &mut Window,
@@ -3430,7 +3835,7 @@ fn dispatch_keybinding_action(
                 );
             } else {
                 info!("Last tab closed — exiting");
-                *running = false;
+                *close_window = true;
             }
             DispatchResult::Handled
         }
@@ -3569,7 +3974,7 @@ fn dispatch_keybinding_action(
                         &PluginEvent::TabClosed { tab_id: tab_id.0 },
                     );
                 } else {
-                    *running = false;
+                    *close_window = true;
                 }
             }
             DispatchResult::Handled
@@ -3776,7 +4181,7 @@ fn dispatch_keybinding_action(
             DispatchResult::Handled
         }
         "close_all_tabs" => {
-            *running = false;
+            *close_window = true;
             DispatchResult::Handled
         }
         "export_buffer_text" => {

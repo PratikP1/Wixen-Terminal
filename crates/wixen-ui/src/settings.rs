@@ -1344,6 +1344,7 @@ fn action_label(action: &str) -> &'static str {
     match action {
         "new_tab" => "New Tab",
         "close_tab" => "Close Tab",
+        "tear_off_tab" => "Tear Off Tab",
         "next_tab" => "Next Tab",
         "prev_tab" => "Previous Tab",
         "split_horizontal" => "Split Horizontal",

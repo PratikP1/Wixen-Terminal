@@ -36,6 +36,7 @@ fn builtin_commands() -> Vec<PaletteEntry> {
         // --- Tabs ---
         PaletteEntry::builtin("new_tab", "New Tab", Some("Ctrl+Shift+T"), "Tabs"),
         PaletteEntry::builtin("close_tab", "Close Tab", Some("Ctrl+Shift+W"), "Tabs"),
+        PaletteEntry::builtin("tear_off_tab", "Tear Off Tab", None, "Tabs"),
         PaletteEntry::builtin("next_tab", "Next Tab", Some("Ctrl+Tab"), "Tabs"),
         PaletteEntry::builtin("prev_tab", "Previous Tab", Some("Ctrl+Shift+Tab"), "Tabs"),
         // --- Panes ---
@@ -277,10 +278,10 @@ fn builtin_commands() -> Vec<PaletteEntry> {
 
 /// Number of built-in commands (for tests).
 ///
-/// 70 fixed entries + `minimize_to_tray` + `clear_tab_color` +
+/// 71 fixed entries + `minimize_to_tray` + `clear_tab_color` +
 /// `default_terminal_status` + `restore_default_terminal` + one per
-/// [`crate::tabs::tab_color_presets`] entry (8) = 82.
-pub const BUILTIN_COUNT: usize = 82;
+/// [`crate::tabs::tab_color_presets`] entry (8) = 83.
+pub const BUILTIN_COUNT: usize = 83;
 
 /// The palette can operate in different modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

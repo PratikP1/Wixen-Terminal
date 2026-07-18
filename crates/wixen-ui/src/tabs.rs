@@ -1377,6 +1377,44 @@ mod tests {
     }
 
     #[test]
+    fn test_from_detached_tab_preserves_exact_pane_ids() {
+        // Window tear-off keys live PTYs by PaneId: it reads the detached tab's
+        // pane_ids, removes those PaneStates from the source window, and
+        // re-inserts them under the same keys in the new window. That move is
+        // only correct if the pane ids survive detach + from_detached unchanged.
+        let mut src = TabManager::new("A");
+        let (b_id, _) = src.add_tab("B");
+        src.select_tab(b_id);
+        src.split_active_pane(crate::panes::SplitDirection::Horizontal);
+        src.split_active_pane(crate::panes::SplitDirection::Vertical);
+
+        let mut before: Vec<u64> = src
+            .active_tab()
+            .pane_tree
+            .pane_ids()
+            .iter()
+            .map(|p| p.0)
+            .collect();
+        before.sort_unstable();
+
+        let tab = src.detach_tab(b_id).unwrap();
+        let new_window = TabManager::from_detached_tab(tab);
+        let mut after: Vec<u64> = new_window
+            .active_tab()
+            .pane_tree
+            .pane_ids()
+            .iter()
+            .map(|p| p.0)
+            .collect();
+        after.sort_unstable();
+
+        assert_eq!(
+            before, after,
+            "pane ids must be identical so tear-off can move each live PTY by key"
+        );
+    }
+
+    #[test]
     fn test_from_detached_tab_allocates_fresh_ids() {
         let mut src = TabManager::new("A");
         let (b_id, _) = src.add_tab("B");
