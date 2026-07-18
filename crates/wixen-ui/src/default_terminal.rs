@@ -264,20 +264,26 @@ pub fn check_default_terminal_status() -> DefaultTerminalStatus {
 
 /// Register Wixen as the Windows default terminal.
 ///
-/// Writes [`WIXEN_TERMINAL_CLSID`] to both `DelegationConsole` and
-/// `DelegationTerminal` under `HKCU\Console\%%Startup`. After this succeeds,
-/// [`check_default_terminal_status`] reports `is_default == true`.
+/// Writes [`WIXEN_TERMINAL_CLSID`] to `DelegationTerminal` and [`CONHOST_CLSID`]
+/// (the inbox console host) to `DelegationConsole` under `HKCU\Console\%%Startup`.
 ///
-/// # Important
+/// `DelegationConsole` must name a **console server** that implements
+/// `IConsoleHandoff` — Wixen is a terminal, not a console server, so pointing
+/// that value at Wixen (as an earlier version did) would fail every console
+/// launch at the console hop before terminal handoff is ever reached. The inbox
+/// conhost is a real console server that performs the terminal handoff to
+/// `DelegationTerminal`.
 ///
-/// Writing these values only tells Windows to *try* to hand console launches
-/// off to [`WIXEN_TERMINAL_CLSID`]. It does **not** implement the console
-/// handoff COM server. Do not call this in a build that has not registered a
-/// working `ITerminalHandoff` class factory for that CLSID — see the module
-/// documentation — or console applications may fail to launch.
+/// # Gated — do not call in a shipping build yet
+///
+/// Even with the correct delegation pairing, being the default terminal also
+/// requires a working `ITerminalHandoff` COM server (see [`crate::handoff`]) whose
+/// interface IIDs and marshaling are confirmed against the Windows SDK, plus a
+/// live end-to-end launch verified on Windows 11. Until that is done, calling
+/// this can break console launches. It is intentionally never invoked in the app.
 #[cfg(windows)]
 pub fn set_as_default_terminal() -> Result<(), RegistrationError> {
-    write_delegation_values(WIXEN_TERMINAL_CLSID, WIXEN_TERMINAL_CLSID)
+    write_delegation_values(WIXEN_TERMINAL_CLSID, CONHOST_CLSID)
 }
 
 /// Non-Windows stub: registration is only supported on Windows.

@@ -11,6 +11,7 @@ wixen-render = { path = "../wixen-render" }
 wixen-config = { path = "../wixen-config" }
 wixen-a11y = { path = "../wixen-a11y" }
 windows.workspace = true
+windows-core.workspace = true
 crossbeam-channel.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

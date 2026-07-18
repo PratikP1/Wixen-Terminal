@@ -59,6 +59,28 @@ impl Tab {
     }
 }
 
+/// Tabs removed by a bulk-close operation.
+///
+/// `tab_ids[i]` and `pane_ids[i]` describe the same closed tab, in tab-bar
+/// order. Callers use `tab_ids` to fire per-tab `TabClosed` plugin events and
+/// `pane_ids` to tear down the corresponding PTYs.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ClosedTabs {
+    pub tab_ids: Vec<TabId>,
+    pub pane_ids: Vec<PaneId>,
+}
+
+impl<'a> FromIterator<&'a Tab> for ClosedTabs {
+    fn from_iter<I: IntoIterator<Item = &'a Tab>>(tabs: I) -> Self {
+        let mut closed = Self::default();
+        for tab in tabs {
+            closed.tab_ids.push(tab.id);
+            closed.pane_ids.push(tab.active_pane);
+        }
+        closed
+    }
+}
+
 /// Manages the set of open tabs.
 #[derive(Debug)]
 pub struct TabManager {
@@ -133,53 +155,36 @@ impl TabManager {
 
     /// Close all tabs except the one with the given ID.
     ///
-    /// Returns the pane IDs of the closed tabs (so the caller can clean them up).
-    /// If the tab ID isn't found, nothing is closed and an empty vec is returned.
-    pub fn close_other_tabs(&mut self, keep: TabId) -> Vec<PaneId> {
-        let mut removed_panes = Vec::new();
-        if let Some(keep_idx) = self.tabs.iter().position(|t| t.id == keep) {
-            for (i, tab) in self.tabs.iter().enumerate() {
-                if i != keep_idx {
-                    removed_panes.push(tab.active_pane);
-                }
-            }
-            let kept = self.tabs.remove(keep_idx);
-            self.tabs.clear();
-            self.tabs.push(kept);
-            self.active_idx = 0;
+    /// Returns the tab and pane IDs of the closed tabs (so the caller can fire
+    /// per-tab close events and clean up their PTYs). If the tab ID isn't
+    /// found, nothing is closed and the result is empty.
+    pub fn close_other_tabs(&mut self, keep: TabId) -> ClosedTabs {
+        if !self.tabs.iter().any(|t| t.id == keep) {
+            return ClosedTabs::default();
         }
-        removed_panes
+        let closed: ClosedTabs = self.tabs.iter().filter(|t| t.id != keep).collect();
+        self.tabs.retain(|t| t.id == keep);
+        self.active_idx = 0;
+        closed
     }
 
     /// Close all tabs to the right of the active tab.
     ///
-    /// Returns the pane IDs of the closed tabs.
-    pub fn close_tabs_to_right(&mut self) -> Vec<PaneId> {
-        if self.active_idx + 1 >= self.tabs.len() {
-            return Vec::new();
-        }
-        let removed: Vec<PaneId> = self.tabs[self.active_idx + 1..]
-            .iter()
-            .map(|t| t.active_pane)
-            .collect();
+    /// Returns the tab and pane IDs of the closed tabs.
+    pub fn close_tabs_to_right(&mut self) -> ClosedTabs {
+        let closed: ClosedTabs = self.tabs[self.active_idx + 1..].iter().collect();
         self.tabs.truncate(self.active_idx + 1);
-        removed
+        closed
     }
 
     /// Close all tabs to the left of the active tab.
     ///
-    /// Returns the pane IDs of the closed tabs.
-    pub fn close_tabs_to_left(&mut self) -> Vec<PaneId> {
-        if self.active_idx == 0 {
-            return Vec::new();
-        }
-        let removed: Vec<PaneId> = self.tabs[..self.active_idx]
-            .iter()
-            .map(|t| t.active_pane)
-            .collect();
+    /// Returns the tab and pane IDs of the closed tabs.
+    pub fn close_tabs_to_left(&mut self) -> ClosedTabs {
+        let closed: ClosedTabs = self.tabs[..self.active_idx].iter().collect();
         self.tabs.drain(..self.active_idx);
         self.active_idx = 0;
-        removed
+        closed
     }
 
     /// Switch to the tab with the given ID. Clears the bell badge on the tab.
@@ -260,6 +265,14 @@ impl TabManager {
     /// Get all tabs.
     pub fn tabs(&self) -> &[Tab] {
         &self.tabs
+    }
+
+    /// All current tab IDs in tab-bar order.
+    ///
+    /// Lets the caller enumerate startup or session-restored tabs, e.g. to
+    /// fire a `TabCreated` plugin event for each once the plugin VM is up.
+    pub fn tab_ids(&self) -> Vec<TabId> {
+        self.tabs.iter().map(|t| t.id).collect()
     }
 
     /// Number of open tabs.
@@ -1079,56 +1092,138 @@ mod tests {
     #[test]
     fn test_close_other_tabs() {
         let mut mgr = TabManager::new("A");
+        let tab_a = mgr.active_tab_id();
+        let pane_a = mgr.active_tab().active_pane;
         let (tab_b, _) = mgr.add_tab("B");
-        mgr.add_tab("C");
+        let (tab_c, pane_c) = mgr.add_tab("C");
         assert_eq!(mgr.tab_count(), 3);
 
-        let removed = mgr.close_other_tabs(tab_b);
+        let closed = mgr.close_other_tabs(tab_b);
         assert_eq!(mgr.tab_count(), 1);
         assert_eq!(mgr.active_tab_id(), tab_b);
-        assert_eq!(removed.len(), 2);
+        assert_eq!(closed.tab_ids, vec![tab_a, tab_c]);
+        assert_eq!(closed.pane_ids, vec![pane_a, pane_c]);
+    }
+
+    #[test]
+    fn test_close_other_tabs_single_tab_returns_empty() {
+        let mut mgr = TabManager::new("Only");
+        let keep = mgr.active_tab_id();
+        let closed = mgr.close_other_tabs(keep);
+        assert!(closed.tab_ids.is_empty());
+        assert!(closed.pane_ids.is_empty());
+        assert_eq!(mgr.tab_count(), 1);
+    }
+
+    #[test]
+    fn test_close_other_tabs_unknown_id_closes_nothing() {
+        let mut mgr = TabManager::new("A");
+        mgr.add_tab("B");
+        let closed = mgr.close_other_tabs(TabId(999));
+        assert!(closed.tab_ids.is_empty());
+        assert!(closed.pane_ids.is_empty());
+        assert_eq!(mgr.tab_count(), 2);
     }
 
     #[test]
     fn test_close_tabs_to_right() {
         let mut mgr = TabManager::new("A");
         let first_id = mgr.active_tab_id();
-        mgr.add_tab("B");
-        mgr.add_tab("C");
+        let (tab_b, pane_b) = mgr.add_tab("B");
+        let (tab_c, pane_c) = mgr.add_tab("C");
         // Switch back to first tab
         mgr.select_tab(first_id);
         assert_eq!(mgr.active_index(), 0);
         assert_eq!(mgr.tab_count(), 3);
 
-        let removed = mgr.close_tabs_to_right();
+        let closed = mgr.close_tabs_to_right();
         assert_eq!(mgr.tab_count(), 1);
-        assert_eq!(removed.len(), 2);
+        assert_eq!(closed.tab_ids, vec![tab_b, tab_c]);
+        assert_eq!(closed.pane_ids, vec![pane_b, pane_c]);
+    }
+
+    #[test]
+    fn test_close_tabs_to_right_only_right_of_active() {
+        let mut mgr = TabManager::new("A");
+        let (tab_b, _) = mgr.add_tab("B");
+        let (tab_c, pane_c) = mgr.add_tab("C");
+        // Active is B (middle) — only C is to the right
+        mgr.select_tab(tab_b);
+
+        let closed = mgr.close_tabs_to_right();
+        assert_eq!(mgr.tab_count(), 2);
+        assert_eq!(closed.tab_ids, vec![tab_c]);
+        assert_eq!(closed.pane_ids, vec![pane_c]);
     }
 
     #[test]
     fn test_close_tabs_to_left() {
         let mut mgr = TabManager::new("A");
-        mgr.add_tab("B");
+        let tab_a = mgr.active_tab_id();
+        let pane_a = mgr.active_tab().active_pane;
+        let (tab_b, pane_b) = mgr.add_tab("B");
         mgr.add_tab("C");
         // Switch to last tab (index 2)
         let last_id = mgr.tabs()[2].id;
         mgr.select_tab(last_id);
         assert_eq!(mgr.active_index(), 2);
 
-        let removed = mgr.close_tabs_to_left();
+        let closed = mgr.close_tabs_to_left();
         assert_eq!(mgr.tab_count(), 1);
         assert_eq!(mgr.active_index(), 0);
         assert_eq!(mgr.active_tab_id(), last_id);
-        assert_eq!(removed.len(), 2);
+        assert_eq!(closed.tab_ids, vec![tab_a, tab_b]);
+        assert_eq!(closed.pane_ids, vec![pane_a, pane_b]);
     }
 
     #[test]
     fn test_close_tabs_to_right_none() {
         let mut mgr = TabManager::new("A");
         // Only one tab, nothing to the right
-        let removed = mgr.close_tabs_to_right();
-        assert!(removed.is_empty());
+        let closed = mgr.close_tabs_to_right();
+        assert!(closed.tab_ids.is_empty());
+        assert!(closed.pane_ids.is_empty());
         assert_eq!(mgr.tab_count(), 1);
+    }
+
+    #[test]
+    fn test_close_tabs_to_left_none_when_leftmost() {
+        let mut mgr = TabManager::new("A");
+        let first_id = mgr.active_tab_id();
+        mgr.add_tab("B");
+        mgr.select_tab(first_id);
+
+        let closed = mgr.close_tabs_to_left();
+        assert!(closed.tab_ids.is_empty());
+        assert!(closed.pane_ids.is_empty());
+        assert_eq!(mgr.tab_count(), 2);
+    }
+
+    #[test]
+    fn test_tab_ids_lists_all_tabs_in_order() {
+        let mut mgr = TabManager::new("A");
+        let tab_a = mgr.active_tab_id();
+        let (tab_b, _) = mgr.add_tab("B");
+        let (tab_c, _) = mgr.add_tab("C");
+
+        assert_eq!(mgr.tab_ids(), vec![tab_a, tab_b, tab_c]);
+    }
+
+    #[test]
+    fn test_tab_ids_single_tab() {
+        let mgr = TabManager::new("Only");
+        assert_eq!(mgr.tab_ids(), vec![mgr.active_tab_id()]);
+    }
+
+    #[test]
+    fn test_tab_ids_follow_reorder() {
+        let mut mgr = TabManager::new("A");
+        let tab_a = mgr.active_tab_id();
+        let (tab_b, _) = mgr.add_tab("B");
+        let (tab_c, _) = mgr.add_tab("C");
+
+        mgr.move_tab(0, 2);
+        assert_eq!(mgr.tab_ids(), vec![tab_b, tab_c, tab_a]);
     }
 
     #[test]

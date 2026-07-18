@@ -128,6 +128,39 @@ fn spawn_pane(
         }
     };
 
+    build_pane_state(pty, pty_rx, cols, rows, config)
+}
+
+/// Spawn a pane with a specific command and arguments (e.g., SSH).
+fn spawn_pane_with_command(
+    cols: u16,
+    rows: u16,
+    config: &Config,
+    program: &str,
+    args: &[String],
+) -> PaneState {
+    let (pty, pty_rx) = match PtyHandle::spawn_with_shell(cols, rows, program, args, "") {
+        Ok(pair) => pair,
+        Err(e) => {
+            error!("Failed to spawn PTY for command: {e}");
+            fatal_error(&format!(
+                "Could not start process: {e}\n\nCommand: {program}"
+            ));
+        }
+    };
+
+    build_pane_state(pty, pty_rx, cols, rows, config)
+}
+
+/// Assemble a `PaneState` around an already-established PTY connection —
+/// shared by the spawn paths and console-handoff adoption.
+fn build_pane_state(
+    pty: PtyHandle,
+    pty_rx: Receiver<PtyEvent>,
+    cols: u16,
+    rows: u16,
+    config: &Config,
+) -> PaneState {
     let mut terminal = Terminal::new(cols as usize, rows as usize);
     terminal.grid.cursor.shape = parse_cursor_style(&config.terminal.cursor_style);
     terminal.grid.cursor.blinking = config.terminal.cursor_blink;
@@ -157,50 +190,85 @@ fn spawn_pane(
     }
 }
 
-/// Spawn a pane with a specific command and arguments (e.g., SSH).
-fn spawn_pane_with_command(
+// ---------------------------------------------------------------------------
+// Console handoff (default-terminal receiver)
+// ---------------------------------------------------------------------------
+
+/// How long a `--handoff` launch waits for the console host to deliver the
+/// first handoff before concluding the activation failed and exiting.
+const HANDOFF_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Build a pane around a console connection adopted from a default-terminal
+/// handoff instead of a freshly spawned shell.
+fn adopt_handoff_pane(
+    request: &wixen_ui::HandoffRequest,
     cols: u16,
     rows: u16,
     config: &Config,
-    program: &str,
-    args: &[String],
-) -> PaneState {
-    let (pty, pty_rx) = match PtyHandle::spawn_with_shell(cols, rows, program, args, "") {
-        Ok(pair) => pair,
-        Err(e) => {
-            error!("Failed to spawn PTY for command: {e}");
-            fatal_error(&format!(
-                "Could not start process: {e}\n\nCommand: {program}"
-            ));
+) -> Result<PaneState, wixen_pty::PtyError> {
+    let pipes =
+        wixen_pty::HandoffPipes::new(request.input_pipe, request.output_pipe, request.signal_pipe)?;
+    let (pty, pty_rx) = PtyHandle::from_handoff(pipes, cols, rows)?;
+    Ok(build_pane_state(pty, pty_rx, cols, rows, config))
+}
+
+/// Title for a window hosting an adopted console: the client's requested
+/// title when present, otherwise the configured window title.
+fn handoff_window_title(startup: &wixen_ui::HandoffStartupInfo, fallback: &str) -> String {
+    startup
+        .title
+        .clone()
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Handles from an adopted console session that must stay open for the
+/// session's lifetime: the reference handle keeps the console session alive,
+/// and the process handles belong to the console host and client. They are
+/// intentionally never closed — the OS reclaims them at process exit.
+struct AdoptedConsoleHandles {
+    reference_handle: isize,
+    server_process: isize,
+    client_process: isize,
+}
+
+impl AdoptedConsoleHandles {
+    /// Capture the session handles from a handoff request, logging them once.
+    fn remember(request: &wixen_ui::HandoffRequest) -> Self {
+        let handles = Self {
+            reference_handle: request.reference_handle,
+            server_process: request.server_process,
+            client_process: request.client_process,
+        };
+        info!(
+            reference = handles.reference_handle,
+            server = handles.server_process,
+            client = handles.client_process,
+            "Holding console session handles for adopted handoff"
+        );
+        handles
+    }
+}
+
+/// Wait (bounded) for the first handoff request while pumping the message
+/// queue. The class factory lives in this thread's STA, so the incoming
+/// `EstablishPtyHandoff` COM call is dispatched by the message pump — blocking
+/// on the channel without pumping would deadlock the delivery.
+fn wait_for_handoff_request(
+    rx: &Receiver<wixen_ui::HandoffRequest>,
+    timeout: Duration,
+) -> Option<wixen_ui::HandoffRequest> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !pump_thread_messages() {
+            return None;
         }
-    };
-
-    let mut terminal = Terminal::new(cols as usize, rows as usize);
-    terminal.grid.cursor.shape = parse_cursor_style(&config.terminal.cursor_style);
-    terminal.grid.cursor.blinking = config.terminal.cursor_blink;
-
-    PaneState {
-        terminal,
-        parser: Parser::new(),
-        pty,
-        pty_rx,
-        search_engine: SearchEngine::new(),
-        event_throttler: {
-            let mut t = EventThrottler::new();
-            t.set_debounce_ms(config.accessibility.output_debounce_ms);
-            t
-        },
-        last_shell_generation: 0,
-        search_mode: false,
-        search_buffer: String::new(),
-        status: PaneStatus::Running,
-        command_started_at: None,
-        command_history: CommandHistory::new(),
-        prev_cursor_line: String::new(),
-        last_nav_key: None,
-        prev_cursor_col: 0,
-        at_history_start: false,
-        at_history_end: false,
+        if let Ok(request) = rx.try_recv() {
+            return Some(request);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -385,12 +453,36 @@ fn main() {
         );
     }
 
+    // Console-handoff launch (COM activation via `--handoff` / `-Embedding`):
+    // register the class factory immediately so the console host's pending
+    // `CoCreateInstance` resolves to this process; the incoming console is
+    // then adopted as the first pane instead of spawning a shell. The binding
+    // must stay alive for the whole run — dropping it revokes the factory.
+    let handoff_mode = wixen_ui::is_handoff_launch(std::env::args().skip(1));
+    let (_handoff_server, handoff_rx) = if handoff_mode {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        match wixen_ui::handoff::HandoffServer::start(tx) {
+            Ok(server) => (Some(server), Some(rx)),
+            Err(e) => {
+                error!(error = %e, "Handoff launch: class factory registration failed");
+                return;
+            }
+        }
+    } else {
+        (None, None)
+    };
+
     // Single-instance check: if another wixen process owns the IPC pipe,
     // send a NewWindow request and exit. Otherwise, we become the server.
     // --standalone flag skips this check (used by IPC-spawned child windows).
+    // A handoff launch also skips it: this process must itself receive the
+    // console the host is about to deliver.
     let standalone = std::env::args().any(|a| a == "--standalone");
     let pipe_name = PipeName::default_name();
-    let is_server = if standalone {
+    let is_server = if handoff_mode {
+        info!("Handoff launch — skipping IPC single-instance check");
+        false
+    } else if standalone {
         info!("Standalone mode — skipping IPC single-instance check");
         false
     } else if !IpcServer::try_claim(&pipe_name) {
@@ -614,8 +706,35 @@ fn main() {
     let session_path = SessionState::default_path(&cfg_path);
     let mut panes: HashMap<PaneId, PaneState> = HashMap::new();
 
+    // Raw handles from adopted console sessions, held open for the process
+    // lifetime (see `AdoptedConsoleHandles`).
+    let mut adopted_consoles: Vec<AdoptedConsoleHandles> = Vec::new();
+
     let session_mode = config.terminal.session_restore.as_str();
-    let tab_mgr = if SessionState::should_restore(session_mode)
+    let tab_mgr = if let Some(rx) = handoff_rx.as_ref() {
+        // Handoff launch: the console host delivers an existing ConPTY
+        // connection; adopt it as the first pane instead of spawning a shell.
+        let Some(request) = wait_for_handoff_request(rx, HANDOFF_STARTUP_TIMEOUT) else {
+            info!(
+                timeout_secs = HANDOFF_STARTUP_TIMEOUT.as_secs(),
+                "No console handoff arrived — activation failed or went elsewhere; exiting"
+            );
+            return;
+        };
+        let pane = match adopt_handoff_pane(&request, current_cols, current_rows, &config) {
+            Ok(pane) => pane,
+            Err(e) => {
+                error!(error = %e, "Failed to adopt handed-off console — exiting");
+                return;
+            }
+        };
+        let title = handoff_window_title(&request.startup, &config.window.title);
+        let mgr = TabManager::new(&title);
+        panes.insert(mgr.active_tab().active_pane, pane);
+        adopted_consoles.push(AdoptedConsoleHandles::remember(&request));
+        info!("Console handoff adopted as primary window session");
+        mgr
+    } else if SessionState::should_restore(session_mode)
         && let Some(session) = SessionState::load(&session_path)
     {
         let (mgr, pane_ids) = TabManager::from_session_state(&session);
@@ -857,6 +976,18 @@ fn main() {
     }
     let mut shutdown_all = false;
 
+    // Initial and session-restored tabs predate the plugin VM, so no
+    // TabCreated event has fired for them yet — announce each one now.
+    if let Some(ws) = windows.get(&primary_id) {
+        for tab_id in ws.tab_mgr.tab_ids() {
+            dispatch_plugin_event(
+                &globals.plugin_lua,
+                &globals.plugin_registry,
+                &PluginEvent::TabCreated { tab_id: tab_id.0 },
+            );
+        }
+    }
+
     info!("Entering main event loop");
     loop {
         // One message pump serves every window on this thread.
@@ -891,6 +1022,22 @@ fn main() {
                 if handle_ipc_request(ipc_req, primary_id, &mut windows, &globals) {
                     shutdown_all = true;
                 }
+            }
+        }
+
+        // Additional console handoffs: the class factory is registered
+        // `REGCLS_MULTIPLEUSE`, so one running process serves every handoff
+        // after the first. Each becomes a new window around the adopted PTY.
+        if let Some(rx) = handoff_rx.as_ref() {
+            while let Ok(request) = rx.try_recv() {
+                open_handoff_window(
+                    request,
+                    &mut windows,
+                    &mut registry,
+                    &mut mux,
+                    &globals,
+                    &mut adopted_consoles,
+                );
             }
         }
 
@@ -1076,26 +1223,131 @@ fn tear_off_active_tab(
 
     // Create the new window near the source window's origin.
     let title = tab.display_title();
-    let width = seed_w.max(200);
-    let height = seed_h.max(150);
-    let new_window = match Window::new_at(
+    let Some(parts) = build_window_parts(
         &title,
-        width,
-        height,
-        origin_x + TEAR_OFF_OFFSET_PX,
-        origin_y + TEAR_OFF_OFFSET_PX,
-    ) {
+        seed_w.max(200),
+        seed_h.max(150),
+        Some((origin_x + TEAR_OFF_OFFSET_PX, origin_y + TEAR_OFF_OFFSET_PX)),
+        g,
+    ) else {
+        error!("Tear-off failed: window construction");
+        return;
+    };
+
+    // Move the live panes into the new window, resizing them to the new grid.
+    let mut new_panes: HashMap<PaneId, PaneState> = HashMap::new();
+    for (pid, mut state) in moved_panes {
+        state
+            .terminal
+            .resize(parts.current_cols as usize, parts.current_rows as usize);
+        let _ = state.pty.resize(parts.current_cols, parts.current_rows);
+        state.terminal.dirty = true;
+        new_panes.insert(pid, state);
+    }
+
+    let tab_mgr = TabManager::from_detached_tab(tab);
+    let state = window_state_from_parts(parts, tab_mgr, new_panes, title, g);
+    let new_id = state.window.id();
+    windows.insert(new_id, state);
+    registry.register(new_id);
+    if let Some(ws) = windows.get(&new_id) {
+        mux.attach_window(&ws.window);
+    }
+    info!(
+        source = source_id.raw(),
+        new = new_id.raw(),
+        "Tab torn off into new window"
+    );
+}
+
+/// Open a new OS window hosting a console adopted from a default-terminal
+/// handoff. Used for every handoff after the first (the primary window adopts
+/// that one during startup).
+fn open_handoff_window(
+    request: wixen_ui::HandoffRequest,
+    windows: &mut HashMap<WindowId, WindowState>,
+    registry: &mut WindowRegistry,
+    mux: &mut WindowEventMux,
+    g: &AppGlobals,
+    adopted_consoles: &mut Vec<AdoptedConsoleHandles>,
+) {
+    let title = handoff_window_title(&request.startup, &g.config.window.title);
+    let Some(parts) = build_window_parts(
+        &title,
+        g.config.window.width,
+        g.config.window.height,
+        None,
+        g,
+    ) else {
+        error!("Handoff window construction failed — dropping console handoff");
+        return;
+    };
+
+    let pane = match adopt_handoff_pane(&request, parts.current_cols, parts.current_rows, &g.config)
+    {
+        Ok(pane) => pane,
+        Err(e) => {
+            error!(error = %e, "Failed to adopt handed-off console");
+            return;
+        }
+    };
+    let tab_mgr = TabManager::new(&title);
+    let mut panes: HashMap<PaneId, PaneState> = HashMap::new();
+    panes.insert(tab_mgr.active_tab().active_pane, pane);
+    adopted_consoles.push(AdoptedConsoleHandles::remember(&request));
+
+    let state = window_state_from_parts(parts, tab_mgr, panes, title, g);
+    let new_id = state.window.id();
+    windows.insert(new_id, state);
+    registry.register(new_id);
+    if let Some(ws) = windows.get(&new_id) {
+        mux.attach_window(&ws.window);
+    }
+    info!(id = new_id.raw(), "Console handoff opened in new window");
+}
+
+/// A freshly created OS window with its renderer, UIA provider, and computed
+/// grid geometry — the pieces shared by tab tear-off and console handoff
+/// before any tabs or panes are attached.
+struct NewWindowParts {
+    window: Window,
+    renderer: TerminalRenderer,
+    a11y_state: Arc<RwLock<TerminalA11yState>>,
+    cursor_offset: Arc<std::sync::atomic::AtomicI32>,
+    uia_provider: IRawElementProviderSimple,
+    current_cols: u16,
+    current_rows: u16,
+    cell_width: f32,
+    cell_height: f32,
+}
+
+/// Create a window (optionally at an explicit screen position) with chrome,
+/// UIA provider, renderer, and grid metrics from the current config. Returns
+/// `None` — with the failure logged — if the window or renderer cannot be
+/// built.
+fn build_window_parts(
+    title: &str,
+    width: u32,
+    height: u32,
+    position: Option<(i32, i32)>,
+    g: &AppGlobals,
+) -> Option<NewWindowParts> {
+    let created = match position {
+        Some((x, y)) => Window::new_at(title, width, height, x, y),
+        None => Window::new(title, width, height),
+    };
+    let new_window = match created {
         Ok(win) => win,
         Err(e) => {
-            error!(error = %e, "Tear-off failed: could not create window");
-            return;
+            error!(error = %e, "Could not create window");
+            return None;
         }
     };
     wixen_ui::window::apply_window_chrome(new_window.hwnd(), &g.config.window);
 
     // UIA provider bound to the new window's HWND.
     let a11y_state = Arc::new(RwLock::new(TerminalA11yState::new()));
-    a11y_state.write().title = title.clone();
+    a11y_state.write().title = title.to_string();
     let cursor_offset = Arc::new(std::sync::atomic::AtomicI32::new(0));
     let provider = TerminalProvider::new(
         new_window.hwnd(),
@@ -1127,8 +1379,8 @@ fn tear_off_active_tab(
     } {
         Ok(r) => r,
         Err(e) => {
-            error!(error = %e, "Tear-off failed: renderer init");
-            return;
+            error!(error = %e, "Renderer init failed for new window");
+            return None;
         }
     };
     if !g.config.window.background_image.is_empty()
@@ -1159,18 +1411,28 @@ fn tear_off_active_tab(
         .floor()
         .clamp(1.0, 500.0) as u16;
 
-    // Move the live panes into the new window, resizing them to the new grid.
-    let mut new_panes: HashMap<PaneId, PaneState> = HashMap::new();
-    for (pid, mut state) in moved_panes {
-        state
-            .terminal
-            .resize(current_cols as usize, current_rows as usize);
-        let _ = state.pty.resize(current_cols, current_rows);
-        state.terminal.dirty = true;
-        new_panes.insert(pid, state);
-    }
+    Some(NewWindowParts {
+        window: new_window,
+        renderer,
+        a11y_state,
+        cursor_offset,
+        uia_provider,
+        current_cols,
+        current_rows,
+        cell_width,
+        cell_height,
+    })
+}
 
-    let tab_mgr = TabManager::from_detached_tab(tab);
+/// Assemble a `WindowState` around freshly built window parts, a tab manager,
+/// and its panes, with the per-window overlays at their defaults.
+fn window_state_from_parts(
+    parts: NewWindowParts,
+    tab_mgr: TabManager,
+    panes: HashMap<PaneId, PaneState>,
+    base_title: String,
+    g: &AppGlobals,
+) -> WindowState {
     let prev_active_pane = tab_mgr.active_tab().active_pane;
     let prev_active_tab_id = tab_mgr.active_tab_id();
 
@@ -1188,30 +1450,29 @@ fn tear_off_active_tab(
         .ok()
     };
 
-    let new_id = new_window.id();
-    let state = WindowState {
-        window: new_window,
-        renderer,
+    WindowState {
+        window: parts.window,
+        renderer: parts.renderer,
         tab_mgr,
-        panes: new_panes,
-        a11y_state,
-        cursor_offset,
-        uia_provider,
+        panes,
+        a11y_state: parts.a11y_state,
+        cursor_offset: parts.cursor_offset,
+        uia_provider: parts.uia_provider,
         palette,
         history_browser: HistoryBrowser::new(),
         settings_ui: SettingsUI::from_config(&g.config),
         taskbar,
-        current_cols,
-        current_rows,
-        cell_width,
-        cell_height,
+        current_cols: parts.current_cols,
+        current_rows: parts.current_rows,
+        cell_width: parts.cell_width,
+        cell_height: parts.cell_height,
         last_progress: ProgressState::Hidden,
         last_announced_progress: None,
         blink_interval_ms: g.config.terminal.cursor_blink_ms as u128,
         blink_timer: Instant::now(),
         cursor_blink_on: true,
         mouse_dragging: false,
-        base_title: title,
+        base_title,
         last_dblclick: None,
         tab_drag: None,
         window_focused: true,
@@ -1220,17 +1481,7 @@ fn tear_off_active_tab(
         prev_active_tab_id,
         prev_selection_active: false,
         close_requested: false,
-    };
-    windows.insert(new_id, state);
-    registry.register(new_id);
-    if let Some(ws) = windows.get(&new_id) {
-        mux.attach_window(&ws.window);
     }
-    info!(
-        source = source_id.raw(),
-        new = new_id.raw(),
-        "Tab torn off into new window"
-    );
 }
 
 /// Handle one IPC request. Returns `true` if the process should shut down.
@@ -4337,30 +4588,24 @@ fn dispatch_keybinding_action(
         }
         "close_other_tabs" => {
             let keep_id = tab_mgr.active_tab_id();
-            let removed = tab_mgr.close_other_tabs(keep_id);
-            for pane_id in removed {
-                panes.remove(&pane_id);
-            }
+            let closed = tab_mgr.close_other_tabs(keep_id);
+            retire_closed_tabs(closed, panes, plugin_lua, plugin_registry);
             if let Some(p) = panes.get_mut(&tab_mgr.active_tab().active_pane) {
                 p.terminal.dirty = true;
             }
             DispatchResult::Handled
         }
         "close_tabs_to_right" => {
-            let removed = tab_mgr.close_tabs_to_right();
-            for pane_id in removed {
-                panes.remove(&pane_id);
-            }
+            let closed = tab_mgr.close_tabs_to_right();
+            retire_closed_tabs(closed, panes, plugin_lua, plugin_registry);
             if let Some(p) = panes.get_mut(&tab_mgr.active_tab().active_pane) {
                 p.terminal.dirty = true;
             }
             DispatchResult::Handled
         }
         "close_tabs_to_left" => {
-            let removed = tab_mgr.close_tabs_to_left();
-            for pane_id in removed {
-                panes.remove(&pane_id);
-            }
+            let closed = tab_mgr.close_tabs_to_left();
+            retire_closed_tabs(closed, panes, plugin_lua, plugin_registry);
             if let Some(p) = panes.get_mut(&tab_mgr.active_tab().active_pane) {
                 p.terminal.dirty = true;
             }
@@ -4657,6 +4902,26 @@ fn macro_palette_entries(store: &wixen_config::MacroStore) -> Vec<(String, Strin
         .iter()
         .map(|m| (m.name.clone(), m.description.clone()))
         .collect()
+}
+
+/// Tear down the PTYs of tabs removed by a bulk-close operation and fire a
+/// `TabClosed` plugin event for each closed tab.
+fn retire_closed_tabs(
+    closed: wixen_ui::ClosedTabs,
+    panes: &mut HashMap<PaneId, PaneState>,
+    plugin_lua: &mlua::Lua,
+    plugin_registry: &PluginRegistry,
+) {
+    for pane_id in &closed.pane_ids {
+        panes.remove(pane_id);
+    }
+    for tab_id in &closed.tab_ids {
+        dispatch_plugin_event(
+            plugin_lua,
+            plugin_registry,
+            &PluginEvent::TabClosed { tab_id: tab_id.0 },
+        );
+    }
 }
 
 /// Run every plugin subscribed to `event`, logging handler errors.
@@ -5361,10 +5626,15 @@ fn handle_local_action(
             // SAFETY GATE: we intentionally never call
             // `wixen_ui::set_as_default_terminal()` here (or anywhere). Writing the
             // `DelegationConsole`/`DelegationTerminal` CLSIDs would tell Windows to
-            // hand console launches to Wixen's CLSID — but the `ITerminalHandoff`
-            // COM server that CLSID must resolve to is not built yet, so console
-            // apps would fail to launch. Only status-read and restore are wired;
-            // "set as default" stays unexposed until the handoff server ships.
+            // hand console launches to Wixen's CLSID. The handoff COM server and
+            // the `--handoff` receiver are now wired, but end-to-end default-
+            // terminal duty additionally requires: the transcribed
+            // `ITerminalHandoff` IIDs/marshaling verified against the Windows SDK
+            // (see the VERIFY notes in wixen-ui/src/handoff.rs), a console-server
+            // component (Wixen has none — `DelegationConsole` references conhost),
+            // and a live Windows 11 test. Until then only status-read, restore,
+            // and handoff-server registration are exposed; "set as default"
+            // stays disabled.
             let status = wixen_ui::check_default_terminal_status();
             let msg = if status.is_default {
                 "Wixen is the default terminal".to_string()
@@ -5397,6 +5667,44 @@ fn handle_local_action(
                 Err(e) => {
                     error!(error = %e, "Failed to restore default terminal");
                     let msg = "Failed to restore the Windows default terminal";
+                    unsafe {
+                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
+                    }
+                }
+            }
+            true
+        }
+        "register_handoff_server" => {
+            match wixen_ui::register_handoff_server() {
+                Ok(()) => {
+                    let msg = "Handoff server registered for this executable";
+                    info!("{msg}");
+                    unsafe {
+                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to register handoff server");
+                    let msg = "Failed to register the handoff server";
+                    unsafe {
+                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
+                    }
+                }
+            }
+            true
+        }
+        "unregister_handoff_server" => {
+            match wixen_ui::unregister_handoff_server() {
+                Ok(()) => {
+                    let msg = "Handoff server registration removed";
+                    info!("{msg}");
+                    unsafe {
+                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to unregister handoff server");
+                    let msg = "Failed to remove the handoff server registration";
                     unsafe {
                         raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
                     }
@@ -5554,5 +5862,65 @@ mod tests {
         assert_eq!(overlay.lines[1].text, "cargo build");
         // The selected entry (index 0) is bold.
         assert!(overlay.lines[1].bold);
+    }
+
+    // --- Console handoff helpers ---
+
+    fn sample_handoff_request(title: Option<&str>) -> wixen_ui::HandoffRequest {
+        wixen_ui::HandoffRequest {
+            input_pipe: 0x100,
+            output_pipe: 0x104,
+            signal_pipe: 0x108,
+            reference_handle: 0x10C,
+            server_process: 0x110,
+            client_process: 0x114,
+            startup: wixen_ui::HandoffStartupInfo {
+                title: title.map(str::to_string),
+                ..wixen_ui::HandoffStartupInfo::default()
+            },
+        }
+    }
+
+    #[test]
+    fn test_handoff_window_title_prefers_client_title() {
+        let request = sample_handoff_request(Some("cmd"));
+        assert_eq!(
+            handoff_window_title(&request.startup, "Wixen Terminal"),
+            "cmd"
+        );
+    }
+
+    #[test]
+    fn test_handoff_window_title_falls_back_to_configured_title() {
+        let request = sample_handoff_request(None);
+        assert_eq!(
+            handoff_window_title(&request.startup, "Wixen Terminal"),
+            "Wixen Terminal"
+        );
+    }
+
+    #[test]
+    fn test_adopted_console_handles_capture_session_handles() {
+        let request = sample_handoff_request(None);
+        let handles = AdoptedConsoleHandles::remember(&request);
+        assert_eq!(handles.reference_handle, 0x10C);
+        assert_eq!(handles.server_process, 0x110);
+        assert_eq!(handles.client_process, 0x114);
+    }
+
+    #[test]
+    fn test_wait_for_handoff_request_returns_pending_request() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        tx.send(sample_handoff_request(Some("pending")))
+            .expect("receiver is alive");
+        let request = wait_for_handoff_request(&rx, Duration::from_millis(200))
+            .expect("pending request should be delivered");
+        assert_eq!(request.startup.title.as_deref(), Some("pending"));
+    }
+
+    #[test]
+    fn test_wait_for_handoff_request_times_out_when_nothing_arrives() {
+        let (_tx, rx) = crossbeam_channel::unbounded::<wixen_ui::HandoffRequest>();
+        assert!(wait_for_handoff_request(&rx, Duration::from_millis(1)).is_none());
     }
 }

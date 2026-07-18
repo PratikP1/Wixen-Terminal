@@ -2,6 +2,10 @@
 //!
 //! Wraps portable-pty to create pseudo-terminal pairs and spawn shell processes.
 
+pub mod handoff;
+
+pub use handoff::HandoffPipes;
+
 use crossbeam_channel::Receiver;
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtyPair, PtySize, PtySystem};
 use std::io::{Read, Write};
@@ -20,6 +24,21 @@ pub enum PtyError {
     Io(#[from] std::io::Error),
     #[error("PTY error: {0}")]
     Pty(#[source] anyhow::Error),
+    #[error("Handoff {role} pipe handle is null — the console host did not provide it")]
+    HandoffHandleNull { role: &'static str },
+    #[error("Handoff {role} pipe handle is invalid (INVALID_HANDLE_VALUE)")]
+    HandoffHandleInvalid { role: &'static str },
+    #[error(
+        "Handoff pipe handles must be distinct (input={input:#x}, output={output:#x}, \
+         signal={signal:#x}) — adopting a duplicate would double-close it"
+    )]
+    HandoffHandlesNotDistinct {
+        input: isize,
+        output: isize,
+        signal: isize,
+    },
+    #[error("Console handoff adoption is only supported on Windows")]
+    HandoffUnsupported,
 }
 
 /// Messages from the PTY reader thread to the main thread.
@@ -44,9 +63,54 @@ fn which_shell(name: &str) -> bool {
 
 /// Handle to a running PTY session.
 pub struct PtyHandle {
-    master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
-    _child: Box<dyn portable_pty::Child + Send>,
+    backend: Backend,
+}
+
+/// How this session's PTY came to exist, and what resize/cleanup need.
+enum Backend {
+    /// A ConPTY we created ourselves via portable-pty.
+    Spawned {
+        master: Box<dyn MasterPty + Send>,
+        _child: Box<dyn portable_pty::Child + Send>,
+    },
+    /// An existing ConPTY connection adopted from a console handoff; resize
+    /// travels over the signal pipe as a ConPTY signal packet.
+    #[cfg(windows)]
+    Adopted { signal: std::fs::File },
+}
+
+/// Spawn the shared PTY reader thread: pump bytes from `reader` into a
+/// [`PtyEvent`] channel until EOF or error. Both the spawn and handoff
+/// adoption paths use this same plumbing.
+fn spawn_reader_thread<R: Read + Send + 'static>(
+    mut reader: R,
+) -> Result<Receiver<PtyEvent>, PtyError> {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    std::thread::Builder::new()
+        .name("pty-reader".to_string())
+        .spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = tx.send(PtyEvent::Exited(None));
+                        break;
+                    }
+                    Ok(n) => {
+                        if tx.send(PtyEvent::Output(buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("PTY read error: {}", e);
+                        let _ = tx.send(PtyEvent::Exited(None));
+                        break;
+                    }
+                }
+            }
+        })?;
+    Ok(rx)
 }
 
 impl PtyHandle {
@@ -109,43 +173,18 @@ impl PtyHandle {
         drop(slave); // Close slave side — child owns it now
 
         let writer = master.take_writer().map_err(PtyError::Pty)?;
-        let mut reader = master.try_clone_reader().map_err(PtyError::Pty)?;
-
-        let (tx, rx) = crossbeam_channel::unbounded();
-
-        // Reader thread: reads from PTY and sends to main thread
-        std::thread::Builder::new()
-            .name("pty-reader".to_string())
-            .spawn(move || {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match reader.read(&mut buf) {
-                        Ok(0) => {
-                            let _ = tx.send(PtyEvent::Exited(None));
-                            break;
-                        }
-                        Ok(n) => {
-                            if tx.send(PtyEvent::Output(buf[..n].to_vec())).is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            error!("PTY read error: {}", e);
-                            let _ = tx.send(PtyEvent::Exited(None));
-                            break;
-                        }
-                    }
-                }
-            })
-            .expect("Failed to spawn PTY reader thread");
+        let reader = master.try_clone_reader().map_err(PtyError::Pty)?;
+        let rx = spawn_reader_thread(reader)?;
 
         info!(shell = %shell, cols, rows, "PTY session spawned");
 
         Ok((
             Self {
-                master,
                 writer,
-                _child: child,
+                backend: Backend::Spawned {
+                    master,
+                    _child: child,
+                },
             },
             rx,
         ))
@@ -160,14 +199,18 @@ impl PtyHandle {
 
     /// Resize the PTY.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
-        self.master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(PtyError::Resize)
+        match &self.backend {
+            Backend::Spawned { master, .. } => master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(PtyError::Resize),
+            #[cfg(windows)]
+            Backend::Adopted { signal } => handoff::send_resize(signal, cols, rows),
+        }
     }
 }
 
@@ -216,7 +259,7 @@ mod tests {
     #[test]
     fn test_spawn_and_write_echo() {
         // Spawn a real PTY with cmd.exe, send echo, verify output
-        let (mut handle, rx) = PtyHandle::spawn_with_shell(
+        let (_handle, rx) = PtyHandle::spawn_with_shell(
             80,
             24,
             "cmd.exe",
