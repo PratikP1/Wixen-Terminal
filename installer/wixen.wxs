@@ -2,11 +2,14 @@
 <!--
   Wixen Terminal - WiX v4 MSI installer source
 
-  Build:
-    cargo build --release
+  Build (XML comments forbid double hyphens, so "cargo build -r" is the
+  release-profile build):
+    cargo build -r
+    pwsh scripts/fetch-openconsole.ps1
     wix build installer/wixen.wxs -o wixen-terminal.msi \
       -d Version=0.1.0 \
-      -d ExePath=target/release/wixen.exe
+      -d ExePath=target/release/wixen.exe \
+      -d OpenConsoleDir=vendor/openconsole
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
@@ -44,6 +47,31 @@
         <File Id="WixenExeFile"
               Source="$(ExePath)"
               Name="wixen.exe"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Bundled Microsoft OpenConsole binaries (MIT-licensed, fetched by
+         scripts/fetch-openconsole.ps1). Installed next to wixen.exe so the
+         default-terminal registration's install_dir contains the console
+         server, its COM proxy, and the terminal. -->
+    <ComponentGroup Id="OpenConsoleBinaries" Directory="INSTALLFOLDER">
+      <Component Id="OpenConsoleExe" Guid="84c92ed2-42b6-4daf-980b-4eb2852f451b">
+        <File Id="OpenConsoleExeFile"
+              Source="$(OpenConsoleDir)\OpenConsole.exe"
+              Name="OpenConsole.exe"
+              KeyPath="yes" />
+      </Component>
+      <Component Id="OpenConsoleProxyDll" Guid="7b58e9cb-dfa2-42d5-afa0-0a8984b90002">
+        <File Id="OpenConsoleProxyDllFile"
+              Source="$(OpenConsoleDir)\OpenConsoleProxy.dll"
+              Name="OpenConsoleProxy.dll"
+              KeyPath="yes" />
+      </Component>
+      <Component Id="OpenConsoleNotices" Guid="5f295112-2229-4c53-9a88-306227787c3d">
+        <File Id="OpenConsoleNoticesFile"
+              Source="$(OpenConsoleDir)\README.md"
+              Name="THIRD-PARTY-NOTICES.md"
               KeyPath="yes" />
       </Component>
     </ComponentGroup>
@@ -109,6 +137,7 @@
              Absent="disallow"
              AllowAdvertise="no">
       <ComponentGroupRef Id="MainExecutable" />
+      <ComponentGroupRef Id="OpenConsoleBinaries" />
       <ComponentGroupRef Id="ScriptFiles" />
       <ComponentGroupRef Id="StartMenuShortcuts" />
     </Feature>

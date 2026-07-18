@@ -1,0 +1,4 @@
+# Fetched Microsoft binaries are never committed; run
+# scripts/fetch-openconsole.ps1 to populate this directory.
+OpenConsole.exe
+OpenConsoleProxy.dll

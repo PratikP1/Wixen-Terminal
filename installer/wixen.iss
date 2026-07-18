@@ -2,7 +2,8 @@
 ;
 ; To build the installer:
 ;   1. cargo build --release
-;   2. iscc installer/wixen.iss
+;   2. pwsh scripts/fetch-openconsole.ps1
+;   3. iscc installer/wixen.iss
 ;
 ; Requires Inno Setup 6+: https://jrsoftware.org/isdownload.php
 
@@ -39,6 +40,11 @@ Name: "addtopath"; Description: "Add to PATH"; GroupDescription: "System integra
 
 [Files]
 Source: "..\target\release\wixen.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Bundled Microsoft OpenConsole binaries (MIT-licensed, fetched by
+; scripts/fetch-openconsole.ps1); required for default-terminal handoff.
+Source: "..\vendor\openconsole\OpenConsole.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\vendor\openconsole\OpenConsoleProxy.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\vendor\openconsole\README.md"; DestDir: "{app}"; DestName: "THIRD-PARTY-NOTICES.md"; Flags: ignoreversion
 Source: "..\scripts\wixen.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\scripts\wixen.lua"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion

@@ -51,6 +51,10 @@ jobs:
         if: matrix.arch == 'x64'
         run: cargo test --workspace
 
+      - name: Fetch OpenConsole binaries
+        shell: pwsh
+        run: ./scripts/fetch-openconsole.ps1 -Arch ${{ matrix.arch }}
+
       - name: Extract version
         id: version
         shell: pwsh
@@ -66,6 +70,9 @@ jobs:
           $dir = "wixen-terminal-${version}-${suffix}"
           New-Item -ItemType Directory -Path $dir -Force
           Copy-Item target/${{ matrix.target }}/release/wixen.exe $dir/
+          Copy-Item vendor/openconsole/OpenConsole.exe $dir/
+          Copy-Item vendor/openconsole/OpenConsoleProxy.dll $dir/
+          Copy-Item vendor/openconsole/README.md $dir/THIRD-PARTY-NOTICES.md
           Copy-Item scripts/wixen.ps1 $dir/ -ErrorAction SilentlyContinue
           Copy-Item scripts/wixen.lua $dir/ -ErrorAction SilentlyContinue
           Copy-Item README.md $dir/ -ErrorAction SilentlyContinue
@@ -95,7 +102,7 @@ jobs:
             Write-Host "No WiX source found - skipping MSI build"
             echo "MSI_SKIP=true" >> $env:GITHUB_ENV
           } else {
-            wix build installer/wixen.wxs -o "wixen-x64.msi" -d "Version=${version}" -d "ExePath=target/${{ matrix.target }}/release/wixen.exe"
+            wix build installer/wixen.wxs -o "wixen-x64.msi" -d "Version=${version}" -d "ExePath=target/${{ matrix.target }}/release/wixen.exe" -d "OpenConsoleDir=vendor/openconsole"
           }
 
       - name: Upload portable zip
