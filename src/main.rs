@@ -5674,44 +5674,6 @@ fn handle_local_action(
             }
             true
         }
-        "register_handoff_server" => {
-            match wixen_ui::register_handoff_server() {
-                Ok(()) => {
-                    let msg = "Handoff server registered for this executable";
-                    info!("{msg}");
-                    unsafe {
-                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
-                    }
-                }
-                Err(e) => {
-                    error!(error = %e, "Failed to register handoff server");
-                    let msg = "Failed to register the handoff server";
-                    unsafe {
-                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
-                    }
-                }
-            }
-            true
-        }
-        "unregister_handoff_server" => {
-            match wixen_ui::unregister_handoff_server() {
-                Ok(()) => {
-                    let msg = "Handoff server registration removed";
-                    info!("{msg}");
-                    unsafe {
-                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
-                    }
-                }
-                Err(e) => {
-                    error!(error = %e, "Failed to unregister handoff server");
-                    let msg = "Failed to remove the handoff server registration";
-                    unsafe {
-                        raise_if_allowed(provider, msg, "default-terminal", verbosity, "output");
-                    }
-                }
-            }
-            true
-        }
         _ => false,
     }
 }

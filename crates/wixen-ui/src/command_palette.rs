@@ -258,18 +258,6 @@ fn builtin_commands() -> Vec<PaletteEntry> {
             None,
             "System",
         ),
-        PaletteEntry::builtin(
-            "register_handoff_server",
-            "Default Terminal: Register Handoff Server",
-            None,
-            "System",
-        ),
-        PaletteEntry::builtin(
-            "unregister_handoff_server",
-            "Default Terminal: Unregister Handoff Server",
-            None,
-            "System",
-        ),
         // --- Window / tray ---
         PaletteEntry::builtin("minimize_to_tray", "Minimize to Tray", None, "Window"),
         // --- Tabs: color ---
@@ -291,10 +279,9 @@ fn builtin_commands() -> Vec<PaletteEntry> {
 /// Number of built-in commands (for tests).
 ///
 /// 71 fixed entries + `minimize_to_tray` + `clear_tab_color` +
-/// `default_terminal_status` + `restore_default_terminal` +
-/// `register_handoff_server` + `unregister_handoff_server` + one per
-/// [`crate::tabs::tab_color_presets`] entry (8) = 85.
-pub const BUILTIN_COUNT: usize = 85;
+/// `default_terminal_status` + `restore_default_terminal` + one per
+/// [`crate::tabs::tab_color_presets`] entry (8) = 83.
+pub const BUILTIN_COUNT: usize = 83;
 
 /// The palette can operate in different modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
