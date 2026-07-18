@@ -32,7 +32,7 @@ impl PaletteEntry {
 
 /// Create the built-in command palette entries.
 fn builtin_commands() -> Vec<PaletteEntry> {
-    vec![
+    let mut commands = vec![
         // --- Tabs ---
         PaletteEntry::builtin("new_tab", "New Tab", Some("Ctrl+Shift+T"), "Tabs"),
         PaletteEntry::builtin("close_tab", "Close Tab", Some("Ctrl+Shift+W"), "Tabs"),
@@ -242,11 +242,29 @@ fn builtin_commands() -> Vec<PaletteEntry> {
             None,
             "System",
         ),
-    ]
+        // --- Window / tray ---
+        PaletteEntry::builtin("minimize_to_tray", "Minimize to Tray", None, "Window"),
+        // --- Tabs: color ---
+        PaletteEntry::builtin("clear_tab_color", "Clear Tab Color", None, "Tabs"),
+    ];
+    // Tab-color presets become one entry each (`set_tab_color_{index}`), kept in
+    // sync with `crate::tabs::tab_color_presets()`.
+    for (i, (name, _)) in crate::tabs::tab_color_presets().iter().enumerate() {
+        commands.push(PaletteEntry {
+            id: format!("set_tab_color_{i}"),
+            label: format!("Set Tab Color: {name}"),
+            shortcut: None,
+            category: "Tabs".to_string(),
+        });
+    }
+    commands
 }
 
 /// Number of built-in commands (for tests).
-pub const BUILTIN_COUNT: usize = 70;
+///
+/// 70 fixed entries + `minimize_to_tray` + `clear_tab_color` + one per
+/// [`crate::tabs::tab_color_presets`] entry (8) = 80.
+pub const BUILTIN_COUNT: usize = 80;
 
 /// The palette can operate in different modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +301,8 @@ pub struct CommandPalette {
     profile_start: usize,
     /// Index where SSH target entries start (everything before is builtin+profile).
     ssh_start: usize,
+    /// Index where macro entries start (everything before is builtin+profile+SSH).
+    macro_start: usize,
     /// Current palette mode.
     pub mode: PaletteMode,
     /// Prompt text shown when in Input mode (e.g., "Enter new tab name:").
@@ -296,6 +316,7 @@ impl CommandPalette {
         let filtered: Vec<usize> = (0..commands.len()).collect();
         let profile_start = commands.len();
         let ssh_start = profile_start;
+        let macro_start = profile_start;
         Self {
             visible: false,
             query: String::new(),
@@ -304,6 +325,7 @@ impl CommandPalette {
             commands,
             profile_start,
             ssh_start,
+            macro_start,
             mode: PaletteMode::Commands,
             input_prompt: String::new(),
         }
@@ -416,8 +438,9 @@ impl CommandPalette {
             });
         }
 
-        // SSH entries start after profiles
+        // SSH entries start after profiles; macros follow SSH.
         self.ssh_start = self.commands.len();
+        self.macro_start = self.ssh_start;
 
         // Always refresh the filtered list so entries() returns the full set
         self.filter();
@@ -442,6 +465,38 @@ impl CommandPalette {
                 label: format!("{} ({})", target.name, user_host),
                 shortcut: None,
                 category: "SSH".to_string(),
+            });
+        }
+
+        // Macro entries start after SSH targets.
+        self.macro_start = self.commands.len();
+
+        self.filter();
+    }
+
+    /// Load macro entries into the palette. Replaces any previous macro entries.
+    ///
+    /// Each `(name, description)` pair produces an entry with `id = "run_macro"`,
+    /// carrying the macro name in `label`. The label shows `Run Macro: {name}`
+    /// (plus the description when non-empty) and category `"Macros"`.
+    ///
+    /// Must be called after [`set_profiles`](Self::set_profiles) and
+    /// [`load_ssh_targets`](Self::load_ssh_targets), which reset the entries
+    /// following the built-ins.
+    pub fn set_macros(&mut self, macros: &[(String, String)]) {
+        self.commands.truncate(self.macro_start);
+
+        for (name, description) in macros {
+            let label = if description.is_empty() {
+                format!("Run Macro: {name}")
+            } else {
+                format!("Run Macro: {name} — {description}")
+            };
+            self.commands.push(PaletteEntry {
+                id: format!("run_macro:{name}"),
+                label,
+                shortcut: None,
+                category: "Macros".to_string(),
             });
         }
 
@@ -814,6 +869,67 @@ mod tests {
         assert_eq!(ssh[1].id, "ssh_staging");
         assert_eq!(ssh[1].label, "staging (staging.local:2222)");
         assert_eq!(ssh[1].category, "SSH");
+    }
+
+    #[test]
+    fn test_set_macros_produces_expected_entries() {
+        let mut p = CommandPalette::new();
+        p.set_macros(&[
+            ("deploy".into(), "Deploy to prod".into()),
+            ("status".into(), String::new()),
+        ]);
+
+        let entries = p.entries();
+        let macros: Vec<_> = entries.iter().filter(|e| e.category == "Macros").collect();
+        assert_eq!(macros.len(), 2);
+        assert_eq!(macros[0].id, "run_macro:deploy");
+        assert_eq!(macros[0].label, "Run Macro: deploy — Deploy to prod");
+        assert_eq!(macros[1].id, "run_macro:status");
+        assert_eq!(macros[1].label, "Run Macro: status");
+    }
+
+    #[test]
+    fn test_set_macros_reload_replaces() {
+        let mut p = CommandPalette::new();
+        p.set_macros(&[("old".into(), String::new())]);
+        p.set_macros(&[
+            ("new-a".into(), String::new()),
+            ("new-b".into(), String::new()),
+        ]);
+
+        let entries = p.entries();
+        let macros: Vec<_> = entries.iter().filter(|e| e.category == "Macros").collect();
+        assert_eq!(macros.len(), 2);
+        assert!(macros.iter().all(|e| e.id != "run_macro:old"));
+    }
+
+    #[test]
+    fn test_profiles_ssh_macros_coexist() {
+        let mut p = CommandPalette::new();
+        p.set_profiles(&[("PowerShell".into(), None)]);
+        p.load_ssh_targets(&[ssh_target("prod", "prod.example.com", "deploy", 22)]);
+        p.set_macros(&[("build".into(), String::new())]);
+
+        let entries = p.entries();
+        assert_eq!(
+            entries.iter().filter(|e| e.category == "Profiles").count(),
+            1
+        );
+        assert_eq!(entries.iter().filter(|e| e.category == "SSH").count(), 1);
+        assert_eq!(entries.iter().filter(|e| e.category == "Macros").count(), 1);
+    }
+
+    #[test]
+    fn test_tab_color_and_tray_builtins_present() {
+        let p = CommandPalette::new();
+        let entries = p.entries();
+        assert!(entries.iter().any(|e| e.id == "minimize_to_tray"));
+        assert!(entries.iter().any(|e| e.id == "clear_tab_color"));
+        let color_entries = entries
+            .iter()
+            .filter(|e| e.id.starts_with("set_tab_color_"))
+            .count();
+        assert_eq!(color_entries, crate::tabs::tab_color_presets().len());
     }
 
     // ── Task 2: Explorer context menu entries ──

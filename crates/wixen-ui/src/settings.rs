@@ -1391,6 +1391,10 @@ fn action_label(action: &str) -> &'static str {
         "clear_terminal" => "Clear Terminal",
         "clear_scrollback" => "Clear Scrollback",
         "open_help" => "Open Help",
+        "show_history" => "Command History",
+        "minimize_to_tray" => "Minimize to Tray",
+        "run_macro" => "Run Macro",
+        "clear_tab_color" => "Clear Tab Color",
         _ => "Unknown Action",
     }
 }

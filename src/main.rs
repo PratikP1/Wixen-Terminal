@@ -37,7 +37,7 @@ use wixen_render::{
 };
 use wixen_search::{SearchDirection, SearchEngine, SearchOptions};
 use wixen_ui::audio::{AudioConfig, AudioEvent, play_event};
-use wixen_ui::history::{CommandHistory, HistoryEntry};
+use wixen_ui::history::{CommandHistory, HistoryBrowser, HistoryEntry};
 use wixen_ui::panes::ToggleMode;
 use wixen_ui::window::{Window, WindowEvent};
 use wixen_ui::{CommandPalette, PaneId, SettingsField, SettingsUI, TabManager};
@@ -446,6 +446,33 @@ fn main() {
         );
     }
 
+    // Load user macros from config; invalid ones are reported but skipped.
+    let (macro_store, macro_errors) = wixen_config::MacroStore::load_from_config(&config.macros);
+    for err in &macro_errors {
+        warn!(error = %err, "Skipped invalid macro");
+    }
+    info!(count = macro_store.list().len(), "Macros loaded");
+
+    // Turn configured serial ports into launchable profiles.
+    for sc in &config.serial {
+        match wixen_config::serial_to_profile_command(sc) {
+            Ok((program, args)) => {
+                config.profiles.push(wixen_config::Profile {
+                    name: format!("Serial: {}", sc.port),
+                    program,
+                    args,
+                    ..Default::default()
+                });
+                info!(port = %sc.port, "Serial port registered as profile");
+            }
+            Err(errors) => {
+                for e in errors {
+                    warn!(port = %sc.port, error = %e, "Invalid serial config");
+                }
+            }
+        }
+    }
+
     // Start watching the config file for hot-reload
     let mut config_watcher = ConfigWatcher::new(cfg_path.clone(), config.clone());
 
@@ -555,6 +582,9 @@ fn main() {
         }
     }
 
+    // Apply visual effects (background blur, custom shader) from config.
+    apply_effects(&mut renderer, &config.effects);
+
     // Calculate terminal dimensions from font metrics
     let metrics = renderer.font_metrics();
     let mut cell_width = metrics.cell_width;
@@ -619,6 +649,10 @@ fn main() {
     let mut palette = CommandPalette::new();
     palette.set_profiles(&build_profile_entries(&config));
     palette.load_ssh_targets(&config.ssh);
+    palette.set_macros(&macro_palette_entries(&macro_store));
+
+    // Command history browser overlay (Ctrl+Shift+H).
+    let mut history_browser = HistoryBrowser::new();
 
     // Populate Windows Jump List with profile tasks
     let jump_profiles: Vec<wixen_ui::jumplist::JumpListProfile> = config
@@ -706,12 +740,25 @@ fn main() {
         }
     }
 
-    // System tray icon (created but not shown by default — activated by minimize_to_tray action)
+    // System tray icon — shown at startup so left/double-click can toggle the
+    // window and the minimize_to_tray action has a target.
     let mut tray_icon = wixen_ui::tray::TrayIcon::new(window.hwnd(), "Wixen Terminal");
+    tray_icon.show();
     let _tray_menu = wixen_ui::tray::TrayMenu::build_default_menu();
 
     // Plugin registry — plugins register for events and get dispatched at key points
-    let plugin_registry = PluginRegistry::default();
+    let (plugin_registry, rejected_plugins) = PluginRegistry::from_manifests(&config.plugins);
+    for name in &rejected_plugins {
+        warn!(plugin = %name, "Duplicate plugin manifest rejected");
+    }
+    info!(count = plugin_registry.list().len(), "Plugins loaded");
+
+    // A sandboxed Lua VM used to run plugin event handlers. The main loop is
+    // single-threaded, so a non-Send Lua is fine to hold here.
+    let plugin_lua = mlua::Lua::new();
+    if let Err(e) = wixen_config::lua::sandbox_lua(&plugin_lua) {
+        warn!(error = %e, "Failed to sandbox plugin Lua VM");
+    }
 
     // Track window focus for long-running command notifications
     let mut window_focused = true;
@@ -848,6 +895,25 @@ fn main() {
                                                     &audio_config,
                                                 );
                                             }
+                                            wixen_ui::PaletteResult::Action(action_id)
+                                                if handle_local_action(
+                                                    &action_id,
+                                                    None,
+                                                    &macro_store,
+                                                    &mut history_browser,
+                                                    &tab_mgr,
+                                                    &mut panes,
+                                                    &mut window,
+                                                    &mut tray_icon,
+                                                    &uia_provider,
+                                                    config.accessibility.screen_reader_output,
+                                                ) =>
+                                            {
+                                                let active = tab_mgr.active_tab().active_pane;
+                                                if let Some(p) = panes.get_mut(&active) {
+                                                    p.terminal.dirty = true;
+                                                }
+                                            }
                                             wixen_ui::PaletteResult::Action(action_id) => {
                                                 let result = dispatch_keybinding_action(
                                                     &action_id,
@@ -924,6 +990,35 @@ fn main() {
                             }
                             // Mark dirty to re-render overlay
                             let active = tab_mgr.active_tab().active_pane;
+                            if let Some(p) = panes.get_mut(&active) {
+                                p.terminal.dirty = true;
+                            }
+                            continue;
+                        }
+
+                        // ---- Command history browser keys (modal) ----
+                        if history_browser.visible {
+                            let active = tab_mgr.active_tab().active_pane;
+                            match vk {
+                                0x1B => history_browser.close(),       // Escape
+                                0x26 => history_browser.select_prev(), // Up
+                                0x28 => history_browser.select_next(), // Down
+                                0x0D => {
+                                    // Enter — write the selected command to the PTY
+                                    if let Some(cmd) = history_browser.confirm()
+                                        && let Some(pane) = panes.get_mut(&active)
+                                    {
+                                        let _ = pane.pty.write(cmd.as_bytes());
+                                    }
+                                }
+                                0x08 => {
+                                    // Backspace — refine the query
+                                    if let Some(pane) = panes.get(&active) {
+                                        history_browser.pop_char(&pane.command_history);
+                                    }
+                                }
+                                _ => {}
+                            }
                             if let Some(p) = panes.get_mut(&active) {
                                 p.terminal.dirty = true;
                             }
@@ -1158,6 +1253,28 @@ fn main() {
                                 continue;
                             }
 
+                            // Actions needing loop-local state (macros, history
+                            // overlay, tray) are handled here before the generic
+                            // dispatcher.
+                            if handle_local_action(
+                                &action,
+                                args.as_deref(),
+                                &macro_store,
+                                &mut history_browser,
+                                &tab_mgr,
+                                &mut panes,
+                                &mut window,
+                                &mut tray_icon,
+                                &uia_provider,
+                                config.accessibility.screen_reader_output,
+                            ) {
+                                let active = tab_mgr.active_tab().active_pane;
+                                if let Some(p) = panes.get_mut(&active) {
+                                    p.terminal.dirty = true;
+                                }
+                                continue;
+                            }
+
                             let result = dispatch_keybinding_action(
                                 &action,
                                 &mut tab_mgr,
@@ -1240,12 +1357,13 @@ fn main() {
                                     _ => {}
                                 }
 
-                                if let Some(seq) = wixen_core::keyboard::encode_key(
+                                if let Some(seq) = wixen_core::keyboard::encode_key_with_kitty(
                                     vk,
                                     shift,
                                     ctrl,
                                     alt,
                                     pane.terminal.modes.cursor_keys_application,
+                                    pane.terminal.kitty_keyboard_flags(),
                                 ) && let Err(e) = pane.pty.write(&seq)
                                 {
                                     error!("PTY write error: {}", e);
@@ -1261,6 +1379,20 @@ fn main() {
                             palette.push_char(ch);
                             update_palette_a11y(&palette, &a11y_state);
                             let active = tab_mgr.active_tab().active_pane;
+                            if let Some(p) = panes.get_mut(&active) {
+                                p.terminal.dirty = true;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // History browser mode: printable chars refine the query
+                    if history_browser.visible {
+                        if ch >= ' ' && !ch.is_control() {
+                            let active = tab_mgr.active_tab().active_pane;
+                            if let Some(pane) = panes.get(&active) {
+                                history_browser.push_char(&pane.command_history, ch);
+                            }
                             if let Some(p) = panes.get_mut(&active) {
                                 p.terminal.dirty = true;
                             }
@@ -1618,6 +1750,17 @@ fn main() {
                 WindowEvent::QuakeToggle => {
                     window.toggle_visibility();
                 }
+                WindowEvent::TrayClick(click) => {
+                    use wixen_ui::tray::TrayClickEvent;
+                    match click {
+                        TrayClickEvent::LeftClick | TrayClickEvent::DoubleClick => {
+                            window.toggle_visibility();
+                        }
+                        TrayClickEvent::RightClick => {
+                            // Context menu is defined but not yet displayed.
+                        }
+                    }
+                }
                 WindowEvent::FilesDropped(paths) => {
                     // Paste dropped file paths into the active pane.
                     let active = tab_mgr.active_tab().active_pane;
@@ -1883,9 +2026,17 @@ fn main() {
                 info!("Keybinding map rebuilt ({} bindings)", keybinding_map.len());
             }
 
-            // Refresh profile and SSH entries in the command palette on any config change
+            // Refresh profile and SSH entries in the command palette on any config
+            // change; re-append macro entries since set_profiles/load_ssh_targets
+            // reset everything after the built-ins.
             palette.set_profiles(&build_profile_entries(&delta.config));
             palette.load_ssh_targets(&delta.config.ssh);
+            palette.set_macros(&macro_palette_entries(&macro_store));
+
+            // Apply visual effects when the [effects] section changed.
+            if delta.config.effects != config.effects {
+                apply_effects(&mut renderer, &delta.config.effects);
+            }
 
             // Apply output debounce to all pane throttlers
             for pane in panes.values_mut() {
@@ -1895,6 +2046,9 @@ fn main() {
 
             config = delta.config;
             audio_config = AudioConfig::from_accessibility(&config.accessibility);
+
+            // Notify plugins that configuration was reloaded.
+            dispatch_plugin_event(&plugin_lua, &plugin_registry, &PluginEvent::ConfigReloaded);
         }
 
         // Resolve the active pane after event processing (tab switches may have changed it)
@@ -2122,7 +2276,17 @@ fn main() {
                         }
                         // Image placement announcements → a11y events
                         for ann in pane.terminal.drain_image_announcements() {
-                            info!(pane = pane_id.0, msg = ann.message(), "Image placed");
+                            let message = ann.message();
+                            info!(pane = pane_id.0, msg = %message, "Image placed");
+                            unsafe {
+                                raise_if_allowed(
+                                    &uia_provider,
+                                    &message,
+                                    "image-placed",
+                                    config.accessibility.screen_reader_output,
+                                    "output",
+                                );
+                            }
                         }
                         // Command completion notifications for long-running commands
                         let notify_threshold = config.terminal.command_notify_threshold;
@@ -2145,11 +2309,7 @@ fn main() {
                                     exit_code: completion.exit_code.unwrap_or(0),
                                     duration_ms: completion.duration.as_millis() as u64,
                                 };
-                                for plugin in plugin_registry.plugins_for_event(
-                                    wixen_config::plugin::event_name(&plugin_event),
-                                ) {
-                                    trace!(plugin = %plugin.name, "Plugin dispatch: command_complete");
-                                }
+                                dispatch_plugin_event(&plugin_lua, &plugin_registry, &plugin_event);
                                 // Feature 1: Announce command summary via UIA
                                 if let Some(block) =
                                     pane.terminal.shell_integ.block_by_id(completion.block_id)
@@ -2160,11 +2320,19 @@ fn main() {
                                     let output_lines: Vec<&str> = output_text
                                         .as_deref()
                                         .map_or_else(Vec::new, |text| text.lines().collect());
-                                    let summary =
+                                    let mut summary =
                                         wixen_core::structured_detect::completion_announcement(
                                             block,
                                             &output_lines,
                                         );
+                                    // Append an error/warning count summary so a
+                                    // screen-reader user hears "N errors, M warnings".
+                                    if let Some(errs) =
+                                        wixen_core::error_detect::error_summary(&output_lines)
+                                    {
+                                        summary.push_str(". ");
+                                        summary.push_str(&errs);
+                                    }
                                     unsafe {
                                         raise_if_allowed(
                                             &uia_provider,
@@ -2255,6 +2423,10 @@ fn main() {
                     pane.last_shell_generation = current_gen;
                 }
 
+                // Whether the a11y text (state.full_text) is about to be updated —
+                // used to raise UIA TextChanged / LiveRegionChanged below.
+                let a11y_text_changed = tree_changed || pending_output.is_some();
+
                 // Single write lock: update tree, full_text, and cursor atomically
                 let (structure_changed, cursor_moved, _row_changed) = {
                     let new_row = pane.terminal.grid.cursor.row;
@@ -2320,6 +2492,15 @@ fn main() {
                 if cursor_moved {
                     unsafe {
                         wixen_a11y::events::raise_text_selection_changed(&uia_provider);
+                    }
+                }
+
+                // New terminal output changed the accessible text — notify UIA so
+                // screen readers re-read the text and observe the live region.
+                if a11y_text_changed {
+                    unsafe {
+                        wixen_a11y::events::raise_text_changed(&uia_provider);
+                        wixen_a11y::events::raise_live_region_changed(&uia_provider);
                     }
                 }
 
@@ -2556,6 +2737,21 @@ fn main() {
                 window.set_ime_position(ime_x, ime_y, cell_height as i32);
             }
 
+            // Materialize history overlay lines so the overlay can borrow them.
+            let history_lines: Vec<String> = if history_browser.visible {
+                let header = if history_browser.query.is_empty() {
+                    "> Type to search history...".to_string()
+                } else {
+                    history_browser.query.clone()
+                };
+                let mut lines = Vec::with_capacity(history_browser.entries().len() + 1);
+                lines.push(header);
+                lines.extend(history_browser.overlay_lines());
+                lines
+            } else {
+                Vec::new()
+            };
+
             let mut overlays: Vec<OverlayLayer> = Vec::new();
             if settings_ui.visible {
                 trace!("Building settings overlay");
@@ -2565,6 +2761,11 @@ fn main() {
                 overlays.push(ol);
             }
             if let Some(ol) = build_palette_overlay(&palette, wf, hf, cell_height) {
+                overlays.push(ol);
+            }
+            if let Some(ol) =
+                build_history_overlay(&history_browser, &history_lines, wf, hf, cell_height)
+            {
                 overlays.push(ol);
             }
 
@@ -3795,6 +3996,23 @@ fn dispatch_keybinding_action(
             }
             DispatchResult::Handled
         }
+        "clear_tab_color" => {
+            let tab_id = tab_mgr.active_tab_id();
+            tab_mgr.clear_tab_color(tab_id);
+            info!("Tab color cleared");
+            DispatchResult::Handled
+        }
+        _ if action.starts_with("set_tab_color_") => {
+            if let Some(idx_str) = action.strip_prefix("set_tab_color_")
+                && let Ok(idx) = idx_str.parse::<usize>()
+                && let Some((name, color)) = wixen_ui::tabs::tab_color_presets().get(idx).copied()
+            {
+                let tab_id = tab_mgr.active_tab_id();
+                tab_mgr.set_tab_color(tab_id, color);
+                info!(color = name, "Tab color set");
+            }
+            DispatchResult::Handled
+        }
         "install_context_menu" => {
             let exe = std::env::current_exe().unwrap_or_default();
             let cfg = wixen_ui::explorer_menu::ExplorerMenuConfig {
@@ -3888,6 +4106,52 @@ fn unescape_send_text(s: &str) -> Vec<u8> {
     out
 }
 
+/// Execute a macro's steps against a pane's PTY.
+///
+/// `SendText` writes the literal text, `RunCommand` appends a carriage return,
+/// `SendKeys` encodes a key chord (e.g. `"Enter"`, `"Ctrl+C"`) into a terminal
+/// sequence, and `Wait` sleeps briefly. Long waits block the single-threaded
+/// event loop, so macros should keep them short.
+fn run_macro(store: &wixen_config::MacroStore, name: &str, pane: &mut PaneState) {
+    use wixen_config::MacroStep;
+    let Some(m) = store.get(name) else {
+        warn!(macro_name = name, "run_macro: unknown macro");
+        return;
+    };
+    let app_cursor = pane.terminal.modes.cursor_keys_application;
+    let flags = pane.terminal.kitty_keyboard_flags();
+    for step in &m.steps {
+        match step {
+            MacroStep::SendText(text) => {
+                let _ = pane.pty.write(text.as_bytes());
+            }
+            MacroStep::RunCommand(cmd) => {
+                let _ = pane.pty.write(cmd.as_bytes());
+                let _ = pane.pty.write(b"\r");
+            }
+            MacroStep::SendKeys(keys) => {
+                let (ctrl, shift, alt, _win, key) = wixen_config::parse_chord(keys);
+                if let Some(vk) = wixen_config::key_name_to_vk(&key) {
+                    if let Some(seq) = wixen_core::keyboard::encode_key_with_kitty(
+                        vk, shift, ctrl, alt, app_cursor, flags,
+                    ) {
+                        let _ = pane.pty.write(&seq);
+                    } else if key.chars().count() == 1 {
+                        // Plain printable key with no encodable sequence — send literally.
+                        let _ = pane.pty.write(key.as_bytes());
+                    }
+                } else {
+                    warn!(macro_name = name, keys = %keys, "run_macro: unrecognized key");
+                }
+            }
+            MacroStep::Wait(dur) => {
+                std::thread::sleep(*dur);
+            }
+        }
+    }
+    info!(macro_name = name, steps = m.steps.len(), "Macro executed");
+}
+
 /// Build profile entries for the command palette from config.
 ///
 /// Returns `(name, optional_shortcut)` tuples for `CommandPalette::set_profiles()`.
@@ -3905,6 +4169,39 @@ fn build_profile_entries(config: &Config) -> Vec<(String, Option<String>)> {
             (p.name.clone(), shortcut)
         })
         .collect()
+}
+
+/// Apply renderer visual effects (background blur, custom post-process shader).
+///
+/// Called at startup and on config hot-reload.
+fn apply_effects(renderer: &mut TerminalRenderer, effects: &wixen_config::EffectsConfig) {
+    renderer.set_blur_radius(effects.blur_radius);
+    if let Some(path) = effects.shader_path.as_deref()
+        && let Err(e) = renderer.load_custom_shader(path)
+    {
+        warn!(?e, "custom shader failed to load");
+    }
+}
+
+/// Build `(name, description)` pairs for the command palette's macro entries.
+fn macro_palette_entries(store: &wixen_config::MacroStore) -> Vec<(String, String)> {
+    store
+        .list()
+        .iter()
+        .map(|m| (m.name.clone(), m.description.clone()))
+        .collect()
+}
+
+/// Run every plugin subscribed to `event`, logging handler errors.
+///
+/// The main loop is single-threaded, so a non-`Send` Lua VM is held directly.
+fn dispatch_plugin_event(lua: &mlua::Lua, registry: &PluginRegistry, event: &PluginEvent) {
+    for plugin in registry.plugins_for_event(wixen_config::plugin::event_name(event)) {
+        if let Err(e) = wixen_config::plugin::execute_plugin_event(lua, &plugin.entry_point, event)
+        {
+            warn!(plugin = %plugin.name, error = %e, "Plugin event handler failed");
+        }
+    }
 }
 
 /// Build a ColorScheme from config, resolving a built-in theme if specified.
@@ -4136,6 +4433,67 @@ fn build_palette_overlay<'a>(
         height: overlay_height,
         bg,
         lines,
+    })
+}
+
+/// Build the command-history browser overlay.
+///
+/// `lines[0]` is the search box; the remaining lines are history entries in the
+/// same order as `browser.entries()`, so `browser.selected` indexes them.
+fn build_history_overlay<'a>(
+    browser: &HistoryBrowser,
+    lines: &'a [String],
+    window_width: f32,
+    window_height: f32,
+    line_height: f32,
+) -> Option<OverlayLayer<'a>> {
+    if !browser.visible || lines.is_empty() {
+        return None;
+    }
+
+    let overlay_width = window_width * 0.6;
+    let x = (window_width - overlay_width) / 2.0;
+    let y = window_height * 0.15;
+
+    let bg = [0.1, 0.1, 0.15, 0.95];
+    let fg_normal = [0.85, 0.85, 0.85, 1.0];
+    let fg_dim = [0.5, 0.5, 0.55, 1.0];
+    let selected_bg = [0.25, 0.25, 0.35, 1.0];
+
+    let max_visible = 12usize;
+    let entry_lines = &lines[1..];
+    let visible_count = entry_lines.len().min(max_visible);
+    let overlay_height = (visible_count as f32 + 3.0) * line_height;
+
+    let mut overlay_lines = Vec::with_capacity(visible_count + 1);
+    // Search box line
+    overlay_lines.push(OverlayLine {
+        text: &lines[0],
+        fg: fg_dim,
+        bg: None,
+        bold: false,
+    });
+    for (i, text) in entry_lines.iter().take(max_visible).enumerate() {
+        let is_sel = i == browser.selected;
+        overlay_lines.push(OverlayLine {
+            text,
+            fg: if is_sel {
+                [1.0, 1.0, 1.0, 1.0]
+            } else {
+                fg_normal
+            },
+            bg: if is_sel { Some(selected_bg) } else { None },
+            bold: is_sel,
+        });
+    }
+
+    Some(OverlayLayer {
+        x,
+        y,
+        width: overlay_width,
+        height: overlay_height,
+        bg,
+        lines: overlay_lines,
     })
 }
 
@@ -4448,7 +4806,65 @@ fn announce_mode_toggle(
     unsafe {
         raise_if_allowed(provider, &message, "mode-toggle", verbosity, "output");
     }
-    play_event(audio_config, AudioEvent::ModeToggle);
+    wixen_ui::audio::play_mode_toggle(audio_config, active);
+}
+
+/// Handle actions that need main-loop-local state the generic dispatcher lacks:
+/// running macros, toggling the command-history overlay, and minimizing to tray.
+///
+/// Returns `true` if the action was recognized and handled.
+#[allow(clippy::too_many_arguments)]
+fn handle_local_action(
+    action: &str,
+    args: Option<&str>,
+    macro_store: &wixen_config::MacroStore,
+    history_browser: &mut HistoryBrowser,
+    tab_mgr: &TabManager,
+    panes: &mut HashMap<PaneId, PaneState>,
+    window: &mut Window,
+    tray_icon: &mut wixen_ui::tray::TrayIcon,
+    provider: &IRawElementProviderSimple,
+    verbosity: ScreenReaderVerbosity,
+) -> bool {
+    // Macro name: from keybinding args, or embedded in a palette id ("run_macro:{name}").
+    let macro_name = if action == "run_macro" {
+        args.map(str::to_string)
+    } else {
+        action.strip_prefix("run_macro:").map(str::to_string)
+    };
+    if let Some(name) = macro_name {
+        let active = tab_mgr.active_tab().active_pane;
+        if let Some(pane) = panes.get_mut(&active) {
+            run_macro(macro_store, &name, pane);
+        }
+        return true;
+    }
+
+    match action {
+        "show_history" => {
+            let active = tab_mgr.active_tab().active_pane;
+            if history_browser.visible {
+                history_browser.close();
+            } else if let Some(pane) = panes.get(&active) {
+                history_browser.open(&pane.command_history);
+                let msg = format!(
+                    "Command history: {} commands",
+                    history_browser.entries().len()
+                );
+                unsafe {
+                    raise_if_allowed(provider, &msg, "history-open", verbosity, "output");
+                }
+            }
+            true
+        }
+        "minimize_to_tray" => {
+            tray_icon.show();
+            window.hide();
+            info!("Minimized to tray");
+            true
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -4526,5 +4942,76 @@ mod tests {
         assert!(!wixen_core::url::is_safe_url_scheme(
             r"C:\Users\pratik\AppData\Roaming\wixen\wixen.toml"
         ));
+    }
+
+    // --- macro_palette_entries ---
+
+    #[test]
+    fn test_macro_palette_entries_maps_name_and_description() {
+        use wixen_config::{Macro, MacroStep, MacroStore};
+        let mut store = MacroStore::default();
+        store.add(Macro {
+            name: "deploy".into(),
+            description: "Deploy to prod".into(),
+            steps: vec![MacroStep::RunCommand("./deploy.sh".into())],
+            keybinding: None,
+        });
+        store.add(Macro {
+            name: "status".into(),
+            description: String::new(),
+            steps: vec![],
+            keybinding: None,
+        });
+
+        let entries = macro_palette_entries(&store);
+        assert_eq!(
+            entries,
+            vec![
+                ("deploy".to_string(), "Deploy to prod".to_string()),
+                ("status".to_string(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_macro_palette_entries_empty_store() {
+        let store = wixen_config::MacroStore::default();
+        assert!(macro_palette_entries(&store).is_empty());
+    }
+
+    // --- build_history_overlay ---
+
+    #[test]
+    fn test_build_history_overlay_hidden_returns_none() {
+        let browser = HistoryBrowser::new();
+        let lines: Vec<String> = Vec::new();
+        assert!(build_history_overlay(&browser, &lines, 800.0, 600.0, 16.0).is_none());
+    }
+
+    #[test]
+    fn test_build_history_overlay_visible_builds_lines() {
+        let mut history = CommandHistory::new();
+        history.push(HistoryEntry {
+            command: "cargo build".into(),
+            exit_code: Some(0),
+            cwd: None,
+            timestamp: None,
+            block_id: 1,
+        });
+        let mut browser = HistoryBrowser::new();
+        browser.open(&history);
+
+        // Search box line + one entry line.
+        let lines = vec![
+            "> Type to search history...".to_string(),
+            "cargo build".to_string(),
+        ];
+        let overlay = build_history_overlay(&browser, &lines, 800.0, 600.0, 16.0)
+            .expect("overlay should be built when visible");
+        assert_eq!(overlay.lines.len(), 2);
+        assert_eq!(overlay.lines[0].text, "> Type to search history...");
+        assert_eq!(overlay.lines[1].text, "cargo build");
+        // The selected entry (index 0) is bold.
+        assert!(overlay.lines[1].bold);
     }
 }

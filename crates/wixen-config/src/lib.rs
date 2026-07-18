@@ -181,6 +181,8 @@ impl Default for KeybindingsConfig {
                 Keybinding::simple("ctrl+shift+k", "clear_scrollback"),
                 // Help
                 Keybinding::simple("f1", "open_help"),
+                // Command history browser
+                Keybinding::simple("ctrl+shift+h", "show_history"),
             ],
         }
     }
@@ -344,7 +346,10 @@ pub fn parse_quake_hotkey(hotkey: &str) -> Option<(u32, u32)> {
 }
 
 /// Map a key name (from `parse_chord`) to a Windows virtual-key code.
-fn key_name_to_vk(name: &str) -> Option<u16> {
+///
+/// Returns `None` for names that do not correspond to a virtual key. Used by
+/// quake-hotkey parsing and by the macro runner to translate `SendKeys` steps.
+pub fn key_name_to_vk(name: &str) -> Option<u16> {
     match name {
         // Single letters
         s if s.len() == 1 && s.as_bytes()[0].is_ascii_lowercase() => {

@@ -77,6 +77,8 @@ pub enum WindowEvent {
     FilesDropped(Vec<String>),
     /// User selected a context menu action.
     ContextMenu(ContextMenuAction),
+    /// User clicked the system tray icon.
+    TrayClick(crate::tray::TrayClickEvent),
 }
 
 /// Actions available in the right-click context menu.
@@ -333,6 +335,19 @@ impl Window {
     /// Whether the window is currently visible.
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    /// Hide the window (e.g. minimize to the system tray).
+    ///
+    /// No-op if the window is already hidden.
+    pub fn hide(&mut self) {
+        if self.visible {
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_HIDE);
+            }
+            self.visible = false;
+            info!("Window hidden");
+        }
     }
 
     /// Toggle window visibility (for quake mode).
@@ -911,6 +926,13 @@ fn handle_message(
         WM_HOTKEY => {
             // Global hotkey (quake mode toggle)
             let _ = state.event_tx.send(WindowEvent::QuakeToggle);
+            Some(LRESULT(0))
+        }
+        crate::tray::WM_TRAY_CALLBACK => {
+            // System tray icon interaction — decode the mouse message and forward.
+            if let Some(click) = crate::tray::parse_tray_message(lparam.0) {
+                let _ = state.event_tx.send(WindowEvent::TrayClick(click));
+            }
             Some(LRESULT(0))
         }
         WM_DROPFILES => {

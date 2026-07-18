@@ -333,6 +333,11 @@ action = "clear_scrollback"
 chord = "f1"
 action = "open_help"
 
+# Command history browser. Ctrl+Shift+H opens a searchable list of past commands.
+[[keybindings.bindings]]
+chord = "ctrl+shift+h"
+action = "show_history"
+
 # ─── Profiles ────────────────────────────────────────────────────────────────
 #
 # Named shell profiles. If empty, a single profile is synthesized from [shell].

@@ -263,6 +263,10 @@
           {
             "action": "open_help",
             "chord": "f1"
+          },
+          {
+            "action": "show_history",
+            "chord": "ctrl+shift+h"
           }
         ]
       }
@@ -867,6 +871,10 @@
             {
               "action": "open_help",
               "chord": "f1"
+            },
+            {
+              "action": "show_history",
+              "chord": "ctrl+shift+h"
             }
           ],
           "items": {
