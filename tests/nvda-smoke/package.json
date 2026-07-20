@@ -1,0 +1,12 @@
+{
+  "name": "wixen-nvda-smoke",
+  "private": true,
+  "type": "module",
+  "description": "Experimental NVDA speech smoke test for Wixen Terminal (non-blocking).",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "@guidepup/guidepup": "^0.22.0"
+  }
+}

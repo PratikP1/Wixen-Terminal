@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Desktop accessibility tests for Wixen Terminal.
+
+    These drive the built wixen.exe through UI Automation (the same API screen
+    readers use) and assert the accessibility structure the wixen-a11y crate is
+    supposed to expose. They require a HEADED Windows session; UIA needs a real
+    desktop, not a bare headless runner.
+
+    SCAFFOLDING: package versions below and the Axe.Windows API surface used in
+    TerminalAccessibilityTests.cs must be confirmed against the installed
+    versions on a real Windows machine. Run `dotnet test` locally first.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UIA automation: launch the app and inspect its accessibility tree. -->
+    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
+    <!-- Programmatic Axe.Windows scan (the "axe for desktop" engine). -->
+    <PackageReference Include="Axe.Windows.Automation" Version="2.2.0" />
+    <!-- Test host. -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

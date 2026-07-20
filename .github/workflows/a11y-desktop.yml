@@ -1,0 +1,77 @@
+name: Desktop Accessibility
+
+# Automated accessibility checks against the running app's UI Automation tree.
+# These cover the structural half of WCAG (missing names, unreachable content,
+# unnamed focusable controls). They do NOT replace testing with a real screen
+# reader - see docs/accessibility-testing.md.
+#
+# SCAFFOLDING: validate this on a real Windows runner before relying on it.
+# UIA needs a headed desktop session; a GUI app may not present a window under
+# every CI session configuration. The NVDA job is experimental and non-blocking.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  uia-scan:
+    name: UIA structure + Axe.Windows scan
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Wixen (release)
+        run: cargo build --release --bin wixen
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Run desktop accessibility tests
+        env:
+          WIXEN_EXE: ${{ github.workspace }}\target\release\wixen.exe
+        run: dotnet test tests/a11y-uia/WixenA11y.Tests.csproj -c Release --logger "console;verbosity=detailed"
+
+      - name: Upload Axe.Windows results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axe-windows-results
+          path: ${{ runner.temp }}\wixen-axe-*
+          if-no-files-found: ignore
+
+  nvda-smoke:
+    name: NVDA speech smoke test (experimental, non-blocking)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Wixen (release)
+        run: cargo build --release --bin wixen
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Guidepup drives a real NVDA and captures spoken output. It needs a headed
+      # session and is timing-sensitive, so this job never blocks a merge.
+      # @guidepup/setup installs and configures NVDA for automation.
+      - name: Install NVDA for automation
+        run: npx --yes @guidepup/setup
+        continue-on-error: true
+
+      - name: Run NVDA smoke test
+        env:
+          WIXEN_EXE: ${{ github.workspace }}\target\release\wixen.exe
+        run: node tests/nvda-smoke/smoke.mjs
+        continue-on-error: true
